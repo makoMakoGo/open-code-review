@@ -456,7 +456,7 @@ OCR 通过四层优先级链解析评审规则。每层采用首次匹配原则�
 | `llm.auth_header` | string | 仅 Anthropic：`x-api-key` \| `authorization` |
 | `llm.model` | string | `claude-opus-4-6` |
 | `llm.use_anthropic` | boolean | `true` \| `false` |
-| `language` | string | `English` \| `Chinese`（默认：Chinese） |
+| `language` | string | 任意语言名称，例如 `English`、`Chinese`（默认：`English`） |
 | `telemetry.enabled` | boolean | `true` \| `false` |
 | `telemetry.exporter` | string | `console` \| `otlp` |
 | `telemetry.otlp_endpoint` | string | OTLP 采集器地址 |
