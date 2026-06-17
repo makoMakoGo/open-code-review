@@ -1,23 +1,23 @@
-# GitHub App bot
+# GitHub App bot（自托管 GitHub App 机器人）
 
-English | [简体中文](README.zh-CN.md)
+[English](README.md) | 简体中文
 
-Self-hosted GitHub App service that wraps the `ocr` CLI and posts pull request review comments.
+自托管的 GitHub App 服务，封装 `ocr` CLI 并在 Pull Request 上发布代码审查评论。
 
-Flow:
+流程：
 
-1. A user comments the configured command on a pull request, for example `/ocr review`.
-2. GitHub sends an `issue_comment.created` webhook.
-3. The bot verifies `X-Hub-Signature-256`.
-4. The bot checks sender and repository owner allowlists.
-5. The bot fetches the PR head into a temporary worktree.
-6. The bot runs `ocr review --from origin/<base> --to <head_sha> --format json`.
-7. The bot posts OCR comments through GitHub's pull request review API.
-8. The temporary worktree is deleted when the job finishes.
+1. 用户在 Pull Request 下评论配置好的命令，例如 `/ocr review`。
+2. GitHub 发送 `issue_comment.created` webhook。
+3. 机器人校验 `X-Hub-Signature-256`。
+4. 机器人检查发送者与仓库所有者的白名单。
+5. 机器人将 PR head 拉取到临时工作目录。
+6. 机器人执行 `ocr review --from origin/<base> --to <head_sha> --format json`。
+7. 机器人通过 GitHub 的 Pull Request review API 发布审查评论。
+8. 任务结束后删除临时工作目录。
 
-The bot is intentionally boring: one process, one in-memory queue, one review job at a time. OCR file-level concurrency is configurable and defaults to `1`, which is safer for low-concurrency LLM providers.
+这个机器人刻意做得简单：单进程、内存队列、一次只跑一个审查任务。OCR 的文件级并发可配置，默认为 `1`，对并发能力较弱的 LLM 提供方更安全。
 
-## Files
+## 文件
 
 ```text
 github-app-bot/
@@ -32,7 +32,7 @@ github-app-bot/
   README.zh-CN.md
 ```
 
-Runtime-only files are not committed:
+以下运行期文件不纳入版本管理：
 
 ```text
 config/bot.env
@@ -40,11 +40,11 @@ config/github-app-private-key.pem
 data/
 ```
 
-## GitHub App setup
+## 创建 GitHub App
 
-Create a GitHub App under a user or organization account.
+在用户或组织账号下创建一个 GitHub App。
 
-Permissions:
+权限：
 
 ```text
 Metadata: Read-only
@@ -53,7 +53,7 @@ Issues: Read and write
 Pull requests: Read and write
 ```
 
-Webhook:
+Webhook：
 
 ```text
 Active: yes
@@ -62,11 +62,11 @@ Webhook secret: random long string
 Events: Issue comment
 ```
 
-Install the App on the repositories or accounts that should use it.
+将该 App 安装到需要使用的仓库或账号上。
 
-## Configuration
+## 配置
 
-Copy the example env file:
+复制示例 env 文件：
 
 ```bash
 mkdir -p config data/repos
@@ -76,20 +76,20 @@ chmod 600 config/bot.env
 sudo chown -R 10001:10001 data
 ```
 
-Put the GitHub App private key at:
+将 GitHub App 私钥放到：
 
 ```text
 config/github-app-private-key.pem
 ```
 
-Recommended permissions:
+建议的权限：
 
 ```bash
 sudo chown 10001:10001 config/github-app-private-key.pem
 chmod 600 config/github-app-private-key.pem
 ```
 
-Required values in `config/bot.env`:
+`config/bot.env` 中的必填项：
 
 ```env
 BOT_TRIGGER_PHRASE=/ocr review
@@ -111,7 +111,7 @@ WEBHOOK_BODY_LIMIT_BYTES=1048576
 LLM_PROXY_BODY_LIMIT_BYTES=67108864
 ```
 
-For OpenAI-compatible Chat Completions endpoints:
+兼容 OpenAI Chat Completions 的端点：
 
 ```env
 OCR_USE_ANTHROPIC=false
@@ -120,7 +120,7 @@ OCR_LLM_URL=https://api.example.com/v1
 OCR_LLM_MODEL=your-model
 ```
 
-For Anthropic-compatible endpoints that require a local header-rewriting proxy:
+需要本地改写 header 的 Anthropic 兼容端点（走本地代理）：
 
 ```env
 OCR_LLM_URL=http://127.0.0.1:3007/llm/anthropic
@@ -137,37 +137,37 @@ LLM_PROXY_UPSTREAM_AUTH_HEADER=authorization
 LLM_PROXY_UPSTREAM_TOKEN=Bearer provider-token
 ```
 
-The local proxy requires `X-Internal-Token` and is intended only for OCR traffic from inside the same container. Do not expose `/llm/*` through the public reverse proxy.
+该本地代理需要 `X-Internal-Token`，仅供同一容器内的 OCR 流量使用。不要通过公网反向代理暴露 `/llm/*`。
 
-## Run
+## 运行
 
 ```bash
 docker compose build
 docker compose up -d
 ```
 
-Health check:
+健康检查：
 
 ```bash
 curl http://127.0.0.1:3007/health
 ```
 
-Expected response:
+预期响应：
 
 ```json
 {"ok":true,"service":"open-code-review-github-app-bot"}
 ```
 
-## Reverse proxy
+## 反向代理
 
-Only expose these paths publicly:
+只对外暴露以下路径：
 
 ```text
 GET  /health
 POST /github/webhook
 ```
 
-Example OpenResty server block:
+OpenResty server 块示例：
 
 ```nginx
 server {
@@ -198,12 +198,12 @@ server {
 }
 ```
 
-## Operational notes
+## 运维说明
 
-- The bot accepts only PR comments matching `BOT_TRIGGER_PHRASES` exactly after trimming whitespace.
-- Sender authorization checks both `sender.login` and `sender.id`.
-- Repository authorization checks `repository.owner.login`.
-- Private repositories are always ignored; this bot fetches pull requests through public HTTPS remotes only.
-- The queue is in-memory. Restarting the container drops queued but not-yet-started jobs.
-- `OCR_CONCURRENCY=1` serializes OCR file reviews. Raise only if the LLM provider can handle concurrent requests.
-- `CLEANUP_WORKDIR=true` deletes `/data/repos/<owner>-<repo>-<pr>-<sha>` after each job.
+- 机器人只接受 trim 后与 `BOT_TRIGGER_PHRASES` 完全匹配的 PR 评论。
+- 发送者鉴权同时校验 `sender.login` 和 `sender.id`。
+- 仓库鉴权校验 `repository.owner.login`。
+- 私有仓库一律忽略；本机器人仅通过公开 HTTPS remote 拉取 Pull Request。
+- 队列位于内存中。重启容器会丢弃已入队但尚未开始的任务。
+- `OCR_CONCURRENCY=1` 会串行化 OCR 的文件审查。仅当 LLM 提供方能承受并发时再调高。
+- `CLEANUP_WORKDIR=true` 会在每次任务结束后删除 `/data/repos/<owner>-<repo>-<pr>-<sha>`。

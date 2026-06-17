@@ -16,6 +16,10 @@
 
 ---
 
+> **Fork note.** This is a fork of [alibaba/open-code-review](https://github.com/alibaba/open-code-review) that adds a **self-hosted GitHub App bot**: a long-running service that reviews a pull request on demand when someone comments `/ocr review`, as an alternative to running `ocr` inside per-PR CI.
+>
+> Docs & quickstart: [`github-app-bot/`](./github-app-bot/README.md). Everything below is the upstream README, kept in sync with `origin/main`.
+
 ## What is Open Code Review?
 
 Open Code Review is an AI-powered code review CLI tool. It originated as Alibaba Group's internal official AI code review assistant — over the past two years, it has served tens of thousands of developers and identified millions of code defects. After thorough validation at massive scale, we incubated it into an open source project for the community. Simply configure a model endpoint to get started.

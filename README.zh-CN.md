@@ -16,6 +16,10 @@
 
 ---
 
+> **Fork 说明。** 本仓库是 [alibaba/open-code-review](https://github.com/alibaba/open-code-review) 的 fork，额外增加了一个**自托管 GitHub App 机器人**：一个常驻服务，当有人在 Pull Request 下评论 `/ocr review` 时按需触发审查，可作为「在每个 PR 的 CI 里跑 `ocr`」之外的替代方案。
+>
+> 文档与快速开始：[`github-app-bot/`](./github-app-bot/README.zh-CN.md)。下方内容均为上游 README，与 `origin/main` 保持同步。
+
 ## Open Code Review 是什么？
 
 Open Code Review 是一款 AI 驱动的代码审查 CLI 工具。它的前身是阿里集团内部官方 AI 代码审查助手，过去两年在内部服务了数万开发者，识别了数百万个代码缺陷。经过大规模充分验证后，我们将其孵化为开源项目，对社区开放。只需配置一个模型端点即可使用。
