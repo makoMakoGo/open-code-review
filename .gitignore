@@ -25,6 +25,13 @@ bin/opencodereview
 
 /node_modules
 
+learn-notes/
+
+# GitHub App bot runtime secrets
+github-app-bot/config/bot.env
+github-app-bot/config/*.pem
+github-app-bot/data/
+github-app-bot/node_modules/
 # Mac OS X
 .DS_Store
 

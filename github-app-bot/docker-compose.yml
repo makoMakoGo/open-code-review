@@ -1,0 +1,15 @@
+services:
+  open-code-review-github-app-bot:
+    build:
+      context: .
+    image: local/open-code-review-github-app-bot:0.1.0
+    container_name: open-code-review-github-app-bot
+    restart: unless-stopped
+    user: "10001:10001"
+    env_file:
+      - ./config/bot.env
+    ports:
+      - "127.0.0.1:3007:3007"
+    volumes:
+      - ./config:/config:ro
+      - ./data:/data
