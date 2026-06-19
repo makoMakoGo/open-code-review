@@ -352,19 +352,6 @@ function formatDurationMs(ms) {
   return `${seconds}s`;
 }
 
-function extractOcrResultFromError(message) {
-  const end = message.lastIndexOf('}');
-  if (end < 0) return null;
-  for (let start = message.indexOf('{'); start >= 0 && start < end; start = message.indexOf('{', start + 1)) {
-    try {
-      return JSON.parse(message.slice(start, end + 1));
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
 function classifyReviewFailure(error, config) {
   const message = String(error?.message || error || '');
   const lower = message.toLowerCase();
@@ -374,11 +361,6 @@ function classifyReviewFailure(error, config) {
     const timeoutMs = Number(timeoutMatch[1]);
     const timeout = formatDurationMs(Number.isSafeInteger(timeoutMs) ? timeoutMs : config.jobTimeoutMs);
     const details = [`Timeout: ${timeout}`];
-    const ocrResult = extractOcrResultFromError(message);
-    const summary = ocrResult && typeof ocrResult === 'object' ? ocrResult.summary : null;
-    if (summary && Number.isFinite(Number(summary.files_reviewed))) details.push(`Files reviewed before timeout: ${Number(summary.files_reviewed)}`);
-    if (summary && Number.isFinite(Number(summary.comments))) details.push(`Comments generated before timeout: ${Number(summary.comments)}`);
-    if (summary?.elapsed) details.push(`OCR elapsed time: ${String(summary.elapsed)}`);
     return {
       kind: 'job_timeout',
       title: 'OpenCodeReview did not finish before the bot timeout.',
@@ -389,7 +371,7 @@ function classifyReviewFailure(error, config) {
     };
   }
 
-  if (lower.includes('unsupported auth_header') || lower.includes('missing required environment variable') || lower.includes('resolve ocr environment') || lower.includes('resolve llm endpoint')) {
+  if (lower.includes('unsupported auth_header') || lower.includes('missing required environment variable') || lower.includes('ocr environment') || lower.includes('resolve llm endpoint')) {
     return {
       kind: 'ocr_config_error',
       title: 'OpenCodeReview could not start because the LLM configuration is invalid.',
@@ -472,7 +454,6 @@ function buildStaleReviewComment(reviewedHeadSha, currentHeadSha, diagnosticId) 
   ].join('\n');
 }
 
-
 class JobQueue {
   constructor(handler) {
     this.handler = handler;
@@ -524,10 +505,10 @@ async function handleReviewJob(payload, config) {
   const privateKey = requiredEnvFromFile(config.privateKeyPath, 'GITHUB_APP_PRIVATE_KEY_PATH');
   const app = new App({ appId: config.appId, privateKey });
   const octokit = await app.getInstallationOctokit(installationId);
+  const diagnosticId = `${owner}/${repo}#${pullNumber}@${payload.comment.id}`;
 
   try {
     const { data: pull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
-    const diagnosticId = `${owner}/${repo}#${pullNumber}@${payload.comment.id}`;
     console.log('job started', { owner, repo, pullNumber, head: pull.head.sha, diagnosticId });
     if (pull.base.repo.private) {
       console.log('skipping private repo', { owner, repo, pullNumber });
@@ -646,7 +627,6 @@ async function handleReviewJob(payload, config) {
       }
     }
   } catch (error) {
-    const diagnosticId = `${owner}/${repo}#${pullNumber}@${payload.comment.id}`;
     const failure = classifyReviewFailure(error, config);
     console.error('review job failed', { owner, repo, pullNumber, diagnosticId, failure: failure.kind, error: error.stack || error.message });
     await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);

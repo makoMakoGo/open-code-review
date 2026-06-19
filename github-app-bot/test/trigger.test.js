@@ -144,20 +144,15 @@ test('invalid internal token can be rejected before reading proxy body', async (
   assert.equal(verifyInternalToken('secret', extractInternalTokenFromHeaders(req.headers)), false);
   await assert.rejects(readRequestBody(req, 64 * 1024 * 1024), /body reader should not be attached/);
 });
-test('classifies OCR timeout with generated progress summary', () => {
-  const error = new Error('ocr review timed out after 1800000ms: {"status":"success","summary":{"files_reviewed":37,"comments":9,"elapsed":"36m19s"}}');
+test('classifies OCR timeout without pretending progress is available', () => {
+  const error = new Error('ocr review timed out after 1800000ms: ');
   const failure = classifyReviewFailure(error, { jobTimeoutMs: 1800000 });
   assert.equal(failure.kind, 'job_timeout');
   assert.equal(failure.retryable, true);
-  assert.deepEqual(failure.details, [
-    'Timeout: 30m',
-    'Files reviewed before timeout: 37',
-    'Comments generated before timeout: 9',
-    'OCR elapsed time: 36m19s',
-  ]);
+  assert.deepEqual(failure.details, ['Timeout: 30m']);
   const body = buildFailureComment(failure, 'owner/repo#7@123');
   assert.match(body, /review exceeded the 30m job timeout/);
-  assert.match(body, /Files reviewed before timeout: 37/);
+  assert.doesNotMatch(body, /Files reviewed before timeout/);
   assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
 });
 
@@ -170,6 +165,20 @@ test('classifies provider auth and rate-limit failures without leaking raw outpu
   const rateLimit = classifyReviewFailure(new Error('provider returned 429 too many requests: concurrency limit exceeded'), { jobTimeoutMs: 1800000 });
   assert.equal(rateLimit.kind, 'provider_rate_limited');
   assert.equal(rateLimit.retryable, true);
+});
+
+test('classifies OCR config, provider availability, and unknown failures', () => {
+  const config = classifyReviewFailure(new Error('OCR environment: unsupported auth_header value "x-internal-token"'), { jobTimeoutMs: 1800000 });
+  assert.equal(config.kind, 'ocr_config_error');
+  assert.equal(config.retryable, false);
+
+  const unavailable = classifyReviewFailure(new Error('fetch failed: ECONNRESET'), { jobTimeoutMs: 1800000 });
+  assert.equal(unavailable.kind, 'provider_unavailable');
+  assert.equal(unavailable.retryable, true);
+
+  const unknown = classifyReviewFailure(new Error('unexpected runtime failure'), { jobTimeoutMs: 1800000 });
+  assert.equal(unknown.kind, 'unknown');
+  assert.equal(unknown.retryable, false);
 });
 
 test('detects stale review results when PR head changes during OCR', () => {
