@@ -168,6 +168,18 @@ function copyProxyHeaders(req, config) {
   if (config.llmProxyUpstreamAuthHeader && config.llmProxyUpstreamToken) headers[config.llmProxyUpstreamAuthHeader] = config.llmProxyUpstreamToken;
   return headers;
 }
+function extractInternalTokenFromHeaders(headers) {
+  const apiKey = headers['x-api-key'];
+  if (apiKey != null) return String(apiKey);
+
+  const authorization = headers.authorization;
+  if (authorization == null) return '';
+  const value = String(authorization).trim();
+  const bearerPrefix = 'bearer ';
+  if (value.toLowerCase().startsWith(bearerPrefix)) return value.slice(bearerPrefix.length).trim();
+  return value;
+}
+
 
 function verifyInternalToken(expected, actual) {
   return expected !== '' && actual != null && timingSafeEqualString(expected, String(actual));
@@ -330,6 +342,120 @@ function buildReviewComment(comment) {
   }
   return reviewComment;
 }
+function formatDurationMs(ms) {
+  if (!Number.isSafeInteger(ms) || ms < 0) return 'unknown duration';
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes > 0 && remainingSeconds === 0) return `${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${remainingSeconds}s`;
+  return `${seconds}s`;
+}
+
+function extractOcrResultFromError(message) {
+  const end = message.lastIndexOf('}');
+  if (end < 0) return null;
+  for (let start = message.indexOf('{'); start >= 0 && start < end; start = message.indexOf('{', start + 1)) {
+    try {
+      return JSON.parse(message.slice(start, end + 1));
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function classifyReviewFailure(error, config) {
+  const message = String(error?.message || error || '');
+  const lower = message.toLowerCase();
+  const timeoutMatch = /timed out after (\d+)ms/.exec(message);
+
+  if (timeoutMatch) {
+    const timeoutMs = Number(timeoutMatch[1]);
+    const timeout = formatDurationMs(Number.isSafeInteger(timeoutMs) ? timeoutMs : config.jobTimeoutMs);
+    const details = [`Timeout: ${timeout}`];
+    const ocrResult = extractOcrResultFromError(message);
+    const summary = ocrResult && typeof ocrResult === 'object' ? ocrResult.summary : null;
+    if (summary && Number.isFinite(Number(summary.files_reviewed))) details.push(`Files reviewed before timeout: ${Number(summary.files_reviewed)}`);
+    if (summary && Number.isFinite(Number(summary.comments))) details.push(`Comments generated before timeout: ${Number(summary.comments)}`);
+    if (summary?.elapsed) details.push(`OCR elapsed time: ${String(summary.elapsed)}`);
+    return {
+      kind: 'job_timeout',
+      title: 'OpenCodeReview did not finish before the bot timeout.',
+      reason: `review exceeded the ${timeout} job timeout`,
+      retryable: true,
+      next: 'Retry after reducing PR size, raising JOB_TIMEOUT_MS, or increasing OCR_CONCURRENCY.',
+      details,
+    };
+  }
+
+  if (lower.includes('unsupported auth_header') || lower.includes('missing required environment variable') || lower.includes('resolve ocr environment') || lower.includes('resolve llm endpoint')) {
+    return {
+      kind: 'ocr_config_error',
+      title: 'OpenCodeReview could not start because the LLM configuration is invalid.',
+      reason: 'bot service configuration is invalid',
+      retryable: false,
+      next: 'A bot operator needs to fix the service configuration before retrying.',
+      details: [],
+    };
+  }
+
+  if (/\b(401|403)\b/.test(lower) || lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('invalid api key') || lower.includes('invalid_api_key')) {
+    return {
+      kind: 'provider_auth_failed',
+      title: 'OpenCodeReview could not authenticate with the LLM provider.',
+      reason: 'provider authentication failed',
+      retryable: false,
+      next: 'A bot operator needs to refresh or correct the provider token before retrying.',
+      details: [],
+    };
+  }
+
+  if (/\b429\b/.test(lower) || lower.includes('rate limit') || lower.includes('rate-limit') || lower.includes('too many requests') || lower.includes('concurrency limit')) {
+    return {
+      kind: 'provider_rate_limited',
+      title: 'OpenCodeReview was rate-limited by the LLM provider.',
+      reason: 'provider rate or concurrency limit was reached',
+      retryable: true,
+      next: 'Retry later, or ask a bot operator to lower OCR_CONCURRENCY or raise the provider quota.',
+      details: [],
+    };
+  }
+
+  if (/\b5\d\d\b/.test(lower) || lower.includes('econnreset') || lower.includes('etimedout') || lower.includes('enotfound') || lower.includes('fetch failed') || lower.includes('socket hang up')) {
+    return {
+      kind: 'provider_unavailable',
+      title: 'OpenCodeReview failed because the LLM provider was unavailable.',
+      reason: 'provider service or network request failed',
+      retryable: true,
+      next: 'Retry later. If this keeps happening, a bot operator should inspect provider connectivity.',
+      details: [],
+    };
+  }
+
+  return {
+    kind: 'unknown',
+    title: 'OpenCodeReview failed before posting review comments.',
+    reason: 'unclassified bot or runtime error',
+    retryable: false,
+    next: 'A bot operator should inspect the logs with the diagnostic id below.',
+    details: [],
+  };
+}
+
+function buildFailureComment(failure, diagnosticId) {
+  const lines = [
+    failure.title,
+    '',
+    `- Reason: ${failure.reason}`,
+    `- Retry: ${failure.retryable ? 'yes' : 'no'}`,
+  ];
+  for (const detail of failure.details) lines.push(`- ${detail}`);
+  lines.push(`- Next: ${failure.next}`);
+  lines.push(`- Diagnostic id: \`${diagnosticId}\``);
+  return lines.join('\n');
+}
+
 
 class JobQueue {
   constructor(handler) {
@@ -364,12 +490,12 @@ class JobQueue {
   }
 }
 
-async function postFailureComment(octokit, owner, repo, pullNumber) {
+async function postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId) {
   await octokit.rest.issues.createComment({
     owner,
     repo,
     issue_number: pullNumber,
-    body: 'OpenCodeReview failed before posting review comments. Check bot logs for this pull request and retry after fixing the service configuration.',
+    body: buildFailureComment(failure, diagnosticId),
   });
 }
 
@@ -385,7 +511,8 @@ async function handleReviewJob(payload, config) {
 
   try {
     const { data: pull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
-    console.log('job started', { owner, repo, pullNumber, head: pull.head.sha });
+    const diagnosticId = `${owner}/${repo}#${pullNumber}@${payload.comment.id}`;
+    console.log('job started', { owner, repo, pullNumber, head: pull.head.sha, diagnosticId });
     if (pull.base.repo.private) {
       console.log('skipping private repo', { owner, repo, pullNumber });
       return;
@@ -412,7 +539,7 @@ async function handleReviewJob(payload, config) {
       '--max-git-procs', String(config.ocrMaxGitProcs),
       '--timeout', String(config.ocrPerFileTimeoutMinutes),
     ];
-    console.log('ocr started', { owner, repo, pullNumber, concurrency: config.ocrConcurrency, maxGitProcs: config.ocrMaxGitProcs, perFileTimeoutMinutes: config.ocrPerFileTimeoutMinutes });
+    console.log('ocr started', { owner, repo, pullNumber, concurrency: config.ocrConcurrency, maxGitProcs: config.ocrMaxGitProcs, perFileTimeoutMinutes: config.ocrPerFileTimeoutMinutes, diagnosticId });
     const review = await runProcess('ocr', ocrArgs, { cwd: workdir, env: ocrEnv, timeoutMs: config.jobTimeoutMs });
     console.log('ocr completed', { owner, repo, pullNumber });
 
@@ -492,8 +619,10 @@ async function handleReviewJob(payload, config) {
       }
     }
   } catch (error) {
-    console.error('review job failed', { owner, repo, pullNumber, error: error.stack || error.message });
-    await postFailureComment(octokit, owner, repo, pullNumber);
+    const diagnosticId = `${owner}/${repo}#${pullNumber}@${payload.comment.id}`;
+    const failure = classifyReviewFailure(error, config);
+    console.error('review job failed', { owner, repo, pullNumber, diagnosticId, failure: failure.kind, error: error.stack || error.message });
+    await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
   } finally {
     if (config.cleanupWorkdir && workdir) {
       await fs.rm(workdir, { recursive: true, force: true });
@@ -512,7 +641,7 @@ function createServer(config) {
         return;
       }
       if (req.method === 'POST' && req.url === '/llm/anthropic/v1/messages') {
-        if (!verifyInternalToken(config.llmProxyInternalToken, req.headers['x-internal-token'])) {
+        if (!verifyInternalToken(config.llmProxyInternalToken, extractInternalTokenFromHeaders(req.headers))) {
           json(res, 401, { error: 'invalid internal token' });
           return;
         }
@@ -574,9 +703,12 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 
 export {
   authorizePayload,
+  buildFailureComment,
   buildReviewComment,
+  classifyReviewFailure,
   copyProxyHeaders,
   createServer,
+  extractInternalTokenFromHeaders,
   proxyLLMRequest,
   readRequestBody,
   csvSet,

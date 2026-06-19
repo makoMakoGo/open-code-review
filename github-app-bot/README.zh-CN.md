@@ -127,7 +127,7 @@ OCR_LLM_URL=http://127.0.0.1:3007/llm/anthropic
 OCR_LLM_TOKEN=local-proxy-token
 OCR_LLM_MODEL=claude-sonnet-4-6
 OCR_USE_ANTHROPIC=true
-OCR_LLM_AUTH_HEADER=x-internal-token
+OCR_LLM_AUTH_HEADER=authorization
 LLM_PROXY_TARGET_URL=https://provider.example.com/anthropic/v1/messages
 LLM_PROXY_USER_AGENT=open-code-review-github-app-bot/0.1.0
 LLM_PROXY_X_APP=
@@ -137,7 +137,7 @@ LLM_PROXY_UPSTREAM_AUTH_HEADER=authorization
 LLM_PROXY_UPSTREAM_TOKEN=Bearer provider-token
 ```
 
-该本地代理需要 `X-Internal-Token`，仅供同一容器内的 OCR 流量使用。不要通过公网反向代理暴露 `/llm/*`。
+本地代理接受 OCR 的 `Authorization: Bearer <LLM_PROXY_INTERNAL_TOKEN>` 或 `X-Api-Key: <LLM_PROXY_INTERNAL_TOKEN>`，随后用 `LLM_PROXY_UPSTREAM_AUTH_HEADER` 和 `LLM_PROXY_UPSTREAM_TOKEN` 替换为供应商鉴权。不要通过公网反向代理暴露 `/llm/*`。
 
 ## 运行
 
@@ -206,4 +206,5 @@ server {
 - 私有仓库一律忽略；本机器人仅通过公开 HTTPS remote 拉取 Pull Request。
 - 队列位于内存中。重启容器会丢弃已入队但尚未开始的任务。
 - `OCR_CONCURRENCY=1` 会串行化 OCR 的文件审查。仅当 LLM 提供方能承受并发时再调高。
+- 失败评论会归类为超时、配置错误、供应商鉴权失败、限流、供应商不可用和未知运行时错误。评论包含诊断 id，但不会包含原始 OCR 输出或供应商响应。
 - `CLEANUP_WORKDIR=true` 会在每次任务结束后删除 `/data/repos/<owner>-<repo>-<pr>-<sha>`。

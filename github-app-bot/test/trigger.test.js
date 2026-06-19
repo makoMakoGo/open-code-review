@@ -3,9 +3,12 @@ import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import {
   authorizePayload,
+  buildFailureComment,
   buildReviewComment,
+  classifyReviewFailure,
   copyProxyHeaders,
   csvSet,
+  extractInternalTokenFromHeaders,
   isTrigger,
   readRequestBody,
   loadConfig,
@@ -75,6 +78,13 @@ test('builds right-side single-line review comments', () => {
   });
 });
 
+test('extracts internal proxy tokens from OCR-supported auth headers', () => {
+  assert.equal(extractInternalTokenFromHeaders({ authorization: 'Bearer secret' }), 'secret');
+  assert.equal(extractInternalTokenFromHeaders({ authorization: 'secret' }), 'secret');
+  assert.equal(extractInternalTokenFromHeaders({ 'x-api-key': 'secret' }), 'secret');
+  assert.equal(extractInternalTokenFromHeaders({}), '');
+});
+
 test('requires the internal token for LLM proxy access', () => {
   assert.equal(verifyInternalToken('secret', 'secret'), true);
   assert.equal(verifyInternalToken('secret', 'wrong'), false);
@@ -124,13 +134,40 @@ test('loadConfig requires upstream proxy auth fields to be paired', () => {
 
 test('invalid internal token can be rejected before reading proxy body', async () => {
   const req = {
-    headers: { 'x-internal-token': 'wrong' },
+    headers: { authorization: 'Bearer wrong' },
     on() {
       throw new Error('body reader should not be attached before auth');
     },
   };
-  assert.equal(verifyInternalToken('secret', req.headers['x-internal-token']), false);
+  assert.equal(verifyInternalToken('secret', extractInternalTokenFromHeaders(req.headers)), false);
   await assert.rejects(readRequestBody(req, 64 * 1024 * 1024), /body reader should not be attached/);
+});
+test('classifies OCR timeout with generated progress summary', () => {
+  const error = new Error('ocr review timed out after 1800000ms: {"status":"success","summary":{"files_reviewed":37,"comments":9,"elapsed":"36m19s"}}');
+  const failure = classifyReviewFailure(error, { jobTimeoutMs: 1800000 });
+  assert.equal(failure.kind, 'job_timeout');
+  assert.equal(failure.retryable, true);
+  assert.deepEqual(failure.details, [
+    'Timeout: 30m',
+    'Files reviewed before timeout: 37',
+    'Comments generated before timeout: 9',
+    'OCR elapsed time: 36m19s',
+  ]);
+  const body = buildFailureComment(failure, 'owner/repo#7@123');
+  assert.match(body, /review exceeded the 30m job timeout/);
+  assert.match(body, /Files reviewed before timeout: 37/);
+  assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
+});
+
+test('classifies provider auth and rate-limit failures without leaking raw output', () => {
+  const auth = classifyReviewFailure(new Error('provider returned 401 unauthorized: invalid api key'), { jobTimeoutMs: 1800000 });
+  assert.equal(auth.kind, 'provider_auth_failed');
+  assert.equal(auth.retryable, false);
+  assert.doesNotMatch(buildFailureComment(auth, 'owner/repo#7@123'), /invalid api key/);
+
+  const rateLimit = classifyReviewFailure(new Error('provider returned 429 too many requests: concurrency limit exceeded'), { jobTimeoutMs: 1800000 });
+  assert.equal(rateLimit.kind, 'provider_rate_limited');
+  assert.equal(rateLimit.retryable, true);
 });
 
 function validEnv() {
