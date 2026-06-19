@@ -484,8 +484,8 @@ function classifyReviewFailure(error, config) {
 function buildInvalidOcrOutputFailure(stdout) {
   return {
     kind: 'invalid_ocr_output',
-    title: 'OpenCodeReview completed but returned invalid JSON.',
-    reason: 'OCR output could not be parsed as JSON',
+    title: 'OpenCodeReview completed but returned invalid output.',
+    reason: 'OCR output did not match the expected JSON schema',
     retryable: false,
     next: 'A bot operator should inspect the logs with the diagnostic id below.',
     details: [
@@ -496,14 +496,22 @@ function buildInvalidOcrOutputFailure(stdout) {
 }
 
 function validateOcrResult(result) {
-  return Boolean(result && typeof result === 'object' && VALID_OCR_STATUSES.has(result.status) && (result.comments == null || Array.isArray(result.comments)));
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  if (!VALID_OCR_STATUSES.has(result.status)) return false;
+  if (!Object.hasOwn(result, 'comments')) return false;
+  if (!(result.comments === null || Array.isArray(result.comments))) return false;
+  if (result.warnings != null && !Array.isArray(result.warnings)) return false;
+  if ((result.status === 'completed_with_warnings' || result.status === 'completed_with_errors') && (!Array.isArray(result.warnings) || result.warnings.length === 0)) return false;
+  return true;
 }
 
-function buildPartialOcrSummary(result, diagnosticId) {
-  if (result.status !== 'completed_with_errors') return '';
+function buildOcrStatusSummary(result, diagnosticId) {
+  const isError = result.status === 'completed_with_errors';
+  const isWarning = result.status === 'completed_with_warnings';
+  if (!isError && !isWarning) return '';
   const warnings = Array.isArray(result.warnings) ? result.warnings.length : 0;
   return [
-    'OpenCodeReview completed with errors; some files may not have been reviewed.',
+    isError ? 'OpenCodeReview completed with errors; some files may not have been reviewed.' : 'OpenCodeReview completed with warnings.',
     '',
     `- Warnings: ${warnings}`,
     `- Diagnostic id: \`${diagnosticId}\``,
@@ -653,7 +661,7 @@ async function handleReviewJob(payload, config) {
       return;
     }
 
-    const partialSummary = buildPartialOcrSummary(result, diagnosticId);
+    const statusSummary = buildOcrStatusSummary(result, diagnosticId);
     const comments = Array.isArray(result.comments) ? result.comments.slice(0, config.maxComments) : [];
     const overflow = Array.isArray(result.comments) && result.comments.length > config.maxComments ? result.comments.length - config.maxComments : 0;
 
@@ -662,7 +670,7 @@ async function handleReviewJob(payload, config) {
         owner,
         repo,
         issue_number: pullNumber,
-        body: partialSummary || `OpenCodeReview: ${result.message || 'No comments generated. Looks good to me.'}`,
+        body: statusSummary || `OpenCodeReview: ${result.message || 'No comments generated. Looks good to me.'}`,
       });
       return;
     }
@@ -676,7 +684,7 @@ async function handleReviewJob(payload, config) {
     }
 
     const summaryLines = [];
-    if (partialSummary) summaryLines.push(partialSummary);
+    if (statusSummary) summaryLines.push(statusSummary);
     summaryLines.push(`OpenCodeReview found ${comments.length} issue(s).`);
     if (overflow > 0) summaryLines.push(`${overflow} additional issue(s) omitted by MAX_REVIEW_COMMENTS.`);
     if (summary.length > 0) summaryLines.push(`${summary.length} issue(s) could not be attached inline and are summarized below.`);
@@ -712,7 +720,7 @@ async function handleReviewJob(payload, config) {
           failed.push({ comment, error: error.message });
         }
       }
-      if (summary.length > 0 || failed.length > 0) {
+      if (statusSummary || summary.length > 0 || failed.length > 0) {
         const fallback = [summaryBody];
         for (const item of failed) fallback.push(formatSummaryComment(item.comment, item.error));
         await octokit.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body: fallback.join('\n\n---\n\n') });
@@ -804,7 +812,7 @@ export {
   authorizePayload,
   buildFailureComment,
   buildInvalidOcrOutputFailure,
-  buildPartialOcrSummary,
+  buildOcrStatusSummary,
   buildStaleReviewComment,
   buildReviewComment,
   classifyReviewFailure,

@@ -5,7 +5,7 @@ import {
   authorizePayload,
   buildFailureComment,
   buildInvalidOcrOutputFailure,
-  buildPartialOcrSummary,
+  buildOcrStatusSummary,
   buildReviewComment,
   buildStaleReviewComment,
   classifyReviewFailure,
@@ -223,17 +223,28 @@ test('builds invalid OCR JSON failures with safe diagnostics only', () => {
   assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
 });
 
-test('validates OCR JSON shape and summarizes partial failures safely', () => {
+test('validates OCR JSON shape and summarizes warning statuses safely', () => {
   assert.equal(validateOcrResult({ status: 'success', comments: [] }), true);
   assert.equal(validateOcrResult({ status: 'completed_with_errors', comments: [{ path: 'a.js' }], warnings: [{ message: 'secret provider output' }] }), true);
+  assert.equal(validateOcrResult({ status: 'completed_with_warnings', comments: [], warnings: [{ message: 'sensitive detail' }] }), true);
   assert.equal(validateOcrResult({ status: 'weird', comments: [] }), false);
+  assert.equal(validateOcrResult({ status: 'success' }), false);
   assert.equal(validateOcrResult({ status: 'success', comments: {} }), false);
+  assert.equal(validateOcrResult({ status: 'completed_with_warnings', comments: [] }), false);
+  assert.equal(validateOcrResult({ status: 'completed_with_errors', comments: [], warnings: [] }), false);
+  assert.equal(validateOcrResult({ status: 'completed_with_errors', comments: [], warnings: {} }), false);
 
-  const summary = buildPartialOcrSummary({ status: 'completed_with_errors', warnings: [{ message: 'secret provider output' }] }, 'owner/repo#7@123');
-  assert.match(summary, /some files may not have been reviewed/);
-  assert.match(summary, /Warnings: 1/);
-  assert.match(summary, /Diagnostic id: `owner\/repo#7@123`/);
-  assert.doesNotMatch(summary, /secret provider output/);
+  const errorSummary = buildOcrStatusSummary({ status: 'completed_with_errors', warnings: [{ message: 'secret provider output' }] }, 'owner/repo#7@123');
+  assert.match(errorSummary, /some files may not have been reviewed/);
+  assert.match(errorSummary, /Warnings: 1/);
+  assert.match(errorSummary, /Diagnostic id: `owner\/repo#7@123`/);
+  assert.doesNotMatch(errorSummary, /secret provider output/);
+
+  const warningSummary = buildOcrStatusSummary({ status: 'completed_with_warnings', comments: [], warnings: [{ type: 'warning', message: 'sensitive detail' }] }, 'owner/repo#7@123');
+  assert.match(warningSummary, /completed with warnings/);
+  assert.match(warningSummary, /Warnings: 1/);
+  assert.match(warningSummary, /Diagnostic id: `owner\/repo#7@123`/);
+  assert.doesNotMatch(warningSummary, /sensitive detail/);
 });
 
 test('classifies GitHub API rate limits separately from permission errors', () => {
