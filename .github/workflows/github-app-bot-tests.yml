@@ -20,7 +20,7 @@ jobs:
     container:
       image: node:20
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53b118bd6c0e38e67972
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
 
