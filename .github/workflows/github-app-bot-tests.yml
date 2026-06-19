@@ -20,10 +20,12 @@ jobs:
     container:
       image: node:20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53b118bd6c0e38e67972
+        with:
+          persist-credentials: false
 
       - name: Trust workspace
-        run: git config --global safe.directory '*'
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Install dependencies
         working-directory: github-app-bot

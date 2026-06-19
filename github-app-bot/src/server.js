@@ -280,14 +280,14 @@ function runProcess(command, args, options) {
       clearTimeout(timer);
       reject(new ProcessError({ phase: options.phase, command, args, timedOut: false, timeoutMs: options.timeoutMs, exitCode: null, stdout, stderr, cause: error }));
     });
-    child.on('close', code => {
+    child.on('close', (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (code === 0) {
+      if (code === 0 && !timedOut) {
         resolve({ stdout, stderr });
       } else {
-        reject(new ProcessError({ phase: options.phase, command, args, timedOut, timeoutMs: options.timeoutMs, exitCode: code, stdout, stderr }));
+        reject(new ProcessError({ phase: options.phase, command, args, timedOut, timeoutMs: options.timeoutMs, exitCode: code, stdout, stderr, cause: signal ? new Error(`terminated by ${signal}`) : undefined }));
       }
     });
   });
