@@ -206,5 +206,5 @@ server {
 - 私有仓库一律忽略；本机器人仅通过公开 HTTPS remote 拉取 Pull Request。
 - 队列位于内存中。重启容器会丢弃已入队但尚未开始的任务。
 - `OCR_CONCURRENCY=1` 会串行化 OCR 的文件审查。仅当 LLM 提供方能承受并发时再调高。
-- 失败评论会归类为超时、配置错误、供应商鉴权失败、限流、供应商不可用和未知运行时错误。评论包含诊断 id，但不会包含原始 OCR 输出或供应商响应。
+- 失败评论会归类为 checkout、GitHub API、超时、配置错误、供应商鉴权失败、限流、供应商不可用、PR 过期、OCR 输出非法和运行时错误。评论包含诊断 id，但不会包含原始 OCR 输出或供应商响应。
 - `CLEANUP_WORKDIR=true` 会在每次任务结束后删除 `/data/repos/<owner>-<repo>-<pr>-<sha>`。

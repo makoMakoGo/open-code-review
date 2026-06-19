@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   authorizePayload,
   buildFailureComment,
+  buildInvalidOcrOutputFailure,
   buildReviewComment,
   buildStaleReviewComment,
   classifyReviewFailure,
@@ -145,8 +146,7 @@ test('invalid internal token can be rejected before reading proxy body', async (
   await assert.rejects(readRequestBody(req, 64 * 1024 * 1024), /body reader should not be attached/);
 });
 test('classifies OCR timeout without pretending progress is available', () => {
-  const error = new Error('ocr review timed out after 1800000ms: ');
-  const failure = classifyReviewFailure(error, { jobTimeoutMs: 1800000 });
+  const failure = classifyReviewFailure({ phase: 'ocr', timedOut: true, timeoutMs: 1800000, message: 'ocr review timed out' }, { jobTimeoutMs: 1800000 });
   assert.equal(failure.kind, 'job_timeout');
   assert.equal(failure.retryable, true);
   assert.deepEqual(failure.details, ['Timeout: 30m']);
@@ -156,38 +156,68 @@ test('classifies OCR timeout without pretending progress is available', () => {
   assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
 });
 
-test('classifies provider auth and rate-limit failures without leaking raw output', () => {
-  const auth = classifyReviewFailure(new Error('provider returned 401 unauthorized: invalid api key'), { jobTimeoutMs: 1800000 });
+test('classifies OCR provider auth and rate-limit failures without leaking raw output', () => {
+  const auth = classifyReviewFailure({ phase: 'ocr', message: 'provider returned 401 unauthorized: invalid api key' }, { jobTimeoutMs: 1800000 });
   assert.equal(auth.kind, 'provider_auth_failed');
   assert.equal(auth.retryable, false);
   assert.doesNotMatch(buildFailureComment(auth, 'owner/repo#7@123'), /invalid api key/);
 
-  const rateLimit = classifyReviewFailure(new Error('provider returned 429 too many requests: concurrency limit exceeded'), { jobTimeoutMs: 1800000 });
+  const rateLimit = classifyReviewFailure({ phase: 'ocr', message: 'provider returned 403 rate limit exceeded' }, { jobTimeoutMs: 1800000 });
   assert.equal(rateLimit.kind, 'provider_rate_limited');
   assert.equal(rateLimit.retryable, true);
 });
 
-test('classifies OCR config, provider availability, and unknown failures', () => {
-  const config = classifyReviewFailure(new Error('OCR environment: unsupported auth_header value "x-internal-token"'), { jobTimeoutMs: 1800000 });
+test('classifies OCR config, provider availability, and runtime failures', () => {
+  const config = classifyReviewFailure({ phase: 'ocr', message: 'OCR environment: unsupported auth_header value "x-internal-token"' }, { jobTimeoutMs: 1800000 });
   assert.equal(config.kind, 'ocr_config_error');
   assert.equal(config.retryable, false);
 
-  const unavailable = classifyReviewFailure(new Error('fetch failed: ECONNRESET'), { jobTimeoutMs: 1800000 });
+  const unavailable = classifyReviewFailure({ phase: 'ocr', message: 'fetch failed: ECONNRESET' }, { jobTimeoutMs: 1800000 });
   assert.equal(unavailable.kind, 'provider_unavailable');
   assert.equal(unavailable.retryable, true);
 
-  const unknown = classifyReviewFailure(new Error('unexpected runtime failure'), { jobTimeoutMs: 1800000 });
-  assert.equal(unknown.kind, 'unknown');
+  const unknown = classifyReviewFailure({ phase: 'ocr', message: 'unexpected runtime failure' }, { jobTimeoutMs: 1800000 });
+  assert.equal(unknown.kind, 'ocr_runtime_error');
   assert.equal(unknown.retryable, false);
 });
 
-test('detects stale review results when PR head changes during OCR', () => {
-  assert.equal(shouldDiscardStaleReview('old-sha', 'new-sha'), true);
-  assert.equal(shouldDiscardStaleReview('same-sha', 'same-sha'), false);
-  const body = buildStaleReviewComment('old-sha', 'new-sha', 'owner/repo#7@123');
+test('detects stale review results when PR head or base changes during OCR', () => {
+  const reviewed = { headSha: 'old-head', baseSha: 'old-base', baseRef: 'main' };
+  assert.equal(shouldDiscardStaleReview(reviewed, { head: { sha: 'new-head' }, base: { sha: 'old-base', ref: 'main' } }), true);
+  assert.equal(shouldDiscardStaleReview(reviewed, { head: { sha: 'old-head' }, base: { sha: 'new-base', ref: 'main' } }), true);
+  assert.equal(shouldDiscardStaleReview(reviewed, { head: { sha: 'old-head' }, base: { sha: 'old-base', ref: 'release' } }), true);
+  assert.equal(shouldDiscardStaleReview(reviewed, { head: { sha: 'old-head' }, base: { sha: 'old-base', ref: 'main' } }), false);
+  const body = buildStaleReviewComment(reviewed, { head: { sha: 'new-head' }, base: { sha: 'new-base', ref: 'release' } }, 'owner/repo#7@123');
   assert.match(body, /PR changed while OpenCodeReview was running/);
-  assert.match(body, /Reviewed head: `old-sha`/);
-  assert.match(body, /Current head: `new-sha`/);
+  assert.match(body, /Reviewed head: `old-head`/);
+  assert.match(body, /Current head: `new-head`/);
+  assert.match(body, /Reviewed base: `main@old-base`/);
+  assert.match(body, /Current base: `release@new-base`/);
+  assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
+});
+
+test('classifies non-OCR failures by phase instead of provider heuristics', () => {
+  const git = classifyReviewFailure({ phase: 'git', command: 'git', timedOut: true, timeoutMs: 180000, message: 'git fetch timed out after 180000ms' }, { jobTimeoutMs: 1800000 });
+  assert.equal(git.kind, 'git_error');
+  assert.equal(git.details[0], 'Timeout: 3m');
+
+  const github = classifyReviewFailure({ status: 502, message: 'GitHub API 502' }, { jobTimeoutMs: 1800000 });
+  assert.equal(github.kind, 'github_api_error');
+  assert.equal(github.retryable, true);
+
+  const runtime = classifyReviewFailure(new Error('unexpected runtime failure'), { jobTimeoutMs: 1800000 });
+  assert.equal(runtime.kind, 'bot_runtime_error');
+});
+
+test('builds invalid OCR JSON failures with safe diagnostics only', () => {
+  const failure = buildInvalidOcrOutputFailure('{not json');
+  assert.equal(failure.kind, 'invalid_ocr_output');
+  assert.deepEqual(failure.details, [
+    'OCR stdout bytes: 9',
+    'OCR stdout sha256: 92072df399cb74703f8e86f450d552bc0bb01eeeb98a90985a1b7772c8fd0016',
+  ]);
+  const body = buildFailureComment(failure, 'owner/repo#7@123');
+  assert.doesNotMatch(body, /not json/);
   assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
 });
 

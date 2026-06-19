@@ -206,5 +206,5 @@ server {
 - Private repositories are always ignored; this bot fetches pull requests through public HTTPS remotes only.
 - The queue is in-memory. Restarting the container drops queued but not-yet-started jobs.
 - `OCR_CONCURRENCY=1` serializes OCR file reviews. Raise only if the LLM provider can handle concurrent requests.
-- Failure comments are classified into timeout, configuration, provider authentication, rate-limit, provider availability, and unknown runtime failures. They include a diagnostic id but never include raw OCR output or provider responses.
+- Failure comments are classified into checkout, GitHub API, timeout, configuration, provider authentication, rate-limit, provider availability, stale PR, invalid OCR output, and runtime failures. They include a diagnostic id but never include raw OCR output or provider responses.
 - `CLEANUP_WORKDIR=true` deletes `/data/repos/<owner>-<repo>-<pr>-<sha>` after each job.
