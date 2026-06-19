@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     container:
       image: node:20
     steps:

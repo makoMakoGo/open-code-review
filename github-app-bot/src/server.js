@@ -11,6 +11,7 @@ const DEFAULT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_LLM_PROXY_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
 
 const GIT_TIMEOUT_MS = 180_000;
+const VALID_OCR_STATUSES = new Set(['success', 'completed_with_warnings', 'completed_with_errors', 'skipped']);
 
 function requiredEnv(name, env = process.env) {
   const value = env[name];
@@ -457,12 +458,15 @@ function classifyReviewFailure(error, config) {
 
   if (Number.isInteger(error?.status) || Number.isInteger(error?.response?.status)) {
     const status = error.status || error.response.status;
+    const headers = error.response?.headers ?? {};
+    const message = String(error.message || '').toLowerCase();
+    const rateLimited = status === 429 || (status === 403 && (String(headers['x-ratelimit-remaining']) === '0' || headers['retry-after'] != null || message.includes('rate limit')));
     return {
-      kind: 'github_api_error',
-      title: 'OpenCodeReview could not complete a GitHub API request.',
-      reason: `GitHub API returned ${status}`,
-      retryable: status >= 500 || status === 429,
-      next: 'Retry later. If this keeps happening, a bot operator should inspect the GitHub App installation and permissions.',
+      kind: rateLimited ? 'github_rate_limited' : 'github_api_error',
+      title: rateLimited ? 'OpenCodeReview was rate-limited by GitHub.' : 'OpenCodeReview could not complete a GitHub API request.',
+      reason: rateLimited ? `GitHub API rate limit returned ${status}` : `GitHub API returned ${status}`,
+      retryable: rateLimited || status >= 500,
+      next: rateLimited ? 'Retry after GitHub rate limits reset.' : 'Retry later. If this keeps happening, a bot operator should inspect the GitHub App installation and permissions.',
       details: [],
     };
   }
@@ -489,6 +493,21 @@ function buildInvalidOcrOutputFailure(stdout) {
       `OCR stdout sha256: ${crypto.createHash('sha256').update(stdout).digest('hex')}`,
     ],
   };
+}
+
+function validateOcrResult(result) {
+  return Boolean(result && typeof result === 'object' && VALID_OCR_STATUSES.has(result.status) && (result.comments == null || Array.isArray(result.comments)));
+}
+
+function buildPartialOcrSummary(result, diagnosticId) {
+  if (result.status !== 'completed_with_errors') return '';
+  const warnings = Array.isArray(result.warnings) ? result.warnings.length : 0;
+  return [
+    'OpenCodeReview completed with errors; some files may not have been reviewed.',
+    '',
+    `- Warnings: ${warnings}`,
+    `- Diagnostic id: \`${diagnosticId}\``,
+  ].join('\n');
 }
 
 function buildFailureComment(failure, diagnosticId) {
@@ -625,12 +644,16 @@ async function handleReviewJob(payload, config) {
     try {
       result = JSON.parse(review.stdout);
     } catch (error) {
-      const failure = buildInvalidOcrOutputFailure(review.stdout);
+      result = null;
       console.error('invalid OCR JSON', { owner, repo, pullNumber, diagnosticId, stdoutBytes: Buffer.byteLength(review.stdout, 'utf8'), stdoutSha256: crypto.createHash('sha256').update(review.stdout).digest('hex'), error: error.message });
+    }
+    if (!validateOcrResult(result)) {
+      const failure = buildInvalidOcrOutputFailure(review.stdout);
       await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
       return;
     }
 
+    const partialSummary = buildPartialOcrSummary(result, diagnosticId);
     const comments = Array.isArray(result.comments) ? result.comments.slice(0, config.maxComments) : [];
     const overflow = Array.isArray(result.comments) && result.comments.length > config.maxComments ? result.comments.length - config.maxComments : 0;
 
@@ -639,7 +662,7 @@ async function handleReviewJob(payload, config) {
         owner,
         repo,
         issue_number: pullNumber,
-        body: `OpenCodeReview: ${result.message || 'No comments generated. Looks good to me.'}`,
+        body: partialSummary || `OpenCodeReview: ${result.message || 'No comments generated. Looks good to me.'}`,
       });
       return;
     }
@@ -652,7 +675,9 @@ async function handleReviewJob(payload, config) {
       else summary.push({ comment });
     }
 
-    const summaryLines = [`OpenCodeReview found ${comments.length} issue(s).`];
+    const summaryLines = [];
+    if (partialSummary) summaryLines.push(partialSummary);
+    summaryLines.push(`OpenCodeReview found ${comments.length} issue(s).`);
     if (overflow > 0) summaryLines.push(`${overflow} additional issue(s) omitted by MAX_REVIEW_COMMENTS.`);
     if (summary.length > 0) summaryLines.push(`${summary.length} issue(s) could not be attached inline and are summarized below.`);
     let summaryBody = summaryLines.join('\n');
@@ -779,6 +804,7 @@ export {
   authorizePayload,
   buildFailureComment,
   buildInvalidOcrOutputFailure,
+  buildPartialOcrSummary,
   buildStaleReviewComment,
   buildReviewComment,
   classifyReviewFailure,
@@ -792,6 +818,7 @@ export {
   loadConfig,
   timingSafeEqualString,
   shouldDiscardStaleReview,
+  validateOcrResult,
   verifyGitHubSignature,
   verifyInternalToken,
 };

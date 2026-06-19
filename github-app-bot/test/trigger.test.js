@@ -5,6 +5,7 @@ import {
   authorizePayload,
   buildFailureComment,
   buildInvalidOcrOutputFailure,
+  buildPartialOcrSummary,
   buildReviewComment,
   buildStaleReviewComment,
   classifyReviewFailure,
@@ -15,6 +16,7 @@ import {
   readRequestBody,
   loadConfig,
   shouldDiscardStaleReview,
+  validateOcrResult,
   verifyGitHubSignature,
   verifyInternalToken,
 } from '../src/server.js';
@@ -219,6 +221,29 @@ test('builds invalid OCR JSON failures with safe diagnostics only', () => {
   const body = buildFailureComment(failure, 'owner/repo#7@123');
   assert.doesNotMatch(body, /not json/);
   assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
+});
+
+test('validates OCR JSON shape and summarizes partial failures safely', () => {
+  assert.equal(validateOcrResult({ status: 'success', comments: [] }), true);
+  assert.equal(validateOcrResult({ status: 'completed_with_errors', comments: [{ path: 'a.js' }], warnings: [{ message: 'secret provider output' }] }), true);
+  assert.equal(validateOcrResult({ status: 'weird', comments: [] }), false);
+  assert.equal(validateOcrResult({ status: 'success', comments: {} }), false);
+
+  const summary = buildPartialOcrSummary({ status: 'completed_with_errors', warnings: [{ message: 'secret provider output' }] }, 'owner/repo#7@123');
+  assert.match(summary, /some files may not have been reviewed/);
+  assert.match(summary, /Warnings: 1/);
+  assert.match(summary, /Diagnostic id: `owner\/repo#7@123`/);
+  assert.doesNotMatch(summary, /secret provider output/);
+});
+
+test('classifies GitHub API rate limits separately from permission errors', () => {
+  const rateLimited = classifyReviewFailure({ status: 403, message: 'API rate limit exceeded', response: { headers: { 'x-ratelimit-remaining': '0' } } }, { jobTimeoutMs: 1800000 });
+  assert.equal(rateLimited.kind, 'github_rate_limited');
+  assert.equal(rateLimited.retryable, true);
+
+  const permission = classifyReviewFailure({ status: 403, message: 'Resource not accessible by integration', response: { headers: {} } }, { jobTimeoutMs: 1800000 });
+  assert.equal(permission.kind, 'github_api_error');
+  assert.equal(permission.retryable, false);
 });
 
 function validEnv() {
