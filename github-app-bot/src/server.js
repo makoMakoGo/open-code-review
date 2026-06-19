@@ -10,6 +10,9 @@ import { App } from 'octokit';
 const DEFAULT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_LLM_PROXY_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
 
+const GIT_TIMEOUT_MS = 180_000;
+const VALID_OCR_STATUSES = new Set(['success', 'completed_with_warnings', 'completed_with_errors', 'skipped']);
+
 function requiredEnv(name, env = process.env) {
   const value = env[name];
   if (!value || value.trim() === '') {
@@ -168,6 +171,18 @@ function copyProxyHeaders(req, config) {
   if (config.llmProxyUpstreamAuthHeader && config.llmProxyUpstreamToken) headers[config.llmProxyUpstreamAuthHeader] = config.llmProxyUpstreamToken;
   return headers;
 }
+function extractInternalTokenFromHeaders(headers) {
+  const apiKey = headers['x-api-key'];
+  if (apiKey != null) return String(apiKey);
+
+  const authorization = headers.authorization;
+  if (authorization == null) return '';
+  const value = String(authorization).trim();
+  const bearerPrefix = 'bearer ';
+  if (value.toLowerCase().startsWith(bearerPrefix)) return value.slice(bearerPrefix.length).trim();
+  return value;
+}
+
 
 function verifyInternalToken(expected, actual) {
   return expected !== '' && actual != null && timingSafeEqualString(expected, String(actual));
@@ -222,6 +237,23 @@ function authorizePayload(payload, config) {
   return { ok: true };
 }
 
+class ProcessError extends Error {
+  constructor({ phase, command, args, timedOut, timeoutMs, exitCode, stdout, stderr, cause }) {
+    const reason = timedOut ? `timed out after ${timeoutMs}ms` : exitCode == null ? 'failed to start' : `exited ${exitCode}`;
+    super(`${command} ${args.join(' ')} ${reason}: ${stderr || stdout || cause?.message || ''}`);
+    this.name = 'ProcessError';
+    this.phase = phase;
+    this.command = command;
+    this.args = args;
+    this.timedOut = timedOut;
+    this.timeoutMs = timeoutMs;
+    this.exitCode = exitCode;
+    this.stdout = stdout || '';
+    this.stderr = stderr || '';
+    this.cause = cause;
+  }
+}
+
 function runProcess(command, args, options) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -247,17 +279,16 @@ function runProcess(command, args, options) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(error);
+      reject(new ProcessError({ phase: options.phase, command, args, timedOut: false, timeoutMs: options.timeoutMs, exitCode: null, stdout, stderr, cause: error }));
     });
-    child.on('close', code => {
+    child.on('close', (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (code === 0) {
+      if (code === 0 && !timedOut) {
         resolve({ stdout, stderr });
       } else {
-        const reason = timedOut ? `timed out after ${options.timeoutMs}ms` : `exited ${code}`;
-        reject(new Error(`${command} ${args.join(' ')} ${reason}: ${stderr || stdout}`));
+        reject(new ProcessError({ phase: options.phase, command, args, timedOut, timeoutMs: options.timeoutMs, exitCode: code, stdout, stderr, cause: signal ? new Error(`terminated by ${signal}`) : undefined }));
       }
     });
   });
@@ -330,6 +361,193 @@ function buildReviewComment(comment) {
   }
   return reviewComment;
 }
+function formatDurationMs(ms) {
+  if (!Number.isSafeInteger(ms) || ms < 0) return 'unknown duration';
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes > 0 && remainingSeconds === 0) return `${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${remainingSeconds}s`;
+  return `${seconds}s`;
+}
+
+function classifyOcrFailure(error, config) {
+  const message = String(error?.message || error || '');
+  const lower = message.toLowerCase();
+  const timeoutMs = error?.timedOut && Number.isSafeInteger(error.timeoutMs) ? error.timeoutMs : null;
+
+  if (timeoutMs != null) {
+    const timeout = formatDurationMs(timeoutMs);
+    return {
+      kind: 'job_timeout',
+      title: 'OpenCodeReview did not finish before the bot timeout.',
+      reason: `review exceeded the ${timeout} job timeout`,
+      retryable: true,
+      next: 'Retry after reducing PR size, raising JOB_TIMEOUT_MS, or increasing OCR_CONCURRENCY.',
+      details: [`Timeout: ${timeout}`],
+    };
+  }
+
+  if (lower.includes('unsupported auth_header') || lower.includes('missing required environment variable') || lower.includes('ocr environment') || lower.includes('resolve llm endpoint')) {
+    return {
+      kind: 'ocr_config_error',
+      title: 'OpenCodeReview could not start because the LLM configuration is invalid.',
+      reason: 'bot service configuration is invalid',
+      retryable: false,
+      next: 'A bot operator needs to fix the service configuration before retrying.',
+      details: [],
+    };
+  }
+
+  if (/\b429\b/.test(lower) || lower.includes('rate limit') || lower.includes('rate-limit') || lower.includes('too many requests') || lower.includes('concurrency limit')) {
+    return {
+      kind: 'provider_rate_limited',
+      title: 'OpenCodeReview was rate-limited by the LLM provider.',
+      reason: 'provider rate or concurrency limit was reached',
+      retryable: true,
+      next: 'Retry later, or ask a bot operator to lower OCR_CONCURRENCY or raise the provider quota.',
+      details: [],
+    };
+  }
+
+  if (/\b(401|403)\b/.test(lower) || lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('invalid api key') || lower.includes('invalid_api_key')) {
+    return {
+      kind: 'provider_auth_failed',
+      title: 'OpenCodeReview could not authenticate with the LLM provider.',
+      reason: 'provider authentication failed',
+      retryable: false,
+      next: 'A bot operator needs to refresh or correct the provider token before retrying.',
+      details: [],
+    };
+  }
+
+  if (/\b5\d\d\b/.test(lower) || lower.includes('econnreset') || lower.includes('etimedout') || lower.includes('enotfound') || lower.includes('fetch failed') || lower.includes('socket hang up')) {
+    return {
+      kind: 'provider_unavailable',
+      title: 'OpenCodeReview failed because the LLM provider was unavailable.',
+      reason: 'provider service or network request failed',
+      retryable: true,
+      next: 'Retry later. If this keeps happening, a bot operator should inspect provider connectivity.',
+      details: [],
+    };
+  }
+
+  return {
+    kind: 'ocr_runtime_error',
+    title: 'OpenCodeReview failed while running OCR.',
+    reason: 'unclassified OCR runtime error',
+    retryable: false,
+    next: 'A bot operator should inspect the logs with the diagnostic id below.',
+    details: [],
+  };
+}
+
+function classifyReviewFailure(error, config) {
+  if (error?.phase === 'ocr') return classifyOcrFailure(error, config);
+  if (error?.phase === 'git') {
+    const timeout = error.timedOut && Number.isSafeInteger(error.timeoutMs) ? formatDurationMs(error.timeoutMs) : null;
+    return {
+      kind: 'git_error',
+      title: 'OpenCodeReview could not prepare the pull request checkout.',
+      reason: timeout ? `git ${error.command || 'command'} exceeded the ${timeout} timeout` : 'git command failed',
+      retryable: true,
+      next: 'Retry later. If this keeps happening, a bot operator should inspect repository access and network connectivity.',
+      details: timeout ? [`Timeout: ${timeout}`] : [],
+    };
+  }
+
+  if (Number.isInteger(error?.status) || Number.isInteger(error?.response?.status)) {
+    const status = error.status || error.response.status;
+    const headers = error.response?.headers ?? {};
+    const message = String(error.message || '').toLowerCase();
+    const rateLimited = status === 429 || (status === 403 && (String(headers['x-ratelimit-remaining']) === '0' || headers['retry-after'] != null || message.includes('rate limit')));
+    return {
+      kind: rateLimited ? 'github_rate_limited' : 'github_api_error',
+      title: rateLimited ? 'OpenCodeReview was rate-limited by GitHub.' : 'OpenCodeReview could not complete a GitHub API request.',
+      reason: rateLimited ? `GitHub API rate limit returned ${status}` : `GitHub API returned ${status}`,
+      retryable: rateLimited || status >= 500,
+      next: rateLimited ? 'Retry after GitHub rate limits reset.' : 'Retry later. If this keeps happening, a bot operator should inspect the GitHub App installation and permissions.',
+      details: [],
+    };
+  }
+
+  return {
+    kind: 'bot_runtime_error',
+    title: 'OpenCodeReview failed before posting review comments.',
+    reason: 'unclassified bot runtime error',
+    retryable: false,
+    next: 'A bot operator should inspect the logs with the diagnostic id below.',
+    details: [],
+  };
+}
+
+function buildInvalidOcrOutputFailure(stdout) {
+  return {
+    kind: 'invalid_ocr_output',
+    title: 'OpenCodeReview completed but returned invalid output.',
+    reason: 'OCR output did not match the expected JSON schema',
+    retryable: false,
+    next: 'A bot operator should inspect the logs with the diagnostic id below.',
+    details: [
+      `OCR stdout bytes: ${Buffer.byteLength(stdout, 'utf8')}`,
+      `OCR stdout sha256: ${crypto.createHash('sha256').update(stdout).digest('hex')}`,
+    ],
+  };
+}
+
+function validateOcrResult(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  if (!VALID_OCR_STATUSES.has(result.status)) return false;
+  if (!Object.hasOwn(result, 'comments')) return false;
+  if (!(result.comments === null || Array.isArray(result.comments))) return false;
+  if (result.warnings != null && !Array.isArray(result.warnings)) return false;
+  if ((result.status === 'completed_with_warnings' || result.status === 'completed_with_errors') && (!Array.isArray(result.warnings) || result.warnings.length === 0)) return false;
+  return true;
+}
+
+function buildOcrStatusSummary(result, diagnosticId) {
+  const isError = result.status === 'completed_with_errors';
+  const isWarning = result.status === 'completed_with_warnings';
+  if (!isError && !isWarning) return '';
+  const warnings = Array.isArray(result.warnings) ? result.warnings.length : 0;
+  return [
+    isError ? 'OpenCodeReview completed with errors; some files may not have been reviewed.' : 'OpenCodeReview completed with warnings.',
+    '',
+    `- Warnings: ${warnings}`,
+    `- Diagnostic id: \`${diagnosticId}\``,
+  ].join('\n');
+}
+
+function buildFailureComment(failure, diagnosticId) {
+  const lines = [
+    failure.title,
+    '',
+    `- Reason: ${failure.reason}`,
+    `- Retry: ${failure.retryable ? 'yes' : 'no'}`,
+  ];
+  for (const detail of failure.details) lines.push(`- ${detail}`);
+  lines.push(`- Next: ${failure.next}`);
+  lines.push(`- Diagnostic id: \`${diagnosticId}\``);
+  return lines.join('\n');
+}
+
+function shouldDiscardStaleReview(reviewed, currentPull) {
+  return reviewed.headSha !== currentPull.head.sha || reviewed.baseSha !== currentPull.base.sha || reviewed.baseRef !== currentPull.base.ref;
+}
+
+function buildStaleReviewComment(reviewed, currentPull, diagnosticId) {
+  return [
+    'PR changed while OpenCodeReview was running; stale review results were discarded.',
+    '',
+    `- Reviewed head: \`${reviewed.headSha}\``,
+    `- Current head: \`${currentPull.head.sha}\``,
+    `- Reviewed base: \`${reviewed.baseRef}@${reviewed.baseSha}\``,
+    `- Current base: \`${currentPull.base.ref}@${currentPull.base.sha}\``,
+    '- Result: no review comments were posted for the stale diff',
+    '- Next: re-run the trigger if a review is still needed for the current diff',
+    `- Diagnostic id: \`${diagnosticId}\``,
+  ].join('\n');
+}
 
 class JobQueue {
   constructor(handler) {
@@ -364,12 +582,12 @@ class JobQueue {
   }
 }
 
-async function postFailureComment(octokit, owner, repo, pullNumber) {
+async function postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId) {
   await octokit.rest.issues.createComment({
     owner,
     repo,
     issue_number: pullNumber,
-    body: 'OpenCodeReview failed before posting review comments. Check bot logs for this pull request and retry after fixing the service configuration.',
+    body: buildFailureComment(failure, diagnosticId),
   });
 }
 
@@ -382,53 +600,68 @@ async function handleReviewJob(payload, config) {
   const privateKey = requiredEnvFromFile(config.privateKeyPath, 'GITHUB_APP_PRIVATE_KEY_PATH');
   const app = new App({ appId: config.appId, privateKey });
   const octokit = await app.getInstallationOctokit(installationId);
+  const diagnosticId = `${owner}/${repo}#${pullNumber}@${payload.comment.id}`;
 
   try {
     const { data: pull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
-    console.log('job started', { owner, repo, pullNumber, head: pull.head.sha });
+    console.log('job started', { owner, repo, pullNumber, head: pull.head.sha, diagnosticId });
     if (pull.base.repo.private) {
       console.log('skipping private repo', { owner, repo, pullNumber });
       return;
     }
 
     const headSha = pull.head.sha;
+    const baseSha = pull.base.sha;
     const baseRef = pull.base.ref;
+    const baseSnapshot = { headSha, baseSha, baseRef };
     workdir = path.join(config.repoRoot, `${safeSlug(owner)}-${safeSlug(repo)}-${pullNumber}-${headSha.slice(0, 12)}`);
     await ensureCleanDir(workdir);
 
     const commonEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-    await runProcess('git', ['init'], { cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
-    await runProcess('git', ['remote', 'add', 'origin', `https://github.com/${owner}/${repo}.git`], { cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
-    await runProcess('git', ['fetch', '--no-tags', '--prune', 'origin', `refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`, `pull/${pullNumber}/head:refs/remotes/origin/pr-${pullNumber}`], { cwd: workdir, env: commonEnv, timeoutMs: 180_000 });
-    await runProcess('git', ['checkout', '--detach', headSha], { cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
+    await runProcess('git', ['init'], { phase: 'git', cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
+    await runProcess('git', ['remote', 'add', 'origin', `https://github.com/${owner}/${repo}.git`], { phase: 'git', cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
+    await runProcess('git', ['fetch', '--no-tags', '--prune', 'origin', baseSha, `pull/${pullNumber}/head:refs/remotes/origin/pr-${pullNumber}`], { phase: 'git', cwd: workdir, env: commonEnv, timeoutMs: GIT_TIMEOUT_MS });
+    await runProcess('git', ['checkout', '--detach', headSha], { phase: 'git', cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
 
     const ocrEnv = { ...process.env, ...config.ocrEnv, GIT_TERMINAL_PROMPT: '0' };
     const ocrArgs = [
       'review',
-      '--from', `origin/${baseRef}`,
+      '--from', baseSha,
       '--to', headSha,
       '--format', 'json',
       '--concurrency', String(config.ocrConcurrency),
       '--max-git-procs', String(config.ocrMaxGitProcs),
       '--timeout', String(config.ocrPerFileTimeoutMinutes),
     ];
-    console.log('ocr started', { owner, repo, pullNumber, concurrency: config.ocrConcurrency, maxGitProcs: config.ocrMaxGitProcs, perFileTimeoutMinutes: config.ocrPerFileTimeoutMinutes });
-    const review = await runProcess('ocr', ocrArgs, { cwd: workdir, env: ocrEnv, timeoutMs: config.jobTimeoutMs });
-    console.log('ocr completed', { owner, repo, pullNumber });
-
-    let result;
-    try {
-      result = JSON.parse(review.stdout);
-    } catch {
+    console.log('ocr started', { owner, repo, pullNumber, base: baseSha, head: headSha, concurrency: config.ocrConcurrency, maxGitProcs: config.ocrMaxGitProcs, perFileTimeoutMinutes: config.ocrPerFileTimeoutMinutes, diagnosticId });
+    const review = await runProcess('ocr', ocrArgs, { phase: 'ocr', cwd: workdir, env: ocrEnv, timeoutMs: config.jobTimeoutMs });
+    console.log('ocr completed', { owner, repo, pullNumber, diagnosticId });
+    const { data: currentPull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+    if (shouldDiscardStaleReview(baseSnapshot, currentPull)) {
+      console.log('discarding stale review result', { owner, repo, pullNumber, diagnosticId, reviewedHead: headSha, currentHead: currentPull.head.sha, reviewedBase: baseSha, currentBase: currentPull.base.sha, reviewedBaseRef: baseRef, currentBaseRef: currentPull.base.ref });
       await octokit.rest.issues.createComment({
         owner,
         repo,
         issue_number: pullNumber,
-        body: 'OpenCodeReview completed but returned invalid JSON. Check bot logs for this pull request.',
+        body: buildStaleReviewComment(baseSnapshot, currentPull, diagnosticId),
       });
       return;
     }
 
+    let result;
+    try {
+      result = JSON.parse(review.stdout);
+    } catch (error) {
+      result = null;
+      console.error('invalid OCR JSON', { owner, repo, pullNumber, diagnosticId, stdoutBytes: Buffer.byteLength(review.stdout, 'utf8'), stdoutSha256: crypto.createHash('sha256').update(review.stdout).digest('hex'), error: error.message });
+    }
+    if (!validateOcrResult(result)) {
+      const failure = buildInvalidOcrOutputFailure(review.stdout);
+      await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
+      return;
+    }
+
+    const statusSummary = buildOcrStatusSummary(result, diagnosticId);
     const comments = Array.isArray(result.comments) ? result.comments.slice(0, config.maxComments) : [];
     const overflow = Array.isArray(result.comments) && result.comments.length > config.maxComments ? result.comments.length - config.maxComments : 0;
 
@@ -437,7 +670,7 @@ async function handleReviewJob(payload, config) {
         owner,
         repo,
         issue_number: pullNumber,
-        body: `OpenCodeReview: ${result.message || 'No comments generated. Looks good to me.'}`,
+        body: statusSummary || `OpenCodeReview: ${result.message || 'No comments generated. Looks good to me.'}`,
       });
       return;
     }
@@ -450,7 +683,9 @@ async function handleReviewJob(payload, config) {
       else summary.push({ comment });
     }
 
-    const summaryLines = [`OpenCodeReview found ${comments.length} issue(s).`];
+    const summaryLines = [];
+    if (statusSummary) summaryLines.push(statusSummary);
+    summaryLines.push(`OpenCodeReview found ${comments.length} issue(s).`);
     if (overflow > 0) summaryLines.push(`${overflow} additional issue(s) omitted by MAX_REVIEW_COMMENTS.`);
     if (summary.length > 0) summaryLines.push(`${summary.length} issue(s) could not be attached inline and are summarized below.`);
     let summaryBody = summaryLines.join('\n');
@@ -485,15 +720,16 @@ async function handleReviewJob(payload, config) {
           failed.push({ comment, error: error.message });
         }
       }
-      if (summary.length > 0 || failed.length > 0) {
+      if (statusSummary || summary.length > 0 || failed.length > 0) {
         const fallback = [summaryBody];
         for (const item of failed) fallback.push(formatSummaryComment(item.comment, item.error));
         await octokit.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body: fallback.join('\n\n---\n\n') });
       }
     }
   } catch (error) {
-    console.error('review job failed', { owner, repo, pullNumber, error: error.stack || error.message });
-    await postFailureComment(octokit, owner, repo, pullNumber);
+    const failure = classifyReviewFailure(error, config);
+    console.error('review job failed', { owner, repo, pullNumber, diagnosticId, failure: failure.kind, error: error.stack || error.message });
+    await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
   } finally {
     if (config.cleanupWorkdir && workdir) {
       await fs.rm(workdir, { recursive: true, force: true });
@@ -512,7 +748,7 @@ function createServer(config) {
         return;
       }
       if (req.method === 'POST' && req.url === '/llm/anthropic/v1/messages') {
-        if (!verifyInternalToken(config.llmProxyInternalToken, req.headers['x-internal-token'])) {
+        if (!verifyInternalToken(config.llmProxyInternalToken, extractInternalTokenFromHeaders(req.headers))) {
           json(res, 401, { error: 'invalid internal token' });
           return;
         }
@@ -574,15 +810,23 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 
 export {
   authorizePayload,
+  buildFailureComment,
+  buildInvalidOcrOutputFailure,
+  buildOcrStatusSummary,
+  buildStaleReviewComment,
   buildReviewComment,
+  classifyReviewFailure,
   copyProxyHeaders,
   createServer,
+  extractInternalTokenFromHeaders,
   proxyLLMRequest,
   readRequestBody,
   csvSet,
   isTrigger,
   loadConfig,
   timingSafeEqualString,
+  shouldDiscardStaleReview,
+  validateOcrResult,
   verifyGitHubSignature,
   verifyInternalToken,
 };

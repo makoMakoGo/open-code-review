@@ -3,12 +3,20 @@ import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import {
   authorizePayload,
+  buildFailureComment,
+  buildInvalidOcrOutputFailure,
+  buildOcrStatusSummary,
   buildReviewComment,
+  buildStaleReviewComment,
+  classifyReviewFailure,
   copyProxyHeaders,
   csvSet,
+  extractInternalTokenFromHeaders,
   isTrigger,
   readRequestBody,
   loadConfig,
+  shouldDiscardStaleReview,
+  validateOcrResult,
   verifyGitHubSignature,
   verifyInternalToken,
 } from '../src/server.js';
@@ -75,6 +83,13 @@ test('builds right-side single-line review comments', () => {
   });
 });
 
+test('extracts internal proxy tokens from OCR-supported auth headers', () => {
+  assert.equal(extractInternalTokenFromHeaders({ authorization: 'Bearer secret' }), 'secret');
+  assert.equal(extractInternalTokenFromHeaders({ authorization: 'secret' }), 'secret');
+  assert.equal(extractInternalTokenFromHeaders({ 'x-api-key': 'secret' }), 'secret');
+  assert.equal(extractInternalTokenFromHeaders({}), '');
+});
+
 test('requires the internal token for LLM proxy access', () => {
   assert.equal(verifyInternalToken('secret', 'secret'), true);
   assert.equal(verifyInternalToken('secret', 'wrong'), false);
@@ -124,13 +139,122 @@ test('loadConfig requires upstream proxy auth fields to be paired', () => {
 
 test('invalid internal token can be rejected before reading proxy body', async () => {
   const req = {
-    headers: { 'x-internal-token': 'wrong' },
+    headers: { authorization: 'Bearer wrong' },
     on() {
       throw new Error('body reader should not be attached before auth');
     },
   };
-  assert.equal(verifyInternalToken('secret', req.headers['x-internal-token']), false);
+  assert.equal(verifyInternalToken('secret', extractInternalTokenFromHeaders(req.headers)), false);
   await assert.rejects(readRequestBody(req, 64 * 1024 * 1024), /body reader should not be attached/);
+});
+test('classifies OCR timeout without pretending progress is available', () => {
+  const failure = classifyReviewFailure({ phase: 'ocr', timedOut: true, timeoutMs: 1800000, message: 'ocr review timed out' }, { jobTimeoutMs: 1800000 });
+  assert.equal(failure.kind, 'job_timeout');
+  assert.equal(failure.retryable, true);
+  assert.deepEqual(failure.details, ['Timeout: 30m']);
+  const body = buildFailureComment(failure, 'owner/repo#7@123');
+  assert.match(body, /review exceeded the 30m job timeout/);
+  assert.doesNotMatch(body, /Files reviewed before timeout/);
+  assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
+});
+
+test('classifies OCR provider auth and rate-limit failures without leaking raw output', () => {
+  const auth = classifyReviewFailure({ phase: 'ocr', message: 'provider returned 401 unauthorized: invalid api key' }, { jobTimeoutMs: 1800000 });
+  assert.equal(auth.kind, 'provider_auth_failed');
+  assert.equal(auth.retryable, false);
+  assert.doesNotMatch(buildFailureComment(auth, 'owner/repo#7@123'), /invalid api key/);
+
+  const rateLimit = classifyReviewFailure({ phase: 'ocr', message: 'provider returned 403 rate limit exceeded' }, { jobTimeoutMs: 1800000 });
+  assert.equal(rateLimit.kind, 'provider_rate_limited');
+  assert.equal(rateLimit.retryable, true);
+});
+
+test('classifies OCR config, provider availability, and runtime failures', () => {
+  const config = classifyReviewFailure({ phase: 'ocr', message: 'OCR environment: unsupported auth_header value "x-internal-token"' }, { jobTimeoutMs: 1800000 });
+  assert.equal(config.kind, 'ocr_config_error');
+  assert.equal(config.retryable, false);
+
+  const unavailable = classifyReviewFailure({ phase: 'ocr', message: 'fetch failed: ECONNRESET' }, { jobTimeoutMs: 1800000 });
+  assert.equal(unavailable.kind, 'provider_unavailable');
+  assert.equal(unavailable.retryable, true);
+
+  const unknown = classifyReviewFailure({ phase: 'ocr', message: 'unexpected runtime failure' }, { jobTimeoutMs: 1800000 });
+  assert.equal(unknown.kind, 'ocr_runtime_error');
+  assert.equal(unknown.retryable, false);
+});
+
+test('detects stale review results when PR head or base changes during OCR', () => {
+  const reviewed = { headSha: 'old-head', baseSha: 'old-base', baseRef: 'main' };
+  assert.equal(shouldDiscardStaleReview(reviewed, { head: { sha: 'new-head' }, base: { sha: 'old-base', ref: 'main' } }), true);
+  assert.equal(shouldDiscardStaleReview(reviewed, { head: { sha: 'old-head' }, base: { sha: 'new-base', ref: 'main' } }), true);
+  assert.equal(shouldDiscardStaleReview(reviewed, { head: { sha: 'old-head' }, base: { sha: 'old-base', ref: 'release' } }), true);
+  assert.equal(shouldDiscardStaleReview(reviewed, { head: { sha: 'old-head' }, base: { sha: 'old-base', ref: 'main' } }), false);
+  const body = buildStaleReviewComment(reviewed, { head: { sha: 'new-head' }, base: { sha: 'new-base', ref: 'release' } }, 'owner/repo#7@123');
+  assert.match(body, /PR changed while OpenCodeReview was running/);
+  assert.match(body, /Reviewed head: `old-head`/);
+  assert.match(body, /Current head: `new-head`/);
+  assert.match(body, /Reviewed base: `main@old-base`/);
+  assert.match(body, /Current base: `release@new-base`/);
+  assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
+});
+
+test('classifies non-OCR failures by phase instead of provider heuristics', () => {
+  const git = classifyReviewFailure({ phase: 'git', command: 'git', timedOut: true, timeoutMs: 180000, message: 'git fetch timed out after 180000ms' }, { jobTimeoutMs: 1800000 });
+  assert.equal(git.kind, 'git_error');
+  assert.equal(git.details[0], 'Timeout: 3m');
+
+  const github = classifyReviewFailure({ status: 502, message: 'GitHub API 502' }, { jobTimeoutMs: 1800000 });
+  assert.equal(github.kind, 'github_api_error');
+  assert.equal(github.retryable, true);
+
+  const runtime = classifyReviewFailure(new Error('unexpected runtime failure'), { jobTimeoutMs: 1800000 });
+  assert.equal(runtime.kind, 'bot_runtime_error');
+});
+
+test('builds invalid OCR JSON failures with safe diagnostics only', () => {
+  const failure = buildInvalidOcrOutputFailure('{not json');
+  assert.equal(failure.kind, 'invalid_ocr_output');
+  assert.deepEqual(failure.details, [
+    'OCR stdout bytes: 9',
+    'OCR stdout sha256: 92072df399cb74703f8e86f450d552bc0bb01eeeb98a90985a1b7772c8fd0016',
+  ]);
+  const body = buildFailureComment(failure, 'owner/repo#7@123');
+  assert.doesNotMatch(body, /not json/);
+  assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
+});
+
+test('validates OCR JSON shape and summarizes warning statuses safely', () => {
+  assert.equal(validateOcrResult({ status: 'success', comments: [] }), true);
+  assert.equal(validateOcrResult({ status: 'completed_with_errors', comments: [{ path: 'a.js' }], warnings: [{ message: 'secret provider output' }] }), true);
+  assert.equal(validateOcrResult({ status: 'completed_with_warnings', comments: [], warnings: [{ message: 'sensitive detail' }] }), true);
+  assert.equal(validateOcrResult({ status: 'weird', comments: [] }), false);
+  assert.equal(validateOcrResult({ status: 'success' }), false);
+  assert.equal(validateOcrResult({ status: 'success', comments: {} }), false);
+  assert.equal(validateOcrResult({ status: 'completed_with_warnings', comments: [] }), false);
+  assert.equal(validateOcrResult({ status: 'completed_with_errors', comments: [], warnings: [] }), false);
+  assert.equal(validateOcrResult({ status: 'completed_with_errors', comments: [], warnings: {} }), false);
+
+  const errorSummary = buildOcrStatusSummary({ status: 'completed_with_errors', warnings: [{ message: 'secret provider output' }] }, 'owner/repo#7@123');
+  assert.match(errorSummary, /some files may not have been reviewed/);
+  assert.match(errorSummary, /Warnings: 1/);
+  assert.match(errorSummary, /Diagnostic id: `owner\/repo#7@123`/);
+  assert.doesNotMatch(errorSummary, /secret provider output/);
+
+  const warningSummary = buildOcrStatusSummary({ status: 'completed_with_warnings', comments: [], warnings: [{ type: 'warning', message: 'sensitive detail' }] }, 'owner/repo#7@123');
+  assert.match(warningSummary, /completed with warnings/);
+  assert.match(warningSummary, /Warnings: 1/);
+  assert.match(warningSummary, /Diagnostic id: `owner\/repo#7@123`/);
+  assert.doesNotMatch(warningSummary, /sensitive detail/);
+});
+
+test('classifies GitHub API rate limits separately from permission errors', () => {
+  const rateLimited = classifyReviewFailure({ status: 403, message: 'API rate limit exceeded', response: { headers: { 'x-ratelimit-remaining': '0' } } }, { jobTimeoutMs: 1800000 });
+  assert.equal(rateLimited.kind, 'github_rate_limited');
+  assert.equal(rateLimited.retryable, true);
+
+  const permission = classifyReviewFailure({ status: 403, message: 'Resource not accessible by integration', response: { headers: {} } }, { jobTimeoutMs: 1800000 });
+  assert.equal(permission.kind, 'github_api_error');
+  assert.equal(permission.retryable, false);
 });
 
 function validEnv() {

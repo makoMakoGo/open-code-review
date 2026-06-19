@@ -127,7 +127,7 @@ OCR_LLM_URL=http://127.0.0.1:3007/llm/anthropic
 OCR_LLM_TOKEN=local-proxy-token
 OCR_LLM_MODEL=claude-sonnet-4-6
 OCR_USE_ANTHROPIC=true
-OCR_LLM_AUTH_HEADER=x-internal-token
+OCR_LLM_AUTH_HEADER=authorization
 LLM_PROXY_TARGET_URL=https://provider.example.com/anthropic/v1/messages
 LLM_PROXY_USER_AGENT=open-code-review-github-app-bot/0.1.0
 LLM_PROXY_X_APP=
@@ -137,7 +137,7 @@ LLM_PROXY_UPSTREAM_AUTH_HEADER=authorization
 LLM_PROXY_UPSTREAM_TOKEN=Bearer provider-token
 ```
 
-The local proxy requires `X-Internal-Token` and is intended only for OCR traffic from inside the same container. Do not expose `/llm/*` through the public reverse proxy.
+The local proxy accepts OCR's `Authorization: Bearer <LLM_PROXY_INTERNAL_TOKEN>` or `X-Api-Key: <LLM_PROXY_INTERNAL_TOKEN>`, then replaces it with `LLM_PROXY_UPSTREAM_AUTH_HEADER` and `LLM_PROXY_UPSTREAM_TOKEN` for the provider. Do not expose `/llm/*` through the public reverse proxy.
 
 ## Run
 
@@ -206,4 +206,5 @@ server {
 - Private repositories are always ignored; this bot fetches pull requests through public HTTPS remotes only.
 - The queue is in-memory. Restarting the container drops queued but not-yet-started jobs.
 - `OCR_CONCURRENCY=1` serializes OCR file reviews. Raise only if the LLM provider can handle concurrent requests.
+- Failure comments are classified into checkout, GitHub API, timeout, configuration, provider authentication, rate-limit, provider availability, stale PR, invalid OCR output, and runtime failures. They include a diagnostic id but never include raw OCR output or provider responses.
 - `CLEANUP_WORKDIR=true` deletes `/data/repos/<owner>-<repo>-<pr>-<sha>` after each job.

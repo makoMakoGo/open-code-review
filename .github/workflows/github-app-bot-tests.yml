@@ -1,0 +1,36 @@
+name: GitHub App Bot Tests
+
+on:
+  pull_request:
+    paths:
+      - 'github-app-bot/**'
+      - '.github/workflows/github-app-bot-tests.yml'
+  push:
+    branches: [selfhost/github-app]
+    paths:
+      - 'github-app-bot/**'
+      - '.github/workflows/github-app-bot-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Trust workspace
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Install dependencies
+        working-directory: github-app-bot
+        run: npm ci
+
+      - name: Run tests
+        working-directory: github-app-bot
+        run: npm test
