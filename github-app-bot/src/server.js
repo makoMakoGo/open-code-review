@@ -456,6 +456,22 @@ function buildFailureComment(failure, diagnosticId) {
   return lines.join('\n');
 }
 
+function shouldDiscardStaleReview(reviewedHeadSha, currentHeadSha) {
+  return reviewedHeadSha !== currentHeadSha;
+}
+
+function buildStaleReviewComment(reviewedHeadSha, currentHeadSha, diagnosticId) {
+  return [
+    'PR changed while OpenCodeReview was running; stale review results were discarded.',
+    '',
+    `- Reviewed head: \`${reviewedHeadSha}\``,
+    `- Current head: \`${currentHeadSha}\``,
+    '- Result: no review comments were posted for the stale head',
+    '- Next: re-run the trigger if a review is still needed for the current head',
+    `- Diagnostic id: \`${diagnosticId}\``,
+  ].join('\n');
+}
+
 
 class JobQueue {
   constructor(handler) {
@@ -541,7 +557,18 @@ async function handleReviewJob(payload, config) {
     ];
     console.log('ocr started', { owner, repo, pullNumber, concurrency: config.ocrConcurrency, maxGitProcs: config.ocrMaxGitProcs, perFileTimeoutMinutes: config.ocrPerFileTimeoutMinutes, diagnosticId });
     const review = await runProcess('ocr', ocrArgs, { cwd: workdir, env: ocrEnv, timeoutMs: config.jobTimeoutMs });
-    console.log('ocr completed', { owner, repo, pullNumber });
+    console.log('ocr completed', { owner, repo, pullNumber, diagnosticId });
+    const { data: currentPull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+    if (shouldDiscardStaleReview(headSha, currentPull.head.sha)) {
+      console.log('discarding stale review result', { owner, repo, pullNumber, diagnosticId, reviewedHead: headSha, currentHead: currentPull.head.sha });
+      await octokit.rest.issues.createComment({
+        owner,
+        repo,
+        issue_number: pullNumber,
+        body: buildStaleReviewComment(headSha, currentPull.head.sha, diagnosticId),
+      });
+      return;
+    }
 
     let result;
     try {
@@ -704,6 +731,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 export {
   authorizePayload,
   buildFailureComment,
+  buildStaleReviewComment,
   buildReviewComment,
   classifyReviewFailure,
   copyProxyHeaders,
@@ -715,6 +743,7 @@ export {
   isTrigger,
   loadConfig,
   timingSafeEqualString,
+  shouldDiscardStaleReview,
   verifyGitHubSignature,
   verifyInternalToken,
 };

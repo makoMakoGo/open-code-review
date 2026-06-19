@@ -5,6 +5,7 @@ import {
   authorizePayload,
   buildFailureComment,
   buildReviewComment,
+  buildStaleReviewComment,
   classifyReviewFailure,
   copyProxyHeaders,
   csvSet,
@@ -12,6 +13,7 @@ import {
   isTrigger,
   readRequestBody,
   loadConfig,
+  shouldDiscardStaleReview,
   verifyGitHubSignature,
   verifyInternalToken,
 } from '../src/server.js';
@@ -168,6 +170,16 @@ test('classifies provider auth and rate-limit failures without leaking raw outpu
   const rateLimit = classifyReviewFailure(new Error('provider returned 429 too many requests: concurrency limit exceeded'), { jobTimeoutMs: 1800000 });
   assert.equal(rateLimit.kind, 'provider_rate_limited');
   assert.equal(rateLimit.retryable, true);
+});
+
+test('detects stale review results when PR head changes during OCR', () => {
+  assert.equal(shouldDiscardStaleReview('old-sha', 'new-sha'), true);
+  assert.equal(shouldDiscardStaleReview('same-sha', 'same-sha'), false);
+  const body = buildStaleReviewComment('old-sha', 'new-sha', 'owner/repo#7@123');
+  assert.match(body, /PR changed while OpenCodeReview was running/);
+  assert.match(body, /Reviewed head: `old-sha`/);
+  assert.match(body, /Current head: `new-sha`/);
+  assert.match(body, /Diagnostic id: `owner\/repo#7@123`/);
 });
 
 function validEnv() {
