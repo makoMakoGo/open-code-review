@@ -14,20 +14,28 @@ export class AdminRuntime {
   }
 
   async initialize() {
-    if (this.configManager) await this.configManager.ensureStorageDir();
-    if (this.eventStore) {
-      try {
-        this.replay = await this.eventStore.replay();
-        await this.markInterruptedJobs();
-      } catch (error) {
-        this.persistenceWarning = error.message;
-        console.error('admin event replay failed', error.stack || error.message);
-      }
+    try {
+      if (this.configManager) await this.configManager.ensureStorageDir();
+    } catch (error) {
+      this.persistenceWarning = `Admin config storage unavailable: ${error.message}`;
+      console.error('admin config storage unavailable', error.stack || error.message);
+    }
+    await this.refresh();
+    await this.markInterruptedJobs();
+  }
+
+  async refresh() {
+    if (!this.eventStore) return;
+    try {
+      this.replay = await this.eventStore.replay();
+    } catch (error) {
+      this.persistenceWarning = error.message;
+      console.error('admin event replay failed', error.stack || error.message);
     }
   }
 
   async markInterruptedJobs() {
-    const active = this.replay.jobs.filter(isActiveStatus);
+    const active = this.replay.jobs.filter(job => isActiveStatus(job.status));
     for (const job of active) {
       await this.eventStore.append({
         type: 'job.interrupted',
@@ -35,14 +43,15 @@ export class AdminRuntime {
         data: { reason: 'process restarted before job completed' },
       });
     }
-    if (active.length > 0) this.replay = await this.eventStore.replay();
+    if (active.length > 0) await this.refresh();
   }
 
   queueSnapshot() {
     return this.queue ? this.queue.snapshot() : { running: null, queuedCount: 0, queued: [] };
   }
 
-  jobs({ limit = 50 } = {}) {
+  async jobs({ limit = 50 } = {}) {
+    await this.refresh();
     return this.replay.jobs.slice(0, limit).map(job => ({
       jobId: job.id,
       diagnosticId: job.diagnosticId,
@@ -59,15 +68,18 @@ export class AdminRuntime {
     }));
   }
 
-  dashboard() {
+  async dashboard() {
+    await this.refresh();
     const queue = this.queueSnapshot();
+    const recentJobs = await this.jobs({ limit: 20 });
     const summary = summarizeJobs(this.replay.jobs, queue);
     return {
       summary,
-      recentJobs: this.jobs({ limit: 20 }),
+      recentJobs,
       diagnostics: this.diagnostics(),
     };
   }
+
 
   diagnostics() {
     const items = [];

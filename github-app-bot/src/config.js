@@ -81,6 +81,7 @@ const OPTIONAL_ENV_KEYS = Object.freeze([
 
 const CONFIG_ENV_KEYS = Object.freeze([...REQUIRED_ENV_KEYS, ...OPTIONAL_ENV_KEYS]);
 const CONFIG_ENV_KEY_SET = new Set(CONFIG_ENV_KEYS);
+const NON_EDITABLE_ENV_KEYS = new Set(['ADMIN_PASSWORD', 'ADMIN_DATA_DIR', 'ADMIN_STORAGE_DIR']);
 
 const SECRET_ENV_KEYS = Object.freeze([
   'GITHUB_WEBHOOK_SECRET',
@@ -494,6 +495,7 @@ function normalizeOverrideKey(rawKey) {
   const key = String(rawKey).trim();
   if (!/^[A-Z0-9_]+$/.test(key)) throw new Error(`Invalid config override key: ${rawKey}`);
   if (!CONFIG_ENV_KEY_SET.has(key)) throw new Error(`Unsupported config override key: ${key}`);
+  if (NON_EDITABLE_ENV_KEYS.has(key)) throw new Error(`${key} cannot be edited from the admin dashboard`);
   return key;
 }
 
@@ -504,11 +506,13 @@ function keepSecretOverride(overrides, envKey) {
 
 function clearSecretOverride(overrides, envKey) {
   const key = assertSecretEnvKey(envKey);
+  if (NON_EDITABLE_ENV_KEYS.has(key)) throw new Error(`${key} cannot be edited from the admin dashboard`);
   return { ...normalizeRawOverrides(overrides), [key]: '' };
 }
 
 function replaceSecretOverride(overrides, envKey, secretValue) {
   const key = assertSecretEnvKey(envKey);
+  if (NON_EDITABLE_ENV_KEYS.has(key)) throw new Error(`${key} cannot be edited from the admin dashboard`);
   const value = String(secretValue ?? '').trim();
   if (value === '') throw new Error(`${key} replacement must not be blank`);
   return { ...normalizeRawOverrides(overrides), [key]: value };

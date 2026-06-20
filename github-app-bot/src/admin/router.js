@@ -16,7 +16,7 @@ export class AdminRouter {
   constructor({
     adminPassword,
     allowedHosts = null,
-    allowPrivateHosts = true,
+    allowPrivateHosts = false,
     secureCookies = true,
     sessions = createSessionStore(),
     rateLimiter = new LoginRateLimiter(),
@@ -176,8 +176,6 @@ export async function readForm(request) {
 }
 
 export function clientRateLimitKey(request) {
-  const forwardedFor = getHeader(request.headers, 'x-forwarded-for');
-  if (forwardedFor) return forwardedFor.split(',')[0].trim();
   return getHeader(request.headers, 'x-real-ip') ?? request.remoteAddress ?? 'unknown';
 }
 

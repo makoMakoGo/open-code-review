@@ -779,16 +779,27 @@ function writeAdminResponse(res, response) {
 
 async function main() {
   const configManager = new ConfigManager();
-  await configManager.ensureStorageDir();
-  const loaded = await configManager.load();
-  let config = loaded.config;
+  let loaded;
+  let config;
+  try {
+    await configManager.ensureStorageDir();
+    loaded = await configManager.load();
+    config = loaded.config;
+  } catch (error) {
+    console.error('admin config storage unavailable', error.stack || error.message);
+    config = loadConfig();
+  }
   const eventStore = new JobEventStore({ adminDir: config.adminDataDir });
   const server = createServer(config, {
     configManager,
     eventStore,
     configProvider: async () => {
-      const next = await configManager.load();
-      config = next.config;
+      try {
+        const next = await configManager.load();
+        config = next.config;
+      } catch (error) {
+        console.error('admin config reload failed; keeping previous config', error.stack || error.message);
+      }
       return config;
     },
     saveConfig: async ({ form }) => {

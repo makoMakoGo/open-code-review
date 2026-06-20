@@ -38,13 +38,13 @@ export function parseAllowedHosts(value) {
   throw new Error('allowed hosts must be a string, array, set, or empty');
 }
 
-export function createHostGuard({ allowedHosts = null, allowPrivateNetworks = true } = {}) {
+export function createHostGuard({ allowedHosts = null, allowPrivateNetworks = false } = {}) {
   const allowed = parseAllowedHosts(allowedHosts);
   return function guardHost(headersOrHost) {
     const hostHeader = typeof headersOrHost === 'string' ? headersOrHost : getHeader(headersOrHost, 'host');
     const host = normalizeHostHeader(hostHeader);
     if (!host) return { allowed: false, host: null, reason: 'invalid-host' };
-    if (allowed.has(host) || allowed.has('*')) return { allowed: true, host, reason: 'allowed-host' };
+    if (allowed.has(host)) return { allowed: true, host, reason: 'allowed-host' };
     if (allowPrivateNetworks && isPrivateHost(host)) return { allowed: true, host, reason: 'private-host' };
     return { allowed: false, host, reason: 'untrusted-host' };
   };
@@ -76,10 +76,7 @@ export function isPrivateHost(host) {
 function normalizeAllowedHosts(hosts) {
   const normalized = new Set();
   for (const host of hosts) {
-    if (host === '*') {
-      normalized.add('*');
-      continue;
-    }
+    if (host === '*') throw new Error('Wildcard admin hosts are not allowed');
     const value = normalizeHostHeader(String(host));
     if (!value) throw new Error(`Invalid allowed host: ${host}`);
     normalized.add(value);

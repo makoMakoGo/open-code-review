@@ -63,11 +63,14 @@ export class AdminJobQueue {
           const config = this.configProvider ? await this.configProvider() : undefined;
           const result = await this.handler(job.payload, { job: this.runningJob, config });
           const status = result?.outcome ?? 'succeeded';
-          await this.#record('job.completed', this.runningJob, {
+          const eventType = status === 'failed' ? 'job.failed' : 'job.completed';
+          await this.#record(eventType, this.runningJob, {
             ...queueMetadata(this.runningJob),
             status,
             finishedAt: new Date().toISOString(),
             result: result ?? null,
+            errorKind: result?.failure?.kind,
+            errorMessage: result?.failure?.reason,
           });
         } catch (error) {
           await this.#record('job.failed', this.runningJob, {
