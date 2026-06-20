@@ -1,5 +1,5 @@
 import { verifyAdminPassword, LoginRateLimiter, isAdminEnabled } from './auth.js';
-import { createHostGuard } from './hostguard.js';
+import { createHostGuard, normalizeHostHeader } from './hostguard.js';
 import {
   createSessionStore,
   extractCsrfToken,
@@ -24,11 +24,14 @@ export class AdminRouter {
     loadJobs = () => [],
     loadConfig = () => ({}),
     saveConfig = null,
+    loadSecurityConfig = () => ({ adminPassword, allowedHosts, allowPrivateHosts, trustProxy: false }),
     adminRoot = '/data/admin',
   } = {}) {
-    this.adminPassword = adminPassword;
-    this.enabled = isAdminEnabled(adminPassword);
-    this.hostGuard = createHostGuard({ allowedHosts, allowPrivateNetworks: allowPrivateHosts });
+    this.staticAdminPassword = adminPassword;
+    this.staticEnabled = isAdminEnabled(adminPassword);
+    this.staticAllowedHosts = allowedHosts;
+    this.allowPrivateHosts = allowPrivateHosts;
+    this.loadSecurityConfig = loadSecurityConfig;
     this.secureCookies = secureCookies;
     this.sessions = sessions;
     this.rateLimiter = rateLimiter;
@@ -41,10 +44,15 @@ export class AdminRouter {
 
   async route(request) {
     const normalized = normalizeAdminRequest(request);
-    const host = this.hostGuard(normalized.headers);
+    const securityConfig = await this.#securityConfig();
+    const hostGuard = createHostGuard({ allowedHosts: securityConfig.allowedHosts, allowPrivateNetworks: securityConfig.allowPrivateHosts });
+    const host = hostGuard(normalized.headers);
     if (!host.allowed) return forbidden('Forbidden host');
+    normalized.trustProxy = securityConfig.trustProxy;
 
-    if (!this.enabled) return notFound();
+    if (normalized.method === 'POST' && !hasSameOrigin(normalized, host.host)) return forbidden('Invalid request origin');
+
+    if (!securityConfig.enabled) return notFound();
 
     if (normalized.pathname !== '/admin' && !normalized.pathname.startsWith('/admin/')) return notFound();
 
@@ -99,7 +107,8 @@ export class AdminRouter {
 
     const form = await readForm(request);
     const password = getFormString(form, 'password');
-    if (!verifyAdminPassword(password, this.adminPassword)) {
+    const securityConfig = await this.#securityConfig();
+    if (!verifyAdminPassword(password, securityConfig.adminPassword)) {
       this.rateLimiter.consumeFailure(key);
       return this.#loginPage(request, 'Invalid password.');
     }
@@ -135,6 +144,18 @@ export class AdminRouter {
     if (!verifyCsrfToken(session, submittedToken)) return forbidden('Invalid CSRF token');
     await this.saveConfig({ request, session, form });
     return redirect('/admin/config');
+  }
+
+  async #securityConfig() {
+    const loaded = await this.loadSecurityConfig();
+    const adminPassword = loaded?.adminPassword ?? this.staticAdminPassword;
+    return {
+      adminPassword,
+      enabled: isAdminEnabled(adminPassword),
+      allowedHosts: loaded?.allowedHosts ?? this.staticAllowedHosts,
+      allowPrivateHosts: Boolean(loaded?.allowPrivateHosts ?? this.allowPrivateHosts),
+      trustProxy: Boolean(loaded?.trustProxy),
+    };
   }
 
   #requireSession(request) {
@@ -176,7 +197,20 @@ export async function readForm(request) {
 }
 
 export function clientRateLimitKey(request) {
-  return getHeader(request.headers, 'x-real-ip') ?? request.remoteAddress ?? 'unknown';
+  if (request.trustProxy) return getHeader(request.headers, 'x-real-ip') ?? request.remoteAddress ?? 'unknown';
+  return request.remoteAddress ?? 'unknown';
+}
+
+function hasSameOrigin(request, expectedHost) {
+  const source = getHeader(request.headers, 'origin') ?? getHeader(request.headers, 'referer');
+  if (!source) return false;
+  try {
+    const url = new URL(source);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+    return normalizeHostHeader(url.host) === expectedHost;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeHeaders(headers) {

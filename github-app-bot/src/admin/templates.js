@@ -118,7 +118,7 @@ export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/ad
     .map(([key, value]) => `<tr><th scope="row">${escapeHtml(key)}</th><td>${escapeHtml(formatConfigValue(key, value))}</td></tr>`)
     .join('');
   const body = `<section class="card"><h2>Configuration</h2><p>Admin storage root: <code>${escapeHtml(adminRoot)}</code></p><table><tbody>${rows}</tbody></table></section>
-<section class="card"><h2>Set override</h2><form method="post" action="/admin/config" class="inline"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><label for="key">Env key</label><input id="key" name="key" required><label for="value">Value</label><input id="value" name="value"><button type="submit">Save</button></form></section>`;
+<section class="card"><h2>Set override</h2><form method="post" action="/admin/config" class="inline"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><label for="key">Env key</label><input id="key" name="key" required><label for="value">Value</label><input id="value" name="value"><label><input type="checkbox" name="clear" value="1"> Clear secret</label><button type="submit">Save</button></form></section>`;
   return renderLayout({ title: 'Config', active: 'config', csrfToken, body });
 }
 

@@ -34,7 +34,7 @@ export function parseAllowedHosts(value) {
   if (typeof value === 'string') {
     return normalizeAllowedHosts(value.split(',').map((item) => item.trim()).filter(Boolean));
   }
-  if (value == null || value === '') return new Set(DEFAULT_ALLOWED_HOSTS);
+  if (value == null || value === '') return normalizeAllowedHosts([]);
   throw new Error('allowed hosts must be a string, array, set, or empty');
 }
 
@@ -74,7 +74,7 @@ export function isPrivateHost(host) {
 }
 
 function normalizeAllowedHosts(hosts) {
-  const normalized = new Set();
+  const normalized = new Set(DEFAULT_ALLOWED_HOSTS);
   for (const host of hosts) {
     if (host === '*') throw new Error('Wildcard admin hosts are not allowed');
     const value = normalizeHostHeader(String(host));

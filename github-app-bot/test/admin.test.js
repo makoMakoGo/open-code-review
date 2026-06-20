@@ -46,6 +46,19 @@ test('admin config rejects dashboard edits to admin credentials and data root', 
   await assert.rejects(() => manager.writeOverrides({ ADMIN_DATA_DIR: '/tmp/other' }), /ADMIN_DATA_DIR cannot be edited/);
 });
 
+test('admin config applies secret blank keep clear replace semantics', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  await manager.setRawOverride('LLM_PROXY_INTERNAL_TOKEN', 'first-secret');
+  await manager.applySecretOverride('LLM_PROXY_INTERNAL_TOKEN', { value: '' });
+  assert.equal((await manager.readOverrides()).LLM_PROXY_INTERNAL_TOKEN, 'first-secret');
+  await manager.applySecretOverride('LLM_PROXY_INTERNAL_TOKEN', { value: 'second-secret' });
+  assert.equal((await manager.readOverrides()).LLM_PROXY_INTERNAL_TOKEN, 'second-secret');
+  await manager.applySecretOverride('LLM_PROXY_INTERNAL_TOKEN', { clear: true });
+  assert.equal((await manager.readOverrides()).LLM_PROXY_INTERNAL_TOKEN, '');
+});
+
 test('admin router stays hidden when disabled and serves dashboard after login', async () => {
   const disabled = createAdminRouter({ adminPassword: '', allowedHosts: 'juya.011070.xyz' });
   const disabledResponse = await disabled.route({ method: 'GET', url: '/admin/', headers: { host: 'juya.011070.xyz' } });
@@ -60,7 +73,7 @@ test('admin router stays hidden when disabled and serves dashboard after login',
   const login = await router.route({
     method: 'POST',
     url: '/admin/login',
-    headers: { host: 'juya.011070.xyz', 'x-real-ip': '127.0.0.1' },
+    headers: { host: 'juya.011070.xyz', origin: 'https://juya.011070.xyz' },
     body: new URLSearchParams({ password: 'a-secure-admin-password' }).toString(),
   });
   assert.equal(login.status, 303);
@@ -83,7 +96,7 @@ test('admin router rate limit ignores spoofed forwarded-for and rejects private 
     await router.route({
       method: 'POST',
       url: '/admin/login',
-      headers: { host: 'juya.011070.xyz', 'x-real-ip': '203.0.113.5', 'x-forwarded-for': `198.51.100.${attempt}` },
+      headers: { host: 'juya.011070.xyz', origin: 'https://juya.011070.xyz', 'x-real-ip': '203.0.113.5', 'x-forwarded-for': `198.51.100.${attempt}` },
       body: new URLSearchParams({ password: 'wrong-password' }).toString(),
     });
   }
@@ -91,9 +104,22 @@ test('admin router rate limit ignores spoofed forwarded-for and rejects private 
   const limited = await router.route({
     method: 'POST',
     url: '/admin/login',
-    headers: { host: 'juya.011070.xyz', 'x-real-ip': '203.0.113.5', 'x-forwarded-for': '198.51.100.99' },
+    headers: { host: 'juya.011070.xyz', origin: 'https://juya.011070.xyz', 'x-real-ip': '203.0.113.6', 'x-forwarded-for': '198.51.100.99' },
     body: new URLSearchParams({ password: 'wrong-password' }).toString(),
   });
+  assert.match(limited.body, /Too many failed attempts/);
+});
+
+test('admin POST requires same-origin metadata and trusts proxy headers only when enabled', async () => {
+  const router = createAdminRouter({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz' });
+  const noOrigin = await router.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(noOrigin.status, 403);
+
+  const trusted = createAdminRouter({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz', loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz', trustProxy: true }) });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await trusted.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz', origin: 'https://juya.011070.xyz', 'x-real-ip': '203.0.113.7' }, body: new URLSearchParams({ password: 'bad' }).toString() });
+  }
+  const limited = await trusted.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz', origin: 'https://juya.011070.xyz', 'x-real-ip': '203.0.113.7' }, body: new URLSearchParams({ password: 'bad' }).toString() });
   assert.match(limited.body, /Too many failed attempts/);
 });
 

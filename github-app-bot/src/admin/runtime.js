@@ -37,11 +37,17 @@ export class AdminRuntime {
   async markInterruptedJobs() {
     const active = this.replay.jobs.filter(job => isActiveStatus(job.status));
     for (const job of active) {
-      await this.eventStore.append({
-        type: 'job.interrupted',
-        jobId: job.id,
-        data: { reason: 'process restarted before job completed' },
-      });
+      try {
+        await this.eventStore.append({
+          type: 'job.interrupted',
+          jobId: job.id,
+          data: { reason: 'process restarted before job completed' },
+        });
+      } catch (error) {
+        this.persistenceWarning = `Could not mark interrupted jobs: ${error.message}`;
+        console.error('admin interrupted recovery failed', error.stack || error.message);
+        return;
+      }
     }
     if (active.length > 0) await this.refresh();
   }

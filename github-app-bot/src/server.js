@@ -6,8 +6,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { App } from 'octokit';
-import { createAdminRouter, AdminRuntime } from './admin/index.js';
-import { ConfigManager, loadConfig as loadManagedConfig, csvSet as managedCsvSet } from './config.js';
+import { createAdminRouter, AdminRuntime, normalizeHostHeader, parseAllowedHosts } from './admin/index.js';
+import { ConfigManager, SECRET_ENV_KEYS, loadConfig as loadManagedConfig, csvSet as managedCsvSet } from './config.js';
 import { AdminJobQueue, JobEventStore } from './jobs/index.js';
 
 
@@ -507,6 +507,7 @@ async function handleReviewJob(payload, config) {
   const octokit = await app.getInstallationOctokit(installationId);
   const diagnosticId = `${owner}/${repo}#${pullNumber}@${payload.comment.id}`;
 
+  let finalResult = null;
   try {
     const { data: pull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
     console.log('job started', { owner, repo, pullNumber, head: pull.head.sha, diagnosticId });
@@ -550,7 +551,8 @@ async function handleReviewJob(payload, config) {
         issue_number: pullNumber,
         body: buildStaleReviewComment(baseSnapshot, currentPull, diagnosticId),
       });
-      return { outcome: 'stale', diagnosticId, commentsGenerated: 0, commentsPosted: 1, failure: null };
+      finalResult = { outcome: 'stale', diagnosticId, commentsGenerated: 0, commentsPosted: 1, failure: null };
+      return finalResult;
     }
 
     let result;
@@ -562,8 +564,15 @@ async function handleReviewJob(payload, config) {
     }
     if (!validateOcrResult(result)) {
       const failure = buildInvalidOcrOutputFailure(review.stdout);
-      await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
-      return { outcome: 'failed', diagnosticId, failure, commentsGenerated: 0, commentsPosted: 1 };
+      finalResult = { outcome: 'failed', diagnosticId, failure, commentsGenerated: 0, commentsPosted: 0, reportingError: null };
+      try {
+        await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
+        finalResult.commentsPosted = 1;
+      } catch (reportingError) {
+        finalResult.reportingError = classifyReviewFailure(reportingError, config);
+        console.error('failed to post invalid output failure comment', { owner, repo, pullNumber, diagnosticId, originalFailure: failure.kind, reportingFailure: finalResult.reportingError.kind, error: reportingError.stack || reportingError.message });
+      }
+      return finalResult;
     }
 
     const statusSummary = buildOcrStatusSummary(result, diagnosticId);
@@ -577,7 +586,7 @@ async function handleReviewJob(payload, config) {
         issue_number: pullNumber,
         body: statusSummary || `OpenCodeReview: ${result.message || 'No comments generated. Looks good to me.'}`,
       });
-      return {
+      finalResult = {
         outcome: statusSummary ? 'succeeded_with_warnings' : 'succeeded',
         diagnosticId,
         ocrStatus: result.status,
@@ -586,6 +595,7 @@ async function handleReviewJob(payload, config) {
         warningsCount: Array.isArray(result.warnings) ? result.warnings.length : 0,
         failure: null,
       };
+      return finalResult;
     }
 
     const inline = [];
@@ -646,7 +656,7 @@ async function handleReviewJob(payload, config) {
       if (failed.length > 0) publishWarnings = failed.map(item => ({ message: item.error }));
     }
 
-    return {
+    finalResult = {
       outcome: statusSummary || publishWarnings.length > 0 ? 'succeeded_with_warnings' : 'succeeded',
       diagnosticId,
       ocrStatus: result.status,
@@ -658,15 +668,27 @@ async function handleReviewJob(payload, config) {
       publishWarnings,
       failure: null,
     };
+    return finalResult;
   } catch (error) {
     const failure = classifyReviewFailure(error, config);
     console.error('review job failed', { owner, repo, pullNumber, diagnosticId, failure: failure.kind, error: error.stack || error.message });
-    await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
-    return { outcome: 'failed', diagnosticId, failure, reportingError: null };
+    finalResult = { outcome: 'failed', diagnosticId, failure, reportingError: null };
+    try {
+      await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
+    } catch (reportingError) {
+      finalResult.reportingError = classifyReviewFailure(reportingError, config);
+      console.error('failed to post failure comment', { owner, repo, pullNumber, diagnosticId, originalFailure: failure.kind, reportingFailure: finalResult.reportingError.kind, error: reportingError.stack || reportingError.message });
+    }
+    return finalResult;
   } finally {
     if (config.cleanupWorkdir && workdir) {
-      await fs.rm(workdir, { recursive: true, force: true });
-      console.log('workdir cleaned', { owner, repo, pullNumber });
+      try {
+        await fs.rm(workdir, { recursive: true, force: true });
+        console.log('workdir cleaned', { owner, repo, pullNumber });
+      } catch (cleanupError) {
+        if (finalResult) finalResult.cleanupWarning = cleanupError.message;
+        console.error('workdir cleanup failed', { owner, repo, pullNumber, error: cleanupError.stack || cleanupError.message });
+      }
     }
   }
 }
@@ -685,6 +707,10 @@ function createServer(config, options = {}) {
     loadJobs: () => adminRuntime.jobs({ limit: 50 }),
     loadConfig: () => adminRuntime.configSummary(),
     saveConfig: options.saveConfig,
+    loadSecurityConfig: async () => {
+      const next = await configProvider();
+      return { adminPassword: next.adminPassword, allowedHosts: next.adminAllowedHosts, trustProxy: next.adminTrustProxy, allowPrivateHosts: false };
+    },
     adminRoot: currentConfig.adminDataDir,
   });
 
@@ -777,6 +803,13 @@ function writeAdminResponse(res, response) {
   res.end(response.body || '');
 }
 
+function assertHostRemainsAllowed(request, value) {
+  const currentHost = normalizeHostHeader(request.headers.host);
+  if (!currentHost) throw new Error('Current admin host is invalid');
+  const allowed = parseAllowedHosts(value);
+  if (!allowed.has(currentHost)) throw new Error('ADMIN_ALLOWED_HOSTS must keep the current admin host allowed');
+}
+
 async function main() {
   const configManager = new ConfigManager();
   let loaded;
@@ -802,10 +835,14 @@ async function main() {
       }
       return config;
     },
-    saveConfig: async ({ form }) => {
+    saveConfig: async ({ request, form }) => {
       const key = form.get('key');
       const value = form.get('value');
-      if (typeof key === 'string' && key.trim() !== '') await configManager.setRawOverride(key, value);
+      if (typeof key === 'string' && key.trim() !== '') {
+        if (key === 'ADMIN_ALLOWED_HOSTS') assertHostRemainsAllowed(request, value);
+        if (SECRET_ENV_KEYS.includes(key)) await configManager.applySecretOverride(key, { value, clear: form.get('clear') === '1' });
+        else await configManager.setRawOverride(key, value);
+      }
       const next = await configManager.load();
       config = next.config;
     },

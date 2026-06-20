@@ -38,6 +38,7 @@ const DEFAULT_ENV = Object.freeze({
   ADMIN_PASSWORD: '',
   ADMIN_STORAGE_DIR: DEFAULT_ADMIN_STORAGE_DIR,
   ADMIN_ALLOWED_HOSTS: '',
+  ADMIN_TRUST_PROXY: 'false',
 });
 
 const REQUIRED_ENV_KEYS = Object.freeze([
@@ -77,6 +78,7 @@ const OPTIONAL_ENV_KEYS = Object.freeze([
   'ADMIN_DATA_DIR',
   'ADMIN_STORAGE_DIR',
   'ADMIN_ALLOWED_HOSTS',
+  'ADMIN_TRUST_PROXY',
 ]);
 
 const CONFIG_ENV_KEYS = Object.freeze([...REQUIRED_ENV_KEYS, ...OPTIONAL_ENV_KEYS]);
@@ -124,6 +126,7 @@ const NON_SECRET_SUMMARY_FIELDS = Object.freeze([
   { name: 'adminDisabledReason', envKey: 'ADMIN_PASSWORD', read: config => config.adminDisabledReason },
   { name: 'adminDataDir', envKey: 'ADMIN_DATA_DIR', fallbackEnvKey: 'ADMIN_STORAGE_DIR', read: config => config.adminDataDir },
   { name: 'adminStorageDir', envKey: 'ADMIN_STORAGE_DIR', fallbackEnvKey: 'ADMIN_DATA_DIR', read: config => config.adminStorageDir },
+  { name: 'adminTrustProxy', envKey: 'ADMIN_TRUST_PROXY', read: config => config.adminTrustProxy },
   { name: 'adminAllowedHosts', envKey: 'ADMIN_ALLOWED_HOSTS', read: config => config.adminAllowedHosts },
 ]);
 
@@ -236,6 +239,7 @@ function loadConfig(env = process.env, rawOverrides) {
   const adminPasswordStatus = getAdminPasswordStatus(adminPassword);
   const adminDataDir = resolveAdminDataDir(effectiveEnv);
   const adminAllowedHosts = parseHostAllowlist(optionalEnv('ADMIN_ALLOWED_HOSTS', '', effectiveEnv), 'ADMIN_ALLOWED_HOSTS');
+  const adminTrustProxy = parseBool(optionalEnv('ADMIN_TRUST_PROXY', 'false', effectiveEnv), 'ADMIN_TRUST_PROXY');
 
   return {
     port: parseIntegerEnv('PORT', 3007, { min: 1, env: effectiveEnv }),
@@ -268,6 +272,7 @@ function loadConfig(env = process.env, rawOverrides) {
     adminDataDir,
     adminStorageDir: adminDataDir,
     adminAllowedHosts,
+    adminTrustProxy,
     admin: {
       enabled: adminPasswordStatus.enabled,
       disabledReason: adminPasswordStatus.disabledReason,
@@ -275,6 +280,7 @@ function loadConfig(env = process.env, rawOverrides) {
       dataDir: adminDataDir,
       storageDir: adminDataDir,
       allowedHosts: adminAllowedHosts,
+      trustProxy: adminTrustProxy,
     },
   };
 }
@@ -805,6 +811,7 @@ export {
   SOURCE_MISSING,
   SOURCE_OVERRIDE,
   SECRET_ENV_KEYS,
+  NON_EDITABLE_ENV_KEYS,
   applySecretOverride,
   assertSecretEnvKey,
   atomicWriteJson,
