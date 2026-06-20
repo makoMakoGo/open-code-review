@@ -467,6 +467,20 @@ function normalizePendingRestartForSummary(pendingRestart) {
   };
 }
 
+function normalizePendingRestartMarker(marker, filePath = 'pending restart marker') {
+  if (marker == null) return null;
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) throw new Error(`${filePath} pendingRestart must be a JSON object`);
+  const keys = Array.isArray(marker.keys) ? marker.keys.map(key => String(key).trim()).filter(Boolean) : [];
+  if (keys.length === 0) return null;
+  return {
+    required: Boolean(marker.required),
+    keys: [...new Set(keys)].sort(),
+    sinceRevision: Number.isSafeInteger(marker.sinceRevision) ? marker.sinceRevision : null,
+    createdAt: typeof marker.createdAt === 'string' ? marker.createdAt : new Date().toISOString(),
+    message: typeof marker.message === 'string' ? marker.message : 'Restart required for pending configuration changes',
+  };
+}
+
 function isPendingRestartKey(envKey, pendingRestart) {
   return Boolean(pendingRestart && Array.isArray(pendingRestart.keys) && pendingRestart.keys.includes(envKey));
 }
@@ -594,7 +608,7 @@ function diffOverrideKeys(previousOverrides, nextOverrides) {
 }
 
 function emptyOverrideState() {
-  return { revision: 0, updatedAt: null, overrides: {} };
+  return { revision: 0, updatedAt: null, overrides: {}, pendingRestart: null };
 }
 
 function normalizeOverrideState(data, filePath = 'config override state') {
@@ -609,6 +623,7 @@ function normalizeOverrideState(data, filePath = 'config override state') {
     revision: revision ?? 0,
     updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : null,
     overrides,
+    pendingRestart: normalizePendingRestartMarker(hasStateShape ? data.pendingRestart : null, filePath),
   };
 }
 
@@ -711,7 +726,7 @@ class ConfigManager {
     const state = await this.readOverrideState();
     const merged = mergeConfigLayers(this.env, state.overrides);
     const config = this.buildConfig(state.overrides);
-    const pendingRestart = await this.readPendingRestart();
+    const pendingRestart = state.pendingRestart ?? await this.readPendingRestart();
     return {
       config,
       revision: state.revision,
@@ -735,15 +750,15 @@ class ConfigManager {
     const changedKeys = diffOverrideKeys(current.overrides, overrides);
     if (changedKeys.length === 0) return current;
 
+    const revision = current.revision + 1;
+    const marker = buildPendingRestartMarker(changedKeys, revision);
     const next = {
-      revision: current.revision + 1,
+      revision,
       updatedAt: new Date().toISOString(),
       overrides,
+      pendingRestart: marker ?? current.pendingRestart ?? null,
     };
     await atomicWriteJson(this.overrideFile, next);
-
-    const marker = buildPendingRestartMarker(changedKeys, next.revision);
-    if (marker) await this.writePendingRestart(marker);
     return next;
   }
 

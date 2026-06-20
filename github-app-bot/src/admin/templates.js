@@ -134,10 +134,10 @@ export function renderJobsTable(jobs) {
   const rows = jobs.map((job) => {
     const id = job?.id ?? job?.jobId;
     const status = job?.status;
-    const repo = job?.repo ?? job?.repository;
+    const repo = formatRepository(job?.repo ?? job?.repository);
     const trigger = job?.trigger ?? job?.triggeredBy;
     const createdAt = job?.createdAt ?? job?.startedAt;
-    return `<tr><td><code>${escapeHtml(redactInlineSecrets(id ?? ''))}</code></td><td>${escapeHtml(redactInlineSecrets(status ?? ''))}</td><td>${escapeHtml(redactInlineSecrets(repo ?? ''))}</td><td>${escapeHtml(redactInlineSecrets(trigger ?? ''))}</td><td>${escapeHtml(formatDate(createdAt))}</td></tr>`;
+    return `<tr><td><code>${escapeHtml(redactInlineSecrets(id ?? ''))}</code></td><td>${escapeHtml(redactInlineSecrets(status ?? ''))}</td><td>${escapeHtml(redactInlineSecrets(repo))}</td><td>${escapeHtml(redactInlineSecrets(trigger ?? ''))}</td><td>${escapeHtml(formatDate(createdAt))}</td></tr>`;
   }).join('');
   return `<table><thead><tr><th>Job ID</th><th>Status</th><th>Repository</th><th>Triggered by</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
@@ -151,6 +151,17 @@ export function renderDiagnosticsList(diagnostics) {
     return `<li><strong>${escapeHtml(redactInlineSecrets(id))}</strong> <span class="pill">${escapeHtml(redactInlineSecrets(level))}</span> ${escapeHtml(redactInlineSecrets(message))}</li>`;
   }).join('');
   return `<ul class="diagnostics">${items}</ul>`;
+}
+
+export function formatRepository(repository) {
+  if (repository == null || repository === '') return '';
+  if (typeof repository === 'string') return repository;
+  if (typeof repository !== 'object' || Array.isArray(repository)) return String(repository);
+  if (typeof repository.fullName === 'string' && repository.fullName !== '') return repository.fullName;
+  if (typeof repository.full_name === 'string' && repository.full_name !== '') return repository.full_name;
+  const owner = typeof repository.owner === 'string' ? repository.owner : '';
+  const name = typeof repository.name === 'string' ? repository.name : '';
+  return owner && name ? `${owner}/${name}` : '';
 }
 
 export function formatConfigValue(key, value) {

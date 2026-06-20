@@ -47,6 +47,7 @@ export {
   escapeAttribute,
   escapeHtml,
   formatConfigValue,
+  formatRepository,
   isSecretKey,
   redactInlineSecrets,
   redactSecretValue,

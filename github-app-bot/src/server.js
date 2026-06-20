@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { App } from 'octokit';
 import { createAdminRouter, AdminRuntime, normalizeHostHeader, parseAllowedHosts } from './admin/index.js';
-import { ConfigManager, SECRET_ENV_KEYS, loadConfig as loadManagedConfig, csvSet as managedCsvSet } from './config.js';
+import { ConfigManager, SECRET_ENV_KEYS, loadConfig as loadManagedConfig, csvSet as managedCsvSet, normalizeOverrideKey } from './config.js';
 import { AdminJobQueue, JobEventStore } from './jobs/index.js';
 
 
@@ -803,6 +803,16 @@ function writeAdminResponse(res, response) {
   res.end(response.body || '');
 }
 
+async function saveAdminConfigOverride({ configManager, request, form }) {
+  const rawKey = form.get('key');
+  if (typeof rawKey !== 'string' || rawKey.trim() === '') return;
+  const key = normalizeOverrideKey(rawKey);
+  const value = form.get('value');
+  if (key === 'ADMIN_ALLOWED_HOSTS') assertHostRemainsAllowed(request, value);
+  if (SECRET_ENV_KEYS.includes(key)) await configManager.applySecretOverride(key, { value, clear: form.get('clear') === '1' });
+  else await configManager.setRawOverride(key, value);
+}
+
 function assertHostRemainsAllowed(request, value) {
   const currentHost = normalizeHostHeader(request.headers.host);
   if (!currentHost) throw new Error('Current admin host is invalid');
@@ -836,13 +846,7 @@ async function main() {
       return config;
     },
     saveConfig: async ({ request, form }) => {
-      const key = form.get('key');
-      const value = form.get('value');
-      if (typeof key === 'string' && key.trim() !== '') {
-        if (key === 'ADMIN_ALLOWED_HOSTS') assertHostRemainsAllowed(request, value);
-        if (SECRET_ENV_KEYS.includes(key)) await configManager.applySecretOverride(key, { value, clear: form.get('clear') === '1' });
-        else await configManager.setRawOverride(key, value);
-      }
+      await saveAdminConfigOverride({ configManager, request, form });
       const next = await configManager.load();
       config = next.config;
     },
@@ -875,6 +879,7 @@ export {
   loadConfig,
   timingSafeEqualString,
   shouldDiscardStaleReview,
+  saveAdminConfigOverride,
   validateOcrResult,
   verifyGitHubSignature,
   verifyInternalToken,

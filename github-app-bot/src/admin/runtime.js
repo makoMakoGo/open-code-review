@@ -62,7 +62,7 @@ export class AdminRuntime {
       jobId: job.id,
       diagnosticId: job.diagnosticId,
       status: job.status,
-      repo: job.repository,
+      repo: job.repository.fullName,
       repository: job.repository,
       pullNumber: job.pullNumber,
       trigger: job.trigger,
@@ -77,8 +77,9 @@ export class AdminRuntime {
   async dashboard() {
     await this.refresh();
     const queue = this.queueSnapshot();
+    const summary = summarizeJobs(this.replay.jobs);
+    applyQueueCounts(summary, queue);
     const recentJobs = await this.jobs({ limit: 20 });
-    const summary = summarizeJobs(this.replay.jobs, queue);
     return {
       summary,
       recentJobs,
@@ -122,10 +123,10 @@ export async function directorySize(root) {
   return total;
 }
 
-function summarizeJobs(jobs, queue) {
+function summarizeJobs(jobs) {
   const summary = {
-    queued: queue.queuedCount,
-    running: queue.running ? 1 : 0,
+    queued: 0,
+    running: 0,
     succeeded: 0,
     failed: 0,
     succeeded_with_warnings: 0,
@@ -136,5 +137,11 @@ function summarizeJobs(jobs, queue) {
   for (const job of jobs) {
     if (Object.hasOwn(summary, job.status)) summary[job.status] += 1;
   }
+  return summary;
+}
+
+function applyQueueCounts(summary, queue) {
+  summary.queued = Math.max(summary.queued, queue.queuedCount);
+  summary.running = Math.max(summary.running, queue.running ? 1 : 0);
   return summary;
 }

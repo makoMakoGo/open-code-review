@@ -50,9 +50,9 @@ export class AdminRouter {
     if (!host.allowed) return forbidden('Forbidden host');
     normalized.trustProxy = securityConfig.trustProxy;
 
-    if (normalized.method === 'POST' && !hasSameOrigin(normalized, host.host)) return forbidden('Invalid request origin');
-
     if (!securityConfig.enabled) return notFound();
+
+    if (normalized.method === 'POST' && !hasSameOrigin(normalized, requestOriginHost(normalized.headers))) return forbidden('Invalid request origin');
 
     if (normalized.pathname !== '/admin' && !normalized.pathname.startsWith('/admin/')) return notFound();
 
@@ -206,11 +206,35 @@ function hasSameOrigin(request, expectedHost) {
   if (!source) return false;
   try {
     const url = new URL(source);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
-    return normalizeHostHeader(url.host) === expectedHost;
+    if (url.protocol !== expectedOriginProtocol(request)) return false;
+    return normalizeOriginHost(url.host) === expectedHost;
   } catch {
     return false;
   }
+}
+
+function normalizeOriginHost(host) {
+  if (typeof host !== 'string' || host.trim() === '') return null;
+  const raw = host.trim().toLowerCase();
+  if (raw.startsWith('[')) return normalizeHostHeader(raw) ? raw : null;
+  const colonCount = (raw.match(/:/g) ?? []).length;
+  if (colonCount > 1) return normalizeHostHeader(raw) ? raw : null;
+  const [hostName, port = ''] = raw.split(':');
+  const normalizedHost = hostName.replace(/\.$/, '');
+  const normalized = port === '' ? normalizedHost : `${normalizedHost}:${port}`;
+  return normalizeHostHeader(normalized) ? normalized : null;
+}
+
+function requestOriginHost(headers) {
+  return normalizeOriginHost(getHeader(headers, 'host'));
+}
+
+function expectedOriginProtocol(request) {
+  if (!request.trustProxy) return 'https:';
+  const forwardedProto = getHeader(request.headers, 'x-forwarded-proto');
+  const proto = typeof forwardedProto === 'string' ? forwardedProto.split(',')[0].trim().toLowerCase() : '';
+  if (proto === 'http' || proto === 'https') return `${proto}:`;
+  return 'https:';
 }
 
 function normalizeHeaders(headers) {

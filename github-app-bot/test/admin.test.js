@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ConfigManager, loadConfig } from '../src/config.js';
-import { createAdminRouter, AdminRuntime } from '../src/admin/index.js';
+import { createAdminRouter, AdminRuntime, formatRepository } from '../src/admin/index.js';
 import { AdminJobQueue, JobEventStore, createJobEvent } from '../src/jobs/index.js';
 
 const env = {
@@ -57,6 +57,28 @@ test('admin config applies secret blank keep clear replace semantics', async () 
   assert.equal((await manager.readOverrides()).LLM_PROXY_INTERNAL_TOKEN, 'second-secret');
   await manager.applySecretOverride('LLM_PROXY_INTERNAL_TOKEN', { clear: true });
   assert.equal((await manager.readOverrides()).LLM_PROXY_INTERNAL_TOKEN, '');
+});
+
+test('admin config normalizes keys before routing save semantics', async () => {
+  const calls = [];
+  const manager = {
+    async applySecretOverride(key, edit) { calls.push(['secret', key, edit]); },
+    async setRawOverride(key, value) { calls.push(['raw', key, value]); },
+  };
+  const { saveAdminConfigOverride } = await import('../src/server.js');
+
+  await saveAdminConfigOverride({
+    configManager: manager,
+    request: { headers: { host: 'juya.011070.xyz' } },
+    form: new Map([['key', ' OCR_LLM_TOKEN '], ['value', 'replacement']]),
+  });
+  assert.deepEqual(calls, [['secret', 'OCR_LLM_TOKEN', { value: 'replacement', clear: false }]]);
+
+  await assert.rejects(() => saveAdminConfigOverride({
+    configManager: manager,
+    request: { headers: { host: 'juya.011070.xyz' } },
+    form: new Map([['key', ' ADMIN_ALLOWED_HOSTS '], ['value', 'other.example']]),
+  }), /must keep the current admin host allowed/);
 });
 
 test('admin router stays hidden when disabled and serves dashboard after login', async () => {
@@ -123,6 +145,30 @@ test('admin POST requires same-origin metadata and trusts proxy headers only whe
   assert.match(limited.body, /Too many failed attempts/);
 });
 
+test('disabled admin POST remains hidden before origin validation', async () => {
+  const router = createAdminRouter({ adminPassword: '', allowedHosts: 'juya.011070.xyz' });
+  const response = await router.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(response.status, 404);
+});
+
+test('admin POST origin must match protocol host and port', async () => {
+  const router = createAdminRouter({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:8443' });
+  const wrongPort = await router.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:8443', origin: 'https://juya.011070.xyz' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(wrongPort.status, 403);
+  const wrongProtocol = await router.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:8443', origin: 'http://juya.011070.xyz:8443' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(wrongProtocol.status, 403);
+  const sameOrigin = await router.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:8443', origin: 'https://juya.011070.xyz:8443' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(sameOrigin.status, 200);
+  assert.match(sameOrigin.body, /Invalid password/);
+  const httpTrusted = createAdminRouter({
+    adminPassword: 'a-secure-admin-password',
+    allowedHosts: 'juya.011070.xyz:8080',
+    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:8080', trustProxy: true }),
+  });
+  const forwardedHttp = await httpTrusted.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:8080', origin: 'http://juya.011070.xyz:8080', 'x-forwarded-proto': 'http' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(forwardedHttp.status, 200);
+});
+
 test('admin queue persists job history and replay marks active jobs interrupted', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-jobs-'));
   const store = new JobEventStore({ adminDir: dir });
@@ -159,6 +205,32 @@ test('admin runtime interrupts active replayed jobs and refreshes history', asyn
   await store.append(createJobEvent({ type: 'job.completed', jobId: activeJob.jobId, data: { status: 'succeeded', repository: 'alice/repo', pullNumber: 2 } }));
   const jobs = await runtime.jobs();
   assert.equal(jobs[0].status, 'succeeded');
+});
+
+test('admin runtime does not double count persisted active jobs and live queue', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-runtime-'));
+  const store = new JobEventStore({ adminDir: dir });
+  await store.append(createJobEvent({ type: 'job.queued', jobId: cryptoRandomUuid(), data: { repository: 'alice/repo', pullNumber: 2 } }));
+  const runtime = new AdminRuntime({ eventStore: store, queue: { snapshot: () => ({ running: null, queuedCount: 1, queued: [] }) } });
+  const dashboard = await runtime.dashboard();
+  assert.equal(dashboard.summary.queued, 1);
+  assert.equal(dashboard.summary.running, 0);
+});
+
+test('config manager writes port override and restart marker in one state file', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.setRawOverride('PORT', '3008');
+  const rawState = JSON.parse(await fs.readFile(path.join(dir, 'config-overrides.json'), 'utf8'));
+  assert.equal(rawState.overrides.PORT, '3008');
+  assert.deepEqual(rawState.pendingRestart.keys, ['PORT']);
+  const state = await manager.load();
+  assert.equal(state.pendingRestart.sinceRevision, rawState.revision);
+});
+
+test('admin repository formatter renders object full name', () => {
+  assert.equal(formatRepository({ owner: 'alice', name: 'repo', fullName: 'alice/repo' }), 'alice/repo');
+  assert.equal(formatRepository({ owner: 'alice', name: 'repo' }), 'alice/repo');
 });
 
 test('failed review results persist as failed events with failure kind', async () => {
