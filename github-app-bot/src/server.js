@@ -6,9 +6,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { App } from 'octokit';
+import { createAdminRouter, AdminRuntime } from './admin/index.js';
+import { ConfigManager, loadConfig as loadManagedConfig, csvSet as managedCsvSet } from './config.js';
+import { AdminJobQueue, JobEventStore } from './jobs/index.js';
 
-const DEFAULT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
-const DEFAULT_LLM_PROXY_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
 
 const GIT_TIMEOUT_MS = 180_000;
 const VALID_OCR_STATUSES = new Set(['success', 'completed_with_warnings', 'completed_with_errors', 'skipped']);
@@ -34,77 +35,13 @@ function optionalSecret(name, env = process.env) {
 }
 
 function csvSet(value) {
-  const out = new Set();
-  for (const item of value.split(',')) {
-    const trimmed = item.trim().toLowerCase();
-    if (trimmed) out.add(trimmed);
-  }
-  return out;
+  return managedCsvSet(value);
 }
 
-function parseBool(value, name) {
-  const normalized = String(value).trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
-  throw new Error(`${name} must be a boolean-like value`);
-}
 
-function parseIntegerEnv(name, defaultValue, { min = 0, env = process.env } = {}) {
-  const raw = optionalEnv(name, String(defaultValue), env);
-  if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer`);
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < min) throw new Error(`${name} must be >= ${min}`);
-  return value;
-}
 
 function loadConfig(env = process.env) {
-  const triggerPhrases = csvSet(optionalEnv('BOT_TRIGGER_PHRASES', requiredEnv('BOT_TRIGGER_PHRASE', env), env));
-  const allowedUsers = csvSet(requiredEnv('ALLOWED_USERS', env));
-  const allowedUserIDs = csvSet(optionalEnv('ALLOWED_USER_IDS', '', env));
-  const allowedRepoOwners = csvSet(requiredEnv('ALLOWED_REPO_OWNERS', env));
-  if (triggerPhrases.size === 0) throw new Error('BOT_TRIGGER_PHRASES must contain at least one command');
-  if (allowedUsers.size === 0 && allowedUserIDs.size === 0) {
-    throw new Error('ALLOWED_USERS or ALLOWED_USER_IDS must contain at least one GitHub account');
-  }
-  if (allowedRepoOwners.size === 0) throw new Error('ALLOWED_REPO_OWNERS must contain at least one owner');
-  const llmProxyTargetURL = optionalEnv('LLM_PROXY_TARGET_URL', '', env);
-  const llmProxyInternalToken = optionalSecret('LLM_PROXY_INTERNAL_TOKEN', env);
-  const llmProxyUpstreamAuthHeader = optionalEnv('LLM_PROXY_UPSTREAM_AUTH_HEADER', '', env);
-  const llmProxyUpstreamToken = optionalSecret('LLM_PROXY_UPSTREAM_TOKEN', env);
-  if (llmProxyTargetURL && !llmProxyInternalToken) {
-    throw new Error('LLM_PROXY_INTERNAL_TOKEN is required when LLM_PROXY_TARGET_URL is set');
-  }
-  if ((llmProxyUpstreamAuthHeader === '') !== (llmProxyUpstreamToken === '')) {
-    throw new Error('LLM_PROXY_UPSTREAM_AUTH_HEADER and LLM_PROXY_UPSTREAM_TOKEN must be set together');
-  }
-
-
-  return {
-    port: parseIntegerEnv('PORT', 3007, { min: 1, env }),
-    appId: requiredEnv('GITHUB_APP_ID', env),
-    privateKeyPath: optionalEnv('GITHUB_APP_PRIVATE_KEY_PATH', '/config/github-app-private-key.pem', env),
-    webhookSecret: requiredEnv('GITHUB_WEBHOOK_SECRET', env),
-    triggerPhrases,
-    allowedUsers,
-    allowedUserIDs,
-    allowedRepoOwners,
-    repoRoot: requiredEnv('BOT_REPO_ROOT', env),
-    maxComments: parseIntegerEnv('MAX_REVIEW_COMMENTS', 30, { min: 1, env }),
-    jobTimeoutMs: parseIntegerEnv('JOB_TIMEOUT_MS', 20 * 60 * 1000, { min: 1000, env }),
-    cleanupWorkdir: parseBool(optionalEnv('CLEANUP_WORKDIR', 'true', env), 'CLEANUP_WORKDIR'),
-    webhookBodyLimitBytes: parseIntegerEnv('WEBHOOK_BODY_LIMIT_BYTES', DEFAULT_WEBHOOK_BODY_LIMIT_BYTES, { min: 1024, env }),
-    llmProxyBodyLimitBytes: parseIntegerEnv('LLM_PROXY_BODY_LIMIT_BYTES', DEFAULT_LLM_PROXY_BODY_LIMIT_BYTES, { min: 1024, env }),
-    ocrConcurrency: parseIntegerEnv('OCR_CONCURRENCY', 1, { min: 1, env }),
-    ocrMaxGitProcs: parseIntegerEnv('OCR_MAX_GIT_PROCS', 2, { min: 1, env }),
-    ocrPerFileTimeoutMinutes: parseIntegerEnv('OCR_PER_FILE_TIMEOUT_MINUTES', 10, { min: 1, env }),
-    llmProxyTargetURL,
-    llmProxyUserAgent: optionalEnv('LLM_PROXY_USER_AGENT', 'open-code-review-github-app-bot/0.1.0', env),
-    llmProxyXApp: optionalEnv('LLM_PROXY_X_APP', '', env),
-    llmProxyInternalToken,
-    llmProxyUpstreamAuthHeader,
-    llmProxyUpstreamToken,
-    ocrEnv: buildOcrEnv(env),
-  };
+  return loadManagedConfig(env);
 }
 
 function requiredEnvFromFile(filePath, envName) {
@@ -549,38 +486,6 @@ function buildStaleReviewComment(reviewed, currentPull, diagnosticId) {
   ].join('\n');
 }
 
-class JobQueue {
-  constructor(handler) {
-    this.handler = handler;
-    this.running = false;
-    this.queue = [];
-    this.known = new Set();
-  }
-
-  enqueue(key, payload) {
-    if (this.known.has(key)) return false;
-    this.known.add(key);
-    this.queue.push({ key, payload });
-    this.drain();
-    return true;
-  }
-
-  async drain() {
-    if (this.running) return;
-    this.running = true;
-    while (this.queue.length > 0) {
-      const job = this.queue.shift();
-      try {
-        await this.handler(job.payload);
-      } catch (error) {
-        console.error('job failed', { key: job.key, error: error.stack || error.message });
-      } finally {
-        this.known.delete(job.key);
-      }
-    }
-    this.running = false;
-  }
-}
 
 async function postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId) {
   await octokit.rest.issues.createComment({
@@ -607,7 +512,7 @@ async function handleReviewJob(payload, config) {
     console.log('job started', { owner, repo, pullNumber, head: pull.head.sha, diagnosticId });
     if (pull.base.repo.private) {
       console.log('skipping private repo', { owner, repo, pullNumber });
-      return;
+      return { outcome: 'skipped', diagnosticId, failure: null };
     }
 
     const headSha = pull.head.sha;
@@ -645,7 +550,7 @@ async function handleReviewJob(payload, config) {
         issue_number: pullNumber,
         body: buildStaleReviewComment(baseSnapshot, currentPull, diagnosticId),
       });
-      return;
+      return { outcome: 'stale', diagnosticId, commentsGenerated: 0, commentsPosted: 1, failure: null };
     }
 
     let result;
@@ -658,7 +563,7 @@ async function handleReviewJob(payload, config) {
     if (!validateOcrResult(result)) {
       const failure = buildInvalidOcrOutputFailure(review.stdout);
       await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
-      return;
+      return { outcome: 'failed', diagnosticId, failure, commentsGenerated: 0, commentsPosted: 1 };
     }
 
     const statusSummary = buildOcrStatusSummary(result, diagnosticId);
@@ -672,7 +577,15 @@ async function handleReviewJob(payload, config) {
         issue_number: pullNumber,
         body: statusSummary || `OpenCodeReview: ${result.message || 'No comments generated. Looks good to me.'}`,
       });
-      return;
+      return {
+        outcome: statusSummary ? 'succeeded_with_warnings' : 'succeeded',
+        diagnosticId,
+        ocrStatus: result.status,
+        commentsGenerated: 0,
+        commentsPosted: 1,
+        warningsCount: Array.isArray(result.warnings) ? result.warnings.length : 0,
+        failure: null,
+      };
     }
 
     const inline = [];
@@ -693,6 +606,8 @@ async function handleReviewJob(payload, config) {
       summaryBody += '\n\n' + summary.map(({ comment }) => formatSummaryComment(comment)).join('\n\n---\n\n');
     }
 
+    let commentsPosted = inline.length;
+    let publishWarnings = [];
     try {
       await octokit.rest.pulls.createReview({
         owner,
@@ -705,6 +620,7 @@ async function handleReviewJob(payload, config) {
       });
     } catch {
       const failed = [];
+      commentsPosted = 0;
       for (const { comment, reviewComment } of inline) {
         try {
           await octokit.rest.pulls.createReview({
@@ -716,6 +632,7 @@ async function handleReviewJob(payload, config) {
             body: 'OpenCodeReview inline comment.',
             comments: [reviewComment],
           });
+          commentsPosted += 1;
         } catch (error) {
           failed.push({ comment, error: error.message });
         }
@@ -724,12 +641,28 @@ async function handleReviewJob(payload, config) {
         const fallback = [summaryBody];
         for (const item of failed) fallback.push(formatSummaryComment(item.comment, item.error));
         await octokit.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body: fallback.join('\n\n---\n\n') });
+        commentsPosted += 1;
       }
+      if (failed.length > 0) publishWarnings = failed.map(item => ({ message: item.error }));
     }
+
+    return {
+      outcome: statusSummary || publishWarnings.length > 0 ? 'succeeded_with_warnings' : 'succeeded',
+      diagnosticId,
+      ocrStatus: result.status,
+      commentsGenerated: result.comments.length,
+      commentsSelected: comments.length,
+      commentsPosted,
+      commentsOmitted: overflow,
+      warningsCount: Array.isArray(result.warnings) ? result.warnings.length : 0,
+      publishWarnings,
+      failure: null,
+    };
   } catch (error) {
     const failure = classifyReviewFailure(error, config);
     console.error('review job failed', { owner, repo, pullNumber, diagnosticId, failure: failure.kind, error: error.stack || error.message });
     await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
+    return { outcome: 'failed', diagnosticId, failure, reportingError: null };
   } finally {
     if (config.cleanupWorkdir && workdir) {
       await fs.rm(workdir, { recursive: true, force: true });
@@ -738,22 +671,48 @@ async function handleReviewJob(payload, config) {
   }
 }
 
-function createServer(config) {
-  const queue = new JobQueue(payload => handleReviewJob(payload, config));
+function createServer(config, options = {}) {
+  let currentConfig = config;
+  const configProvider = options.configProvider || (() => currentConfig);
+  const eventStore = options.eventStore || new JobEventStore({ adminDir: currentConfig.adminDataDir });
+  const queue = options.queue || new AdminJobQueue({ handler: (payload, context) => handleReviewJob(payload, context?.config || configProvider()), store: eventStore, configProvider });
+  const adminRuntime = options.adminRuntime || new AdminRuntime({ configManager: options.configManager, eventStore, queue });
+  const adminRouter = options.adminRouter || createAdminRouter({
+    adminPassword: currentConfig.adminPassword,
+    allowedHosts: currentConfig.adminAllowedHosts,
+    secureCookies: true,
+    loadDashboard: () => adminRuntime.dashboard(),
+    loadJobs: () => adminRuntime.jobs({ limit: 50 }),
+    loadConfig: () => adminRuntime.configSummary(),
+    saveConfig: options.saveConfig,
+    adminRoot: currentConfig.adminDataDir,
+  });
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     try {
+      if (req.url === '/admin') {
+        res.writeHead(308, { location: '/admin/' });
+        res.end();
+        return;
+      }
+      if (req.url === '/admin/' || req.url.startsWith('/admin/')) {
+        const body = req.method === 'POST' ? await readRequestBody(req, currentConfig.webhookBodyLimitBytes) : null;
+        const response = await adminRouter.route({ method: req.method, url: req.url, headers: req.headers, body, remoteAddress: req.socket.remoteAddress });
+        writeAdminResponse(res, response);
+        return;
+      }
       if (req.method === 'GET' && req.url === '/health') {
         json(res, 200, { ok: true, service: 'open-code-review-github-app-bot' });
         return;
       }
       if (req.method === 'POST' && req.url === '/llm/anthropic/v1/messages') {
-        if (!verifyInternalToken(config.llmProxyInternalToken, extractInternalTokenFromHeaders(req.headers))) {
+        currentConfig = await configProvider();
+        if (!verifyInternalToken(currentConfig.llmProxyInternalToken, extractInternalTokenFromHeaders(req.headers))) {
           json(res, 401, { error: 'invalid internal token' });
           return;
         }
-        const rawBody = await readRequestBody(req, config.llmProxyBodyLimitBytes);
-        await proxyLLMRequest(req, res, config, rawBody);
+        const rawBody = await readRequestBody(req, currentConfig.llmProxyBodyLimitBytes);
+        await proxyLLMRequest(req, res, currentConfig, rawBody);
         return;
       }
 
@@ -762,9 +721,10 @@ function createServer(config) {
         return;
       }
 
-      const rawBody = await readRequestBody(req, config.webhookBodyLimitBytes);
+      currentConfig = await configProvider();
+      const rawBody = await readRequestBody(req, currentConfig.webhookBodyLimitBytes);
       const signature = req.headers['x-hub-signature-256'];
-      if (!verifyGitHubSignature(config.webhookSecret, rawBody, signature)) {
+      if (!verifyGitHubSignature(currentConfig.webhookSecret, rawBody, signature)) {
         json(res, 401, { error: 'invalid signature' });
         return;
       }
@@ -780,25 +740,66 @@ function createServer(config) {
       }
 
       const payload = JSON.parse(rawBody.toString('utf8'));
-      const auth = authorizePayload(payload, config);
+      const auth = authorizePayload(payload, currentConfig);
       if (!auth.ok) {
         json(res, 202, { ok: true, ignored: auth.reason });
         return;
       }
 
       const key = `${payload.repository.full_name}#${payload.issue.number}@${payload.comment.id}`;
-      const queued = queue.enqueue(key, payload);
-      json(res, queued ? 202 : 200, { ok: true, queued });
+      const result = await queue.enqueue({
+        key,
+        payload,
+        metadata: {
+          diagnosticId: key,
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          pullNumber: payload.issue.number,
+          actor: payload.sender.login,
+          trigger: payload.comment.body,
+        },
+      });
+      json(res, result.queued ? 202 : 200, { ok: true, queued: result.queued, jobId: result.job?.jobId });
     } catch (error) {
       console.error('request failed', error.stack || error.message);
       json(res, 500, { error: 'internal error' });
     }
   });
+  server.adminRuntime = adminRuntime;
+  return server;
 }
 
-function main() {
-  const config = loadConfig();
-  const server = createServer(config);
+function writeAdminResponse(res, response) {
+  for (const [name, value] of Object.entries(response.headers || {})) {
+    res.setHeader(name, value);
+  }
+  res.writeHead(response.status || 200);
+  res.end(response.body || '');
+}
+
+async function main() {
+  const configManager = new ConfigManager();
+  await configManager.ensureStorageDir();
+  const loaded = await configManager.load();
+  let config = loaded.config;
+  const eventStore = new JobEventStore({ adminDir: config.adminDataDir });
+  const server = createServer(config, {
+    configManager,
+    eventStore,
+    configProvider: async () => {
+      const next = await configManager.load();
+      config = next.config;
+      return config;
+    },
+    saveConfig: async ({ form }) => {
+      const key = form.get('key');
+      const value = form.get('value');
+      if (typeof key === 'string' && key.trim() !== '') await configManager.setRawOverride(key, value);
+      const next = await configManager.load();
+      config = next.config;
+    },
+  });
+  await server.adminRuntime.initialize();
   server.listen(config.port, '0.0.0.0', () => {
     console.log(`open-code-review-github-app-bot listening on ${config.port}`);
   });
