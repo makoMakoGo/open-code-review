@@ -55,6 +55,7 @@ export {
   renderDashboardPage,
   renderDiagnosticsList,
   renderErrorPage,
+  renderJobDetailPage,
   renderJobsPage,
   renderJobsTable,
   renderLayout,

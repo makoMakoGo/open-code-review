@@ -5,6 +5,7 @@ import path from 'node:path';
 export const DEFAULT_ADMIN_DATA_DIR = '/data/admin';
 export const JOBS_DIR_NAME = 'jobs';
 export const JOB_LOGS_DIR_NAME = 'logs';
+export const STATS_DIR_NAME = 'stats';
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const SENSITIVE_KEY_PATTERN = /(?:authorization|cookie|credential|password|private[-_]?key|secret|session|token|api[-_]?key)/i;
 
@@ -32,6 +33,15 @@ export function resolveEventsFile(adminDir = DEFAULT_ADMIN_DATA_DIR) {
 
 export function resolveJobLogsDir(adminDir = DEFAULT_ADMIN_DATA_DIR) {
   return path.join(resolveJobsDir(adminDir), JOB_LOGS_DIR_NAME);
+}
+
+export function resolveStatsDir(adminDir = DEFAULT_ADMIN_DATA_DIR) {
+  assertNonEmptyString(adminDir, 'adminDir');
+  return path.join(adminDir, STATS_DIR_NAME);
+}
+
+export function resolveDailyStatsFile(adminDir = DEFAULT_ADMIN_DATA_DIR) {
+  return path.join(resolveStatsDir(adminDir), 'daily-stats.jsonl');
 }
 
 export function normalizeIsoTimestamp(value = new Date(), name = 'timestamp') {
@@ -98,10 +108,24 @@ export async function atomicWriteFile(filePath, contents, { mode = 0o600 } = {})
     await handle.close();
     handle = undefined;
     await fs.rename(tempPath, filePath);
+    await fsyncDirectory(dir);
   } catch (error) {
     if (handle) await handle.close().catch(() => {});
     await fs.rm(tempPath, { force: true }).catch(() => {});
     throw error;
+  }
+}
+
+async function fsyncDirectory(dir) {
+  let handle;
+  try {
+    handle = await fs.open(dir, 'r');
+    await handle.sync();
+  } catch (error) {
+    if (error && (error.code === 'EINVAL' || error.code === 'EISDIR' || error.code === 'ENOTSUP')) return;
+    throw error;
+  } finally {
+    if (handle) await handle.close().catch(() => {});
   }
 }
 

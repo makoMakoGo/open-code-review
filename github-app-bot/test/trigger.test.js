@@ -14,6 +14,9 @@ import {
   extractInternalTokenFromHeaders,
   isTrigger,
   readRequestBody,
+  minimalReviewPayload,
+  runProcess,
+  runRetentionFailOpen,
   loadConfig,
   shouldDiscardStaleReview,
   validateOcrResult,
@@ -255,6 +258,52 @@ test('classifies GitHub API rate limits separately from permission errors', () =
   const permission = classifyReviewFailure({ status: 403, message: 'Resource not accessible by integration', response: { headers: {} } }, { jobTimeoutMs: 1800000 });
   assert.equal(permission.kind, 'github_api_error');
   assert.equal(permission.retryable, false);
+});
+
+test('minimal review payload omits webhook and user-only fields', () => {
+  const minimal = minimalReviewPayload({
+    action: 'created',
+    installation: { id: 42, account: { login: 'owner-login' } },
+    repository: { name: 'repo', full_name: 'owner-login/repo', private: false, owner: { login: 'owner-login' }, extra: 'drop' },
+    issue: { number: 7, pull_request: { url: 'https://api.github.com/pulls/7' }, body: 'drop issue body' },
+    comment: { id: 99, body: '/ocr review', user: { login: 'owner-login' } },
+    sender: { login: 'owner-login', id: 123, email: 'drop@example.test' },
+  });
+  assert.deepEqual(minimal, {
+    action: 'created',
+    installation: { id: 42 },
+    repository: { name: 'repo', full_name: 'owner-login/repo', private: false, owner: { login: 'owner-login' } },
+    issue: { number: 7, pull_request: {} },
+    comment: { id: 99, body: '/ocr review' },
+    sender: { login: 'owner-login', id: 123 },
+  });
+});
+
+test('runProcess exposes stdout metrics and bounded stderr callbacks', async () => {
+  const stderrChunks = [];
+  const result = await runProcess(process.execPath, ['-e', 'process.stdout.write("ok"); process.stderr.write("err-token=secret")'], {
+    phase: 'test',
+    cwd: process.cwd(),
+    env: process.env,
+    timeoutMs: 5000,
+    onStderrChunk: chunk => stderrChunks.push(chunk),
+  });
+  assert.equal(result.stdout, 'ok');
+  assert.equal(result.stdoutBytes, 2);
+  assert.equal(result.stdoutSha256, crypto.createHash('sha256').update('ok').digest('hex'));
+  assert.equal(result.stderr, 'err-token=secret');
+  assert.equal(stderrChunks.join(''), 'err-token=secret');
+});
+
+test('retention runner fails open', async () => {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const result = await runRetentionFailOpen({ runRetention: async () => { throw new Error('disk unavailable'); } });
+    assert.equal(result, null);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 function validEnv() {

@@ -1,5 +1,6 @@
-import { appendJsonLines, assertUuid, createUuid, normalizeIsoTimestamp, parseJsonlText, readUtf8IfExists, resolveEventsFile, sanitizeForAdminStorage } from './utils.js';
-import { applyJobEvent, createJobSnapshotStore } from './model.js';
+import fs from 'node:fs/promises';
+import { appendJsonLines, assertUuid, atomicWriteFile, createUuid, jsonlFromRecords, normalizeIsoTimestamp, parseJsonlText, readUtf8IfExists, resolveEventsFile, sanitizeForAdminStorage, timestampMs } from './utils.js';
+import { applyJobEvent, createJobSnapshotStore, isActiveStatus, isTerminalStatus } from './model.js';
 
 const EVENT_TYPES = new Set([
   'job.queued',
@@ -14,19 +15,97 @@ const EVENT_TYPES = new Set([
 export class JobEventStore {
   constructor(options = {}) {
     this.filePath = options.filePath ?? resolveEventsFile(options.adminDir);
+    this.writeChain = Promise.resolve();
+    this.index = createJobSnapshotStore();
+    this.loaded = false;
+    this.fileSignature = null;
+    this.replayDiagnostics = emptyReplayDiagnostics();
   }
 
   async append(event) {
-    await this.appendMany([event]);
+    const [normalized] = await this.appendMany([event]);
+    return normalized;
   }
 
   async appendMany(events) {
     if (!Array.isArray(events)) throw new TypeError('events must be an array');
     const normalized = events.map(event => createJobEvent(event));
-    await appendJsonLines(this.filePath, normalized);
+    if (normalized.length === 0) return [];
+    return this.#serializeWrite(async () => {
+      if (!this.loaded || !(await signaturesMatch(this.filePath, this.fileSignature))) await this.#loadFromDisk();
+      if (this.replayDiagnostics.truncatedTail) await this.#rewriteIndex();
+      await appendJsonLines(this.filePath, normalized);
+      for (const event of normalized) applyJobEvent(this.index, event);
+      this.replayDiagnostics = { ...this.replayDiagnostics, degraded: this.replayDiagnostics.corruptions.length > 0 || this.replayDiagnostics.invalidEvents.length > 0 };
+      this.fileSignature = await statSignature(this.filePath);
+      return normalized;
+    });
   }
 
   async replay(options = {}) {
+    await this.writeChain;
+    if (options.force || !this.loaded || !(await signaturesMatch(this.filePath, this.fileSignature))) {
+      await this.#loadFromDisk();
+    }
+
+    let jobs = this.index.snapshot();
+    if (options.pruneTerminalBefore) {
+      const pruned = createJobSnapshotStore(jobs);
+      pruned.pruneTerminalBefore(options.pruneTerminalBefore);
+      jobs = pruned.snapshot();
+    }
+
+    return {
+      jobs,
+      degraded: this.replayDiagnostics.degraded,
+      corruptions: [...this.replayDiagnostics.corruptions],
+      invalidEvents: [...this.replayDiagnostics.invalidEvents],
+      truncatedTail: this.replayDiagnostics.truncatedTail,
+    };
+  }
+
+  async compact(options = {}) {
+    const now = normalizeIsoTimestamp(options.now ?? new Date(), 'now');
+    const terminalDetailsBefore = options.terminalDetailsBefore == null ? null : timestampMs(options.terminalDetailsBefore, 'terminalDetailsBefore');
+    return this.#serializeWrite(async () => {
+      await this.#loadFromDisk();
+      const before = await statSignature(this.filePath);
+      const jobs = this.index.snapshot();
+      const { events, terminalDetailsCompacted } = compactJobsToEvents(jobs, { now, terminalDetailsBefore });
+      await atomicWriteFile(this.filePath, jsonlFromRecords(events));
+      await this.#loadFromDisk();
+      const after = await statSignature(this.filePath);
+      return {
+        jobs: jobs.length,
+        events: events.length,
+        terminalDetailsCompacted,
+        beforeBytes: before.size,
+        afterBytes: after.size,
+        bytesReclaimed: Math.max(0, before.size - after.size),
+      };
+    });
+  }
+
+  async snapshot(options = {}) {
+    return this.replay(options);
+  }
+
+  diagnostics() {
+    return {
+      degraded: this.replayDiagnostics.degraded,
+      corruptions: [...this.replayDiagnostics.corruptions],
+      invalidEvents: [...this.replayDiagnostics.invalidEvents],
+      truncatedTail: this.replayDiagnostics.truncatedTail,
+    };
+  }
+
+  #serializeWrite(operation) {
+    const run = this.writeChain.then(operation, operation);
+    this.writeChain = run.catch(() => {});
+    return run;
+  }
+
+  async #loadFromDisk() {
     const parsed = parseJsonlText(await readUtf8IfExists(this.filePath), { source: this.filePath });
     const store = createJobSnapshotStore();
     const invalidEvents = [];
@@ -44,17 +123,22 @@ export class JobEventStore {
       }
     }
 
-    if (options.pruneTerminalBefore) {
-      store.pruneTerminalBefore(options.pruneTerminalBefore);
-    }
-
-    return {
-      jobs: store.snapshot(),
+    this.index = store;
+    this.loaded = true;
+    this.fileSignature = await statSignature(this.filePath);
+    this.replayDiagnostics = {
       degraded: parsed.degraded || invalidEvents.length > 0,
       corruptions: parsed.corruptions,
       invalidEvents,
       truncatedTail: parsed.truncatedTail,
     };
+  }
+
+  async #rewriteIndex() {
+    const jobs = this.index.snapshot();
+    const { events } = compactJobsToEvents(jobs, { now: new Date().toISOString(), terminalDetailsBefore: null });
+    await atomicWriteFile(this.filePath, jsonlFromRecords(events));
+    await this.#loadFromDisk();
   }
 }
 
@@ -92,4 +176,101 @@ export function assertKnownEventType(type) {
 
 export function jobEventTypes() {
   return Array.from(EVENT_TYPES);
+}
+
+async function statSignature(filePath) {
+  try {
+    const stat = await fs.stat(filePath);
+    return { size: stat.size, mtimeMs: stat.mtimeMs };
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return { size: 0, mtimeMs: 0 };
+    throw error;
+  }
+}
+
+async function signaturesMatch(filePath, previous) {
+  if (!previous) return false;
+  const current = await statSignature(filePath);
+  return current.size === previous.size && current.mtimeMs === previous.mtimeMs;
+}
+
+function emptyReplayDiagnostics() {
+  return { degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
+}
+
+function compactJobsToEvents(jobs, { now, terminalDetailsBefore }) {
+  const events = [];
+  let terminalDetailsCompacted = 0;
+  const ordered = [...jobs].sort((left, right) => timestampMs(left.queuedAt, 'queuedAt') - timestampMs(right.queuedAt, 'queuedAt'));
+  for (const job of ordered) {
+    const compactTerminalDetails = shouldCompactTerminalDetails(job, terminalDetailsBefore);
+    if (compactTerminalDetails) terminalDetailsCompacted += 1;
+    events.push(compactedEvent('job.queued', job.id, job.queuedAt, baseJobData(job)));
+    if (job.startedAt || job.status === 'running' || isTerminalStatus(job.status)) {
+      events.push(compactedEvent('job.started', job.id, job.startedAt ?? job.queuedAt, { startedAt: job.startedAt ?? job.queuedAt }));
+    }
+    if (isActiveStatus(job.status)) continue;
+    events.push(compactedTerminalEvent(job, { now, compactTerminalDetails }));
+  }
+  return { events, terminalDetailsCompacted };
+}
+
+function shouldCompactTerminalDetails(job, terminalDetailsBefore) {
+  if (terminalDetailsBefore == null || !isTerminalStatus(job.status) || !job.finishedAt) return false;
+  return timestampMs(job.finishedAt, 'finishedAt') < terminalDetailsBefore;
+}
+
+function compactedTerminalEvent(job, { now, compactTerminalDetails }) {
+  const timestamp = job.finishedAt ?? job.updatedAt ?? now;
+  if (job.status === 'failed') {
+    return compactedEvent('job.failed', job.id, timestamp, terminalJobData(job, { compactTerminalDetails }));
+  }
+  if (job.status === 'interrupted') {
+    return compactedEvent('job.interrupted', job.id, timestamp, terminalJobData(job, { compactTerminalDetails, reason: job.errorMessage }));
+  }
+  return compactedEvent('job.completed', job.id, timestamp, terminalJobData(job, { compactTerminalDetails, status: job.status }));
+}
+
+function compactedEvent(type, jobId, timestamp, data) {
+  return createJobEvent({ type, jobId, timestamp, data });
+}
+
+function baseJobData(job) {
+  return {
+    diagnosticId: job.diagnosticId,
+    repository: job.repository,
+    pullNumber: job.pullNumber,
+    title: job.title,
+    headSha: job.headSha,
+    baseSha: job.baseSha,
+    actor: job.actor,
+    trigger: job.trigger,
+    queuedAt: job.queuedAt,
+    progress: job.progress,
+    logCount: job.logCount,
+  };
+}
+
+function terminalJobData(job, { compactTerminalDetails, status = job.status, reason = '' }) {
+  const data = {
+    ...baseJobData(job),
+    status,
+    finishedAt: job.finishedAt,
+    conclusion: job.conclusion,
+    errorKind: job.errorKind,
+    errorMessage: compactTerminalDetails ? '' : job.errorMessage,
+    result: compactTerminalDetails ? compactStructuredResult(job) : job.result,
+  };
+  if (reason && !compactTerminalDetails) data.reason = reason;
+  return data;
+}
+
+function compactStructuredResult(job) {
+  const result = job.result && typeof job.result === 'object' && !Array.isArray(job.result) ? job.result : null;
+  const failure = result?.failure && typeof result.failure === 'object' && !Array.isArray(result.failure) ? result.failure : null;
+  const compacted = { compacted: true, outcome: result?.outcome ?? job.status };
+  if (job.errorKind || failure?.kind) compacted.failure = { kind: job.errorKind || failure.kind };
+  if (Number.isFinite(result?.commentsGenerated)) compacted.commentsGenerated = result.commentsGenerated;
+  if (Number.isFinite(result?.commentsPosted)) compacted.commentsPosted = result.commentsPosted;
+  return compacted;
 }

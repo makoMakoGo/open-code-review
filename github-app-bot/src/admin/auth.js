@@ -38,15 +38,18 @@ export class LoginRateLimiter {
     windowMs = DEFAULT_WINDOW_MS,
     lockoutMs = DEFAULT_LOCKOUT_MS,
     now = () => Date.now(),
+    pruneLimit = 100,
   } = {}) {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('limit must be a positive integer');
     if (!Number.isSafeInteger(windowMs) || windowMs < 1) throw new Error('windowMs must be a positive integer');
     if (!Number.isSafeInteger(lockoutMs) || lockoutMs < 1) throw new Error('lockoutMs must be a positive integer');
+    if (!Number.isSafeInteger(pruneLimit) || pruneLimit < 1) throw new Error('pruneLimit must be a positive integer');
     if (typeof now !== 'function') throw new Error('now must be a function');
 
     this.limit = limit;
     this.windowMs = windowMs;
     this.lockoutMs = lockoutMs;
+    this.pruneLimit = pruneLimit;
     this.now = now;
     this.records = new Map();
   }
@@ -66,6 +69,7 @@ export class LoginRateLimiter {
   }
 
   consumeFailure(key) {
+    this.prune();
     const id = normalizeRateLimitKey(key);
     const now = this.now();
     const record = this.#currentRecord(id, now);
@@ -100,13 +104,18 @@ export class LoginRateLimiter {
     this.records.delete(normalizeRateLimitKey(key));
   }
 
-  prune() {
+  prune({ maxDeletes = this.pruneLimit } = {}) {
+    if (!Number.isSafeInteger(maxDeletes) || maxDeletes < 1) throw new Error('maxDeletes must be a positive integer');
     const now = this.now();
+    let removed = 0;
     for (const [id, record] of this.records) {
+      if (removed >= maxDeletes) break;
       if (record.windowStartedAt + this.windowMs <= now && record.lockedUntil <= now) {
         this.records.delete(id);
+        removed += 1;
       }
     }
+    return removed;
   }
 
   #currentRecord(id, now) {

@@ -69,7 +69,7 @@ Install the App on the repositories or accounts that should use it.
 Copy the example env file:
 
 ```bash
-mkdir -p config data/repos
+mkdir -p config data/repos data/admin
 cp config/bot.env.example config/bot.env
 chmod 755 config
 chmod 600 config/bot.env
@@ -139,6 +139,32 @@ LLM_PROXY_UPSTREAM_TOKEN=Bearer provider-token
 
 The local proxy accepts OCR's `Authorization: Bearer <LLM_PROXY_INTERNAL_TOKEN>` or `X-Api-Key: <LLM_PROXY_INTERNAL_TOKEN>`, then replaces it with `LLM_PROXY_UPSTREAM_AUTH_HEADER` and `LLM_PROXY_UPSTREAM_TOKEN` for the provider. Do not expose `/llm/*` through the public reverse proxy.
 
+## Admin dashboard
+
+Set `ADMIN_PASSWORD` to a value with at least 16 characters to enable the embedded dashboard at `/admin/`. If `ADMIN_PASSWORD` is unset or too short, `/admin/*` returns 404 after the Host guard.
+
+```env
+ADMIN_PASSWORD=replace-with-long-admin-password
+ADMIN_DATA_DIR=/data/admin
+ADMIN_ALLOWED_HOSTS=review.example.com
+ADMIN_SESSION_TTL_HOURS=12
+ADMIN_COOKIE_SECURE=true
+ADMIN_TRUST_PROXY=true
+JOB_HISTORY_RETENTION_DAYS=90
+JOB_LOG_RETENTION_DAYS=14
+STATS_RETENTION_DAYS=365
+CONFIG_AUDIT_RETENTION_DAYS=365
+JOB_LOG_MAX_BYTES=5242880
+ADMIN_DATA_MAX_BYTES=536870912
+RETENTION_INTERVAL_HOURS=6
+```
+
+`ADMIN_DATA_DIR` is runtime state and should be writable by UID/GID `10001`; `/config` stays read-only. Config precedence is code defaults, environment, then `/data/admin/config-overrides.json`. The dashboard can edit bot config except `ADMIN_PASSWORD`, `ADMIN_DATA_DIR`, and the legacy `ADMIN_STORAGE_DIR` alias. Queued jobs load the latest config when they start; running jobs keep their start-time config snapshot. `PORT` changes are written with a pending-restart marker, then cleared after the process successfully binds the requested port.
+
+The dashboard stores job history, bounded per-job logs, daily stats, config audit records, session state, and retention state under `/data/admin`. Logs keep stage messages, errors, git stderr, and OCR stderr; they do not store OCR stdout, webhook payloads, raw provider output, or secrets. Retention runs at startup and then every `RETENTION_INTERVAL_HOURS` hours. Defaults retain task details for 90 days, logs for 14 days, stats and config audit records for 365 days, cap each job log at 5 MiB, and apply a 512 MiB soft cap to `/data/admin`.
+
+Authenticated admin POSTs require same-origin `Origin` or `Referer` plus CSRF. Admin cookies are `HttpOnly`, `SameSite=Strict`, `Path=/admin`, and use `Secure` when `ADMIN_COOKIE_SECURE=true`. Keep `ADMIN_TRUST_PROXY=false` unless the process is behind a trusted reverse proxy that overwrites `X-Real-IP` and `X-Forwarded-Proto`.
+
 ## Run
 
 ```bash
@@ -160,11 +186,14 @@ Expected response:
 
 ## Reverse proxy
 
-Only expose these paths publicly:
+Expose `/admin/*` only when the dashboard is intentionally enabled. Never expose `/llm/*` publicly.
 
 ```text
 GET  /health
 POST /github/webhook
+GET  /admin/
+GET  /admin/*
+POST /admin/*
 ```
 
 Example OpenResty server block:
@@ -192,6 +221,18 @@ server {
         proxy_read_timeout 60s;
     }
 
+    location /admin/ {
+        proxy_pass http://127.0.0.1:3007/admin/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location / {
         return 404;
     }
@@ -204,7 +245,7 @@ server {
 - Sender authorization checks both `sender.login` and `sender.id`.
 - Repository authorization checks `repository.owner.login`.
 - Private repositories are always ignored; this bot fetches pull requests through public HTTPS remotes only.
-- The queue is in-memory. Restarting the container drops queued but not-yet-started jobs.
+- Queued and running jobs are recovered as `interrupted` after restart; no automatic retry is attempted.
 - `OCR_CONCURRENCY=1` serializes OCR file reviews. Raise only if the LLM provider can handle concurrent requests.
 - Failure comments are classified into checkout, GitHub API, timeout, configuration, provider authentication, rate-limit, provider availability, stale PR, invalid OCR output, and runtime failures. They include a diagnostic id but never include raw OCR output or provider responses.
 - `CLEANUP_WORKDIR=true` deletes `/data/repos/<owner>-<repo>-<pr>-<sha>` after each job.

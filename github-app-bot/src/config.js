@@ -7,6 +7,16 @@ const DEFAULT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_LLM_PROXY_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_ADMIN_DATA_DIR = '/data/admin';
 const DEFAULT_ADMIN_STORAGE_DIR = DEFAULT_ADMIN_DATA_DIR;
+const DEFAULT_JOB_HISTORY_RETENTION_DAYS = 90;
+const DEFAULT_JOB_LOG_RETENTION_DAYS = 14;
+const DEFAULT_STATS_RETENTION_DAYS = 365;
+const DEFAULT_CONFIG_AUDIT_RETENTION_DAYS = 365;
+const DEFAULT_JOB_LOG_MAX_BYTES = 5 * 1024 * 1024;
+const DEFAULT_ADMIN_DATA_MAX_BYTES = 512 * 1024 * 1024;
+const DEFAULT_RETENTION_INTERVAL_HOURS = 6;
+const DEFAULT_ADMIN_SESSION_TTL_HOURS = 12;
+const CONFIG_AUDIT_DIR_NAME = 'audit';
+const CONFIG_AUDIT_FILE_NAME = 'config-audit.jsonl';
 const OVERRIDES_FILE_NAME = 'config-overrides.json';
 const PENDING_RESTART_FILE_NAME = 'pending-restart.json';
 
@@ -35,10 +45,19 @@ const DEFAULT_ENV = Object.freeze({
   LLM_PROXY_UPSTREAM_TOKEN: '',
   OCR_USE_ANTHROPIC: 'false',
   OCR_LLM_AUTH_HEADER: '',
+  JOB_HISTORY_RETENTION_DAYS: String(DEFAULT_JOB_HISTORY_RETENTION_DAYS),
+  JOB_LOG_RETENTION_DAYS: String(DEFAULT_JOB_LOG_RETENTION_DAYS),
+  STATS_RETENTION_DAYS: String(DEFAULT_STATS_RETENTION_DAYS),
+  CONFIG_AUDIT_RETENTION_DAYS: String(DEFAULT_CONFIG_AUDIT_RETENTION_DAYS),
+  JOB_LOG_MAX_BYTES: String(DEFAULT_JOB_LOG_MAX_BYTES),
+  ADMIN_DATA_MAX_BYTES: String(DEFAULT_ADMIN_DATA_MAX_BYTES),
+  RETENTION_INTERVAL_HOURS: String(DEFAULT_RETENTION_INTERVAL_HOURS),
+  ADMIN_SESSION_TTL_HOURS: String(DEFAULT_ADMIN_SESSION_TTL_HOURS),
   ADMIN_PASSWORD: '',
   ADMIN_STORAGE_DIR: DEFAULT_ADMIN_STORAGE_DIR,
   ADMIN_ALLOWED_HOSTS: '',
-  ADMIN_TRUST_PROXY: 'false',
+  ADMIN_COOKIE_SECURE: '',
+  ADMIN_TRUST_PROXY: '',
 });
 
 const REQUIRED_ENV_KEYS = Object.freeze([
@@ -74,10 +93,19 @@ const OPTIONAL_ENV_KEYS = Object.freeze([
   'LLM_PROXY_UPSTREAM_TOKEN',
   'OCR_USE_ANTHROPIC',
   'OCR_LLM_AUTH_HEADER',
+  'JOB_HISTORY_RETENTION_DAYS',
+  'JOB_LOG_RETENTION_DAYS',
+  'STATS_RETENTION_DAYS',
+  'CONFIG_AUDIT_RETENTION_DAYS',
+  'JOB_LOG_MAX_BYTES',
+  'ADMIN_DATA_MAX_BYTES',
+  'RETENTION_INTERVAL_HOURS',
+  'ADMIN_SESSION_TTL_HOURS',
   'ADMIN_PASSWORD',
   'ADMIN_DATA_DIR',
   'ADMIN_STORAGE_DIR',
   'ADMIN_ALLOWED_HOSTS',
+  'ADMIN_COOKIE_SECURE',
   'ADMIN_TRUST_PROXY',
 ]);
 
@@ -96,6 +124,16 @@ const SECRET_ENV_KEY_SET = new Set(SECRET_ENV_KEYS);
 
 const RESTART_REQUIRED_ENV_KEYS = Object.freeze(['PORT']);
 const RESTART_REQUIRED_ENV_KEY_SET = new Set(RESTART_REQUIRED_ENV_KEYS);
+const HIGH_RISK_ENV_KEYS = Object.freeze([
+  'PORT',
+  'GITHUB_APP_ID',
+  'GITHUB_APP_PRIVATE_KEY_PATH',
+  'GITHUB_WEBHOOK_SECRET',
+  'ADMIN_ALLOWED_HOSTS',
+  'ADMIN_TRUST_PROXY',
+  'BOT_REPO_ROOT',
+]);
+const HIGH_RISK_ENV_KEY_SET = new Set(HIGH_RISK_ENV_KEYS);
 
 const NON_SECRET_SUMMARY_FIELDS = Object.freeze([
   { name: 'port', envKey: 'PORT', read: config => config.port },
@@ -122,6 +160,15 @@ const NON_SECRET_SUMMARY_FIELDS = Object.freeze([
   { name: 'ocrLlmModel', envKey: 'OCR_LLM_MODEL', read: config => config.ocrEnv.OCR_LLM_MODEL },
   { name: 'ocrUseAnthropic', envKey: 'OCR_USE_ANTHROPIC', read: config => config.ocrEnv.OCR_USE_ANTHROPIC },
   { name: 'ocrLlmAuthHeader', envKey: 'OCR_LLM_AUTH_HEADER', read: config => config.ocrEnv.OCR_LLM_AUTH_HEADER },
+  { name: 'jobHistoryRetentionDays', envKey: 'JOB_HISTORY_RETENTION_DAYS', read: config => config.jobHistoryRetentionDays },
+  { name: 'jobLogRetentionDays', envKey: 'JOB_LOG_RETENTION_DAYS', read: config => config.jobLogRetentionDays },
+  { name: 'statsRetentionDays', envKey: 'STATS_RETENTION_DAYS', read: config => config.statsRetentionDays },
+  { name: 'configAuditRetentionDays', envKey: 'CONFIG_AUDIT_RETENTION_DAYS', read: config => config.configAuditRetentionDays },
+  { name: 'jobLogMaxBytes', envKey: 'JOB_LOG_MAX_BYTES', read: config => config.jobLogMaxBytes },
+  { name: 'adminDataMaxBytes', envKey: 'ADMIN_DATA_MAX_BYTES', read: config => config.adminDataMaxBytes },
+  { name: 'retentionIntervalHours', envKey: 'RETENTION_INTERVAL_HOURS', read: config => config.retentionIntervalHours },
+  { name: 'adminSessionTtlHours', envKey: 'ADMIN_SESSION_TTL_HOURS', read: config => config.adminSessionTtlHours },
+  { name: 'adminCookieSecure', envKey: 'ADMIN_COOKIE_SECURE', read: config => config.adminCookieSecure },
   { name: 'adminEnabled', envKey: 'ADMIN_PASSWORD', read: config => config.adminEnabled },
   { name: 'adminDisabledReason', envKey: 'ADMIN_PASSWORD', read: config => config.adminDisabledReason },
   { name: 'adminDataDir', envKey: 'ADMIN_DATA_DIR', fallbackEnvKey: 'ADMIN_STORAGE_DIR', read: config => config.adminDataDir },
@@ -137,6 +184,52 @@ const SECRET_SUMMARY_FIELDS = Object.freeze([
   { name: 'llmProxyUpstreamToken', envKey: 'LLM_PROXY_UPSTREAM_TOKEN', read: config => config.llmProxyUpstreamToken },
   { name: 'adminPassword', envKey: 'ADMIN_PASSWORD', read: config => config.adminPassword },
 ]);
+
+const CONFIG_FIELD_METADATA = Object.freeze({
+  PORT: { label: 'HTTP port', description: 'Port the bot binds. Changing it requires a restart.' },
+  BOT_TRIGGER_PHRASE: { label: 'Legacy trigger phrase', description: 'Single legacy slash command used when BOT_TRIGGER_PHRASES is unset.' },
+  BOT_TRIGGER_PHRASES: { label: 'Trigger phrases', description: 'Comma-separated slash commands that enqueue reviews.' },
+  ALLOWED_USERS: { label: 'Allowed user logins', description: 'Comma-separated GitHub logins allowed to trigger reviews.' },
+  ALLOWED_USER_IDS: { label: 'Allowed user IDs', description: 'Comma-separated numeric GitHub user IDs allowed to trigger reviews.' },
+  ALLOWED_REPO_OWNERS: { label: 'Allowed repository owners', description: 'Comma-separated repository owners that this bot may review.' },
+  BOT_REPO_ROOT: { label: 'Repository workspace root', description: 'Filesystem root used for cloned pull request worktrees.' },
+  GITHUB_APP_ID: { label: 'GitHub App ID', description: 'Numeric GitHub App identifier used for API authentication.' },
+  GITHUB_APP_PRIVATE_KEY_PATH: { label: 'Private key path', description: 'Read-only container path to the GitHub App private key file.' },
+  GITHUB_WEBHOOK_SECRET: { label: 'Webhook secret', description: 'Secret used to verify GitHub webhook signatures.' },
+  OCR_LLM_URL: { label: 'OCR LLM URL', description: 'Provider URL passed to the OpenCodeReview CLI.' },
+  OCR_LLM_TOKEN: { label: 'OCR LLM token', description: 'Provider token passed to the OpenCodeReview CLI.' },
+  OCR_LLM_MODEL: { label: 'OCR LLM model', description: 'Provider model name passed to the OpenCodeReview CLI.' },
+  MAX_REVIEW_COMMENTS: { label: 'Maximum review comments', description: 'Maximum inline review comments to post for one job.' },
+  JOB_TIMEOUT_MS: { label: 'Job timeout (ms)', description: 'Maximum runtime for one review job in milliseconds.' },
+  CLEANUP_WORKDIR: { label: 'Cleanup workdirs', description: 'Whether temporary review workdirs are removed after each job.' },
+  WEBHOOK_BODY_LIMIT_BYTES: { label: 'Webhook body limit', description: 'Maximum accepted GitHub webhook body size in bytes.' },
+  LLM_PROXY_BODY_LIMIT_BYTES: { label: 'LLM proxy body limit', description: 'Maximum accepted internal LLM proxy body size in bytes.' },
+  OCR_CONCURRENCY: { label: 'OCR concurrency', description: 'OpenCodeReview concurrency for file analysis.' },
+  OCR_MAX_GIT_PROCS: { label: 'OCR git processes', description: 'Maximum concurrent git subprocesses used by OpenCodeReview.' },
+  OCR_PER_FILE_TIMEOUT_MINUTES: { label: 'OCR per-file timeout', description: 'Per-file OpenCodeReview timeout in minutes.' },
+  LLM_PROXY_TARGET_URL: { label: 'LLM proxy target URL', description: 'Upstream provider URL for the internal LLM proxy.' },
+  LLM_PROXY_USER_AGENT: { label: 'LLM proxy user agent', description: 'User-Agent sent from the internal LLM proxy to the provider.' },
+  LLM_PROXY_X_APP: { label: 'LLM proxy X-App', description: 'Optional x-app header sent to the upstream provider.' },
+  LLM_PROXY_INTERNAL_TOKEN: { label: 'LLM proxy internal token', description: 'Internal token required to call the embedded LLM proxy.' },
+  LLM_PROXY_UPSTREAM_AUTH_HEADER: { label: 'LLM proxy auth header', description: 'Header name used for upstream provider authentication.' },
+  LLM_PROXY_UPSTREAM_TOKEN: { label: 'LLM proxy upstream token', description: 'Secret value sent in the configured upstream auth header.' },
+  OCR_USE_ANTHROPIC: { label: 'Use Anthropic mode', description: 'OpenCodeReview provider compatibility flag.' },
+  OCR_LLM_AUTH_HEADER: { label: 'OCR auth header', description: 'OpenCodeReview provider auth header setting.' },
+  JOB_HISTORY_RETENTION_DAYS: { label: 'Job history retention', description: 'Days to retain terminal job history.' },
+  JOB_LOG_RETENTION_DAYS: { label: 'Job log retention', description: 'Days to retain per-job admin logs.' },
+  STATS_RETENTION_DAYS: { label: 'Stats retention', description: 'Days to retain aggregated admin stats.' },
+  CONFIG_AUDIT_RETENTION_DAYS: { label: 'Config audit retention', description: 'Days to retain configuration audit records.' },
+  JOB_LOG_MAX_BYTES: { label: 'Job log byte cap', description: 'Maximum bytes retained per job log.' },
+  ADMIN_DATA_MAX_BYTES: { label: 'Admin data byte cap', description: 'Maximum bytes allowed under the admin data root.' },
+  RETENTION_INTERVAL_HOURS: { label: 'Retention interval', description: 'Hours between retention cleanup runs.' },
+  ADMIN_SESSION_TTL_HOURS: { label: 'Admin session TTL', description: 'Absolute admin session lifetime in hours.' },
+  ADMIN_PASSWORD: { label: 'Admin password', description: 'Non-editable password that enables the admin dashboard when at least 16 characters.' },
+  ADMIN_DATA_DIR: { label: 'Admin data dir', description: 'Non-editable runtime data root for admin state.' },
+  ADMIN_STORAGE_DIR: { label: 'Admin storage dir', description: 'Legacy non-editable alias for the admin data root.' },
+  ADMIN_ALLOWED_HOSTS: { label: 'Admin allowed hosts', description: 'Comma-separated Host headers allowed to reach /admin.' },
+  ADMIN_COOKIE_SECURE: { label: 'Secure admin cookies', description: 'Whether admin cookies include the Secure attribute.' },
+  ADMIN_TRUST_PROXY: { label: 'Trust reverse proxy headers', description: 'Whether /admin trusts x-real-ip and x-forwarded-proto from the fronting proxy.' },
+});
 
 function hasOwn(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key);
@@ -187,6 +280,18 @@ function parseBool(value, name) {
   throw new Error(`${name} must be a boolean-like value`);
 }
 
+function productionDefaultBool(env = process.env) {
+  return env.NODE_ENV === 'production' ? 'true' : 'false';
+}
+
+function defaultEnvFor(env = process.env) {
+  return {
+    ...DEFAULT_ENV,
+    ADMIN_COOKIE_SECURE: productionDefaultBool(env),
+    ADMIN_TRUST_PROXY: 'false',
+  };
+}
+
 function parseIntegerEnv(name, defaultValue, { min = 0, env = process.env } = {}) {
   const raw = optionalEnv(name, String(defaultValue), env);
   if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer`);
@@ -197,7 +302,7 @@ function parseIntegerEnv(name, defaultValue, { min = 0, env = process.env } = {}
 
 function mergeConfigLayers(env = process.env, rawOverrides = {}) {
   const overrides = normalizeRawOverrides(rawOverrides);
-  const effectiveEnv = { ...DEFAULT_ENV };
+  const effectiveEnv = defaultEnvFor(env);
   for (const [key, value] of Object.entries(env)) {
     if (value != null) effectiveEnv[key] = String(value);
   }
@@ -240,6 +345,8 @@ function loadConfig(env = process.env, rawOverrides) {
   const adminDataDir = resolveAdminDataDir(effectiveEnv);
   const adminAllowedHosts = parseHostAllowlist(optionalEnv('ADMIN_ALLOWED_HOSTS', '', effectiveEnv), 'ADMIN_ALLOWED_HOSTS');
   const adminTrustProxy = parseBool(optionalEnv('ADMIN_TRUST_PROXY', 'false', effectiveEnv), 'ADMIN_TRUST_PROXY');
+  const adminCookieSecure = parseBool(optionalEnv('ADMIN_COOKIE_SECURE', productionDefaultBool(effectiveEnv), effectiveEnv), 'ADMIN_COOKIE_SECURE');
+  const adminSessionTtlHours = parseIntegerEnv('ADMIN_SESSION_TTL_HOURS', DEFAULT_ADMIN_SESSION_TTL_HOURS, { min: 1, env: effectiveEnv });
 
   return {
     port: parseIntegerEnv('PORT', 3007, { min: 1, env: effectiveEnv }),
@@ -266,6 +373,16 @@ function loadConfig(env = process.env, rawOverrides) {
     llmProxyUpstreamAuthHeader,
     llmProxyUpstreamToken,
     ocrEnv: buildOcrEnv(effectiveEnv),
+    jobHistoryRetentionDays: parseIntegerEnv('JOB_HISTORY_RETENTION_DAYS', DEFAULT_JOB_HISTORY_RETENTION_DAYS, { min: 1, env: effectiveEnv }),
+    jobLogRetentionDays: parseIntegerEnv('JOB_LOG_RETENTION_DAYS', DEFAULT_JOB_LOG_RETENTION_DAYS, { min: 1, env: effectiveEnv }),
+    statsRetentionDays: parseIntegerEnv('STATS_RETENTION_DAYS', DEFAULT_STATS_RETENTION_DAYS, { min: 1, env: effectiveEnv }),
+    configAuditRetentionDays: parseIntegerEnv('CONFIG_AUDIT_RETENTION_DAYS', DEFAULT_CONFIG_AUDIT_RETENTION_DAYS, { min: 1, env: effectiveEnv }),
+    jobLogMaxBytes: parseIntegerEnv('JOB_LOG_MAX_BYTES', DEFAULT_JOB_LOG_MAX_BYTES, { min: 1024, env: effectiveEnv }),
+    adminDataMaxBytes: parseIntegerEnv('ADMIN_DATA_MAX_BYTES', DEFAULT_ADMIN_DATA_MAX_BYTES, { min: 1024, env: effectiveEnv }),
+    retentionIntervalHours: parseIntegerEnv('RETENTION_INTERVAL_HOURS', DEFAULT_RETENTION_INTERVAL_HOURS, { min: 1, env: effectiveEnv }),
+    adminSessionTtlHours,
+    adminSessionTtlMs: adminSessionTtlHours * 60 * 60 * 1000,
+    adminCookieSecure,
     adminEnabled: adminPasswordStatus.enabled,
     adminDisabledReason: adminPasswordStatus.disabledReason,
     adminPassword,
@@ -281,6 +398,9 @@ function loadConfig(env = process.env, rawOverrides) {
       storageDir: adminDataDir,
       allowedHosts: adminAllowedHosts,
       trustProxy: adminTrustProxy,
+      cookieSecure: adminCookieSecure,
+      sessionTtlHours: adminSessionTtlHours,
+      sessionTtlMs: adminSessionTtlHours * 60 * 60 * 1000,
     },
   };
 }
@@ -390,7 +510,7 @@ function buildSourceMetadata(env = process.env, rawOverrides = {}) {
   const metadata = {};
   for (const key of CONFIG_ENV_KEYS) {
     let source = SOURCE_MISSING;
-    if (hasOwn(DEFAULT_ENV, key)) source = SOURCE_DEFAULT;
+    if (hasOwn(defaultEnvFor(env), key)) source = SOURCE_DEFAULT;
     if (env[key] != null) source = SOURCE_ENV;
     if (hasOwn(overrides, key)) source = SOURCE_OVERRIDE;
     metadata[key] = {
@@ -399,12 +519,14 @@ function buildSourceMetadata(env = process.env, rawOverrides = {}) {
       required: REQUIRED_ENV_KEYS.includes(key),
       secret: SECRET_ENV_KEY_SET.has(key),
       restartRequired: RESTART_REQUIRED_ENV_KEY_SET.has(key),
+      highRisk: HIGH_RISK_ENV_KEY_SET.has(key),
+      editable: !NON_EDITABLE_ENV_KEYS.has(key),
     };
   }
   return metadata;
 }
 
-function summarizeConfig(config, sourceMetadata = {}, { revision = null, pendingRestart = null } = {}) {
+function summarizeConfig(config, sourceMetadata = {}, { revision = null, pendingRestart = null, overrides = null } = {}) {
   const values = {};
   for (const field of NON_SECRET_SUMMARY_FIELDS) {
     const source = sourceForField(field, sourceMetadata);
@@ -435,6 +557,7 @@ function summarizeConfig(config, sourceMetadata = {}, { revision = null, pending
     pendingRestart: normalizePendingRestartForSummary(pendingRestart),
     values,
     secrets,
+    fields: buildConfigEditorFields(config, sourceMetadata, { pendingRestart, overrides }),
   };
 }
 
@@ -467,13 +590,55 @@ function normalizePendingRestartForSummary(pendingRestart) {
   };
 }
 
+function buildConfigEditorFields(config, sourceMetadata = {}, { pendingRestart = null, overrides = null } = {}) {
+  const overrideKeys = overrides ? new Set(Object.keys(normalizeRawOverrides(overrides))) : null;
+  return [...NON_SECRET_SUMMARY_FIELDS, ...SECRET_SUMMARY_FIELDS]
+    .map(field => buildConfigEditorField(field, config, sourceMetadata, pendingRestart, overrideKeys))
+    .sort((a, b) => a.envKey.localeCompare(b.envKey));
+}
+
+function buildConfigEditorField(field, config, sourceMetadata, pendingRestart, overrideKeys) {
+  const envKey = field.envKey;
+  const metadata = sourceMetadata[envKey] ?? {};
+  const secret = SECRET_ENV_KEY_SET.has(envKey);
+  const source = sourceForField(field, sourceMetadata);
+  const overridden = overrideKeys ? overrideKeys.has(envKey) : source === SOURCE_OVERRIDE;
+  const editable = !NON_EDITABLE_ENV_KEYS.has(envKey);
+  const definition = CONFIG_FIELD_METADATA[envKey] ?? {};
+  const effectiveValue = secret ? '' : summaryValue(field.read(config));
+  return {
+    name: field.name,
+    envKey,
+    label: definition.label ?? labelFromEnvKey(envKey),
+    description: definition.description ?? `Environment variable ${envKey}.`,
+    source,
+    value: effectiveValue,
+    effectiveValue,
+    set: secret ? typeof field.read(config) === 'string' && field.read(config) !== '' : undefined,
+    secret,
+    editable,
+    required: Boolean(metadata.required),
+    restartRequired: RESTART_REQUIRED_ENV_KEY_SET.has(envKey),
+    hotReloadable: !RESTART_REQUIRED_ENV_KEY_SET.has(envKey),
+    pendingRestart: isPendingRestartKey(envKey, pendingRestart),
+    overridden,
+    canReset: editable && overridden,
+    resetAction: editable && overridden ? `reset:${envKey}` : '',
+    highRisk: HIGH_RISK_ENV_KEY_SET.has(envKey),
+  };
+}
+
+function labelFromEnvKey(envKey) {
+  return String(envKey).toLowerCase().split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
 function normalizePendingRestartMarker(marker, filePath = 'pending restart marker') {
   if (marker == null) return null;
   if (!marker || typeof marker !== 'object' || Array.isArray(marker)) throw new Error(`${filePath} pendingRestart must be a JSON object`);
   const keys = Array.isArray(marker.keys) ? marker.keys.map(key => String(key).trim()).filter(Boolean) : [];
   if (keys.length === 0) return null;
   return {
-    required: Boolean(marker.required),
+    required: marker.required == null ? true : Boolean(marker.required),
     keys: [...new Set(keys)].sort(),
     sinceRevision: Number.isSafeInteger(marker.sinceRevision) ? marker.sinceRevision : null,
     createdAt: typeof marker.createdAt === 'string' ? marker.createdAt : new Date().toISOString(),
@@ -571,13 +736,13 @@ function loadConfigWithMetadata(env = process.env, rawOverrides = {}) {
     overrides: merged.overrides,
     redactedOverrides: redactRawOverrides(merged.overrides),
     sources: merged.sources,
-    summary: summarizeConfig(config, merged.sources),
+    summary: summarizeConfig(config, merged.sources, { overrides: merged.overrides }),
   };
 }
 
 function buildConfigSummary(env = process.env, rawOverrides = {}, options = {}) {
   const loaded = loadConfigWithMetadata(env, rawOverrides);
-  return summarizeConfig(loaded.config, loaded.sources, options);
+  return summarizeConfig(loaded.config, loaded.sources, { ...options, overrides: loaded.overrides });
 }
 
 function createConfigManager(options = {}) {
@@ -592,7 +757,7 @@ function buildPendingRestartMarker(changedKeys, revision, now = new Date()) {
     keys,
     sinceRevision: revision,
     createdAt: now.toISOString(),
-    message: 'Restart required for PORT changes to take effect',
+    message: `Restart required for ${keys.join(', ')} changes to take effect`,
   };
 }
 
@@ -605,6 +770,114 @@ function diffOverrideKeys(previousOverrides, nextOverrides) {
     if (previous[key] !== next[key]) changed.push(key);
   }
   return changed.sort();
+}
+
+function changedKeysRequireRestart(changedKeys) {
+  return changedKeys.some(key => RESTART_REQUIRED_ENV_KEY_SET.has(key));
+}
+
+function normalizeRevision(value, name = 'expectedRevision') {
+  if (value == null || value === '') return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || String(parsed) !== String(value).trim()) throw new Error(`${name} must be a non-negative integer`);
+  return parsed;
+}
+
+function formHas(form, name) {
+  if (!form || typeof form !== 'object') return false;
+  if (form instanceof URLSearchParams || form instanceof Map) return form.has(name);
+  return hasOwn(form, name);
+}
+
+function formString(form, name, defaultValue = '') {
+  if (!formHas(form, name)) return defaultValue;
+  const value = form instanceof URLSearchParams || form instanceof Map ? form.get(name) : form[name];
+  if (Array.isArray(value)) return value[0] == null ? defaultValue : String(value[0]);
+  return value == null ? defaultValue : String(value);
+}
+
+function configValueToInput(value) {
+  if (value instanceof Set) return [...value].sort().join(',');
+  if (Array.isArray(value)) return value.map(item => configValueToInput(item)).join(',');
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value == null) return '';
+  return String(value);
+}
+
+function buildOverridesFromEditorForm(form, currentState, config) {
+  const overrides = { ...normalizeRawOverrides(currentState.overrides) };
+  for (const field of NON_SECRET_SUMMARY_FIELDS) {
+    const key = field.envKey;
+    if (NON_EDITABLE_ENV_KEYS.has(key)) continue;
+    if (formString(form, `reset_${key}`) === '1') {
+      delete overrides[key];
+      continue;
+    }
+    const inputName = `value_${key}`;
+    if (!formHas(form, inputName)) continue;
+    const submitted = formString(form, inputName).trim();
+    const effective = configValueToInput(summaryValue(field.read(config))).trim();
+    if (hasOwn(overrides, key) || submitted !== effective) overrides[key] = submitted;
+  }
+  for (const field of SECRET_SUMMARY_FIELDS) {
+    const key = field.envKey;
+    if (NON_EDITABLE_ENV_KEYS.has(key)) continue;
+    if (formString(form, `reset_${key}`) === '1') {
+      delete overrides[key];
+      continue;
+    }
+    const action = formString(form, `secret_${key}`, 'keep');
+    if (!['keep', 'clear', 'replace'].includes(action)) throw new Error(`${key} secret action must be keep, clear, or replace`);
+    if (action === 'clear') overrides[key] = '';
+    if (action === 'replace') {
+      const replacement = formString(form, `value_${key}`).trim();
+      if (replacement === '') throw new Error(`${key} replacement must not be blank`);
+      overrides[key] = replacement;
+    }
+  }
+  return overrides;
+}
+
+function assertHighRiskConfirmations(form, changedKeys) {
+  const missing = changedKeys.filter(key => HIGH_RISK_ENV_KEY_SET.has(key) && formString(form, `confirm_${key}`) !== '1');
+  if (missing.length > 0) throw new Error(`High-risk config changes require confirmation: ${missing.join(', ')}`);
+}
+
+function assertSubmittedAdminHostStillAllowed(currentHost, value) {
+  if (!currentHost) throw new Error('Current admin host is required when changing ADMIN_ALLOWED_HOSTS');
+  const normalizedHost = normalizeAllowedHost(currentHost, 'current admin host');
+  const allowed = parseHostAllowlist(value, 'ADMIN_ALLOWED_HOSTS');
+  if (!allowed.has(normalizedHost)) throw new Error('ADMIN_ALLOWED_HOSTS must keep the current admin host allowed');
+}
+
+function sanitizeAuditError(error) {
+  const message = error?.message ? String(error.message) : String(error);
+  return message.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '[redacted]');
+}
+
+function auditEvent({ result, changedKeys = [], beforeRevision = null, afterRevision = null, clientAddress = '', restartRequired = false, error = null, now = new Date() }) {
+  const event = {
+    timestamp: now.toISOString(),
+    result,
+    fieldsChanged: [...new Set(changedKeys)].sort(),
+    beforeRevision,
+    afterRevision,
+    clientAddress: typeof clientAddress === 'string' ? clientAddress.slice(0, 200) : '',
+    restartRequired: Boolean(restartRequired),
+  };
+  if (error) event.error = sanitizeAuditError(error);
+  return event;
+}
+
+async function appendJsonLine(filePath, record) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const handle = await fs.open(filePath, 'a', 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(record)}\n`, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
 
 function emptyOverrideState() {
@@ -701,13 +974,34 @@ async function removeTempFileAfterFailedWrite(tempPath, cause) {
   }
 }
 
+async function atomicWriteJsonLines(filePath, records) {
+  const payload = records.map(record => `${JSON.stringify(record)}\n`).join('');
+  const dir = path.dirname(filePath);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const tempPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await fs.open(tempPath, 'wx', 0o600);
+    await handle.writeFile(payload, 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.rename(tempPath, filePath);
+    await fs.chmod(filePath, 0o600);
+  } catch (error) {
+    if (handle) await closeHandleAfterFailedWrite(handle, error);
+    await removeTempFileAfterFailedWrite(tempPath, error);
+    throw error;
+  }
+}
 class ConfigManager {
-  constructor({ env = process.env, dataDir, storageDir, overrideFile, pendingRestartFile } = {}) {
+  constructor({ env = process.env, dataDir, storageDir, overrideFile, pendingRestartFile, auditFile } = {}) {
     this.env = env;
     this.dataDir = dataDir || storageDir || resolveAdminDataDir(env);
     this.storageDir = this.dataDir;
     this.overrideFile = overrideFile || path.join(this.dataDir, OVERRIDES_FILE_NAME);
     this.pendingRestartFile = pendingRestartFile || path.join(this.dataDir, PENDING_RESTART_FILE_NAME);
+    this.auditFile = auditFile || path.join(this.dataDir, CONFIG_AUDIT_DIR_NAME, CONFIG_AUDIT_FILE_NAME);
   }
 
   async readOverrideState() {
@@ -723,10 +1017,11 @@ class ConfigManager {
   }
 
   async load() {
+    await this.migrateLegacyPendingRestart();
     const state = await this.readOverrideState();
     const merged = mergeConfigLayers(this.env, state.overrides);
     const config = this.buildConfig(state.overrides);
-    const pendingRestart = state.pendingRestart ?? await this.readPendingRestart();
+    const pendingRestart = state.pendingRestart;
     return {
       config,
       revision: state.revision,
@@ -735,7 +1030,7 @@ class ConfigManager {
       redactedOverrides: redactRawOverrides(state.overrides),
       sources: merged.sources,
       pendingRestart,
-      summary: summarizeConfig(config, merged.sources, { revision: state.revision, pendingRestart }),
+      summary: summarizeConfig(config, merged.sources, { revision: state.revision, pendingRestart, overrides: state.overrides }),
     };
   }
 
@@ -759,7 +1054,92 @@ class ConfigManager {
       pendingRestart: marker ?? current.pendingRestart ?? null,
     };
     await atomicWriteJson(this.overrideFile, next);
+    await fs.rm(this.pendingRestartFile, { force: true });
     return next;
+  }
+
+  async applyEditorForm(form, { expectedRevision, clientAddress = '', currentHost = '' } = {}) {
+    const normalizedExpectedRevision = normalizeRevision(expectedRevision);
+    let current = null;
+    let changedKeys = [];
+    try {
+      await this.migrateLegacyPendingRestart();
+      current = await this.readOverrideState();
+      if (normalizedExpectedRevision != null && current.revision !== normalizedExpectedRevision) {
+        throw new Error(`Config override revision ${current.revision} does not match expected revision ${normalizedExpectedRevision}`);
+      }
+      const currentConfig = this.buildConfig(current.overrides);
+      const nextOverrides = buildOverridesFromEditorForm(form, current, currentConfig);
+      changedKeys = diffOverrideKeys(current.overrides, nextOverrides);
+      assertHighRiskConfirmations(form, changedKeys);
+      if (changedKeys.length === 0) {
+        await this.appendConfigAudit(auditEvent({
+          result: 'unchanged',
+          changedKeys,
+          beforeRevision: current.revision,
+          afterRevision: current.revision,
+          clientAddress,
+          restartRequired: false,
+        }));
+        return { state: current, changedKeys, restartRequired: false };
+      }
+      if (changedKeys.includes('ADMIN_ALLOWED_HOSTS')) assertSubmittedAdminHostStillAllowed(currentHost, nextOverrides.ADMIN_ALLOWED_HOSTS ?? '');
+      this.buildConfig(nextOverrides);
+      const next = await this.writeOverrides(nextOverrides, { expectedRevision: current.revision });
+      const restartRequired = changedKeysRequireRestart(changedKeys);
+      await this.appendConfigAudit(auditEvent({
+        result: 'success',
+        changedKeys,
+        beforeRevision: current.revision,
+        afterRevision: next.revision,
+        clientAddress,
+        restartRequired,
+      }));
+      return { state: next, changedKeys, restartRequired };
+    } catch (error) {
+      await this.appendConfigAudit(auditEvent({
+        result: 'failure',
+        changedKeys,
+        beforeRevision: current?.revision ?? null,
+        afterRevision: current?.revision ?? null,
+        clientAddress,
+        restartRequired: changedKeysRequireRestart(changedKeys),
+        error,
+      }));
+      throw error;
+    }
+  }
+
+  async appendConfigAudit(event) {
+    await appendJsonLine(this.auditFile, event);
+  }
+
+  async pruneConfigAudit({ retentionDays, now = new Date() } = {}) {
+    const days = retentionDays ?? this.buildConfig((await this.readOverrideState()).overrides).configAuditRetentionDays;
+    if (!Number.isSafeInteger(days) || days < 1) throw new Error('retentionDays must be a positive integer');
+    let text;
+    try {
+      text = await fs.readFile(this.auditFile, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') return { retained: 0, removed: 0 };
+      throw error;
+    }
+    const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
+    const retained = [];
+    let removed = 0;
+    for (const line of text.split('\n')) {
+      if (line.trim() === '') continue;
+      try {
+        const record = JSON.parse(line);
+        const timestamp = typeof record.timestamp === 'string' ? new Date(record.timestamp).getTime() : Number.NaN;
+        if (!Number.isNaN(timestamp) && timestamp >= cutoff) retained.push(record);
+        else removed += 1;
+      } catch {
+        removed += 1;
+      }
+    }
+    if (removed > 0) await atomicWriteJsonLines(this.auditFile, retained);
+    return { retained: retained.length, removed };
   }
 
   async updateOverrides(mutator, { expectedRevision } = {}) {
@@ -791,17 +1171,53 @@ class ConfigManager {
   }
 
   async writePendingRestart(marker) {
-    if (!marker || !Array.isArray(marker.keys) || marker.keys.length === 0) throw new Error('Pending restart marker must include keys');
-    await atomicWriteJson(this.pendingRestartFile, marker);
-    return marker;
+    const normalized = normalizePendingRestartMarker(marker, 'pending restart marker');
+    if (!normalized) throw new Error('Pending restart marker must include keys');
+    const current = await this.readOverrideState();
+    const next = { ...current, pendingRestart: normalized };
+    await atomicWriteJson(this.overrideFile, next);
+    await fs.rm(this.pendingRestartFile, { force: true });
+    return normalized;
   }
 
   async readPendingRestart() {
-    return readPendingRestartMarker(this.pendingRestartFile);
+    await this.migrateLegacyPendingRestart();
+    return (await this.readOverrideState()).pendingRestart;
   }
 
   async clearPendingRestart() {
+    const current = await this.readOverrideState();
+    if (current.pendingRestart) await atomicWriteJson(this.overrideFile, { ...current, pendingRestart: null });
     await fs.rm(this.pendingRestartFile, { force: true });
+  }
+
+  async clearPendingRestartAfterSuccessfulBind({ desiredPort, runningPort } = {}) {
+    const desired = Number(desiredPort);
+    const running = Number(runningPort);
+    if (!Number.isSafeInteger(desired) || !Number.isSafeInteger(running)) throw new Error('desiredPort and runningPort must be integers');
+    await this.migrateLegacyPendingRestart();
+    const current = await this.readOverrideState();
+    const marker = current.pendingRestart;
+    if (!marker || !marker.keys.includes('PORT')) {
+      await fs.rm(this.pendingRestartFile, { force: true });
+      return { cleared: false, reason: 'no-port-restart-pending' };
+    }
+    if (desired !== running) return { cleared: false, reason: 'running-port-differs' };
+    await atomicWriteJson(this.overrideFile, { ...current, pendingRestart: null });
+    await fs.rm(this.pendingRestartFile, { force: true });
+    return { cleared: true, reason: 'bound-desired-port' };
+  }
+
+  async migrateLegacyPendingRestart() {
+    const legacy = await readPendingRestartMarker(this.pendingRestartFile);
+    if (!legacy) return null;
+    const normalized = normalizePendingRestartMarker(legacy, this.pendingRestartFile);
+    const current = await this.readOverrideState();
+    if (normalized && !current.pendingRestart) {
+      await atomicWriteJson(this.overrideFile, { ...current, pendingRestart: normalized });
+    }
+    await fs.rm(this.pendingRestartFile, { force: true });
+    return normalized;
   }
 
   async ensureStorageDir() {
@@ -827,9 +1243,12 @@ export {
   SOURCE_OVERRIDE,
   SECRET_ENV_KEYS,
   NON_EDITABLE_ENV_KEYS,
+  CONFIG_AUDIT_DIR_NAME,
+  CONFIG_AUDIT_FILE_NAME,
   applySecretOverride,
   assertSecretEnvKey,
   atomicWriteJson,
+  buildConfigEditorFields,
   buildOcrEnv,
   buildPendingRestartMarker,
   buildSourceMetadata,
@@ -846,6 +1265,7 @@ export {
   isSecretEnvKey,
   loadConfig,
   loadConfigWithMetadata,
+  HIGH_RISK_ENV_KEYS,
   mergeConfigLayers,
   normalizeAllowedHost,
   normalizeOverrideKey,

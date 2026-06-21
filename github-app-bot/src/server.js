@@ -6,12 +6,14 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { App } from 'octokit';
-import { createAdminRouter, AdminRuntime, normalizeHostHeader, parseAllowedHosts } from './admin/index.js';
-import { ConfigManager, SECRET_ENV_KEYS, loadConfig as loadManagedConfig, csvSet as managedCsvSet, normalizeOverrideKey } from './config.js';
-import { AdminJobQueue, JobEventStore } from './jobs/index.js';
+import { createAdminRouter, AdminRuntime } from './admin/index.js';
+import { ConfigManager, loadConfig as loadManagedConfig, csvSet as managedCsvSet } from './config.js';
+import { AdminJobQueue, BoundedJobLogger, JobEventStore, redactSensitiveString, sanitizeForAdminStorage } from './jobs/index.js';
 
 
 const GIT_TIMEOUT_MS = 180_000;
+const STDERR_CAPTURE_LIMIT_BYTES = 64 * 1024;
+const STDERR_CHUNK_CALLBACK_LIMIT_BYTES = 4 * 1024;
 const VALID_OCR_STATUSES = new Set(['success', 'completed_with_warnings', 'completed_with_errors', 'skipped']);
 
 function requiredEnv(name, env = process.env) {
@@ -175,9 +177,9 @@ function authorizePayload(payload, config) {
 }
 
 class ProcessError extends Error {
-  constructor({ phase, command, args, timedOut, timeoutMs, exitCode, stdout, stderr, cause }) {
+  constructor({ phase, command, args, timedOut, timeoutMs, exitCode, stdout, stdoutBytes, stdoutSha256, stderr, stderrBytes, stderrTruncatedBytes, cause }) {
     const reason = timedOut ? `timed out after ${timeoutMs}ms` : exitCode == null ? 'failed to start' : `exited ${exitCode}`;
-    super(`${command} ${args.join(' ')} ${reason}: ${stderr || stdout || cause?.message || ''}`);
+    super(`${command} ${args.join(' ')} ${reason}: ${stderr || cause?.message || ''}`);
     this.name = 'ProcessError';
     this.phase = phase;
     this.command = command;
@@ -186,48 +188,104 @@ class ProcessError extends Error {
     this.timeoutMs = timeoutMs;
     this.exitCode = exitCode;
     this.stdout = stdout || '';
+    this.stdoutBytes = stdoutBytes ?? Buffer.byteLength(this.stdout, 'utf8');
+    this.stdoutSha256 = stdoutSha256 ?? crypto.createHash('sha256').update(this.stdout).digest('hex');
     this.stderr = stderr || '';
+    this.stderrBytes = stderrBytes ?? Buffer.byteLength(this.stderr, 'utf8');
+    this.stderrTruncatedBytes = stderrTruncatedBytes ?? 0;
     this.cause = cause;
   }
 }
 
 function runProcess(command, args, options) {
   return new Promise((resolve, reject) => {
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    const stdoutHash = crypto.createHash('sha256');
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let stderrCapturedBytes = 0;
+    let timedOut = false;
+    let aborted = false;
+    let settled = false;
+    const signal = options.signal;
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let settled = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const terminate = ({ timeout = false, abort = false } = {}) => {
+      timedOut = timedOut || timeout;
+      aborted = aborted || abort;
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 5000).unref();
-    }, options.timeoutMs);
+    };
+    const abort = () => terminate({ abort: true });
+    const timer = setTimeout(() => terminate({ timeout: true }), options.timeoutMs);
+    if (signal) {
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+    }
 
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', chunk => { stdout += chunk; });
-    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.stdout.on('data', chunk => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      stdoutBytes += buffer.length;
+      stdoutHash.update(buffer);
+      stdoutChunks.push(buffer);
+    });
+    child.stderr.on('data', chunk => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      stderrBytes += buffer.length;
+      if (stderrCapturedBytes < STDERR_CAPTURE_LIMIT_BYTES) {
+        const remaining = STDERR_CAPTURE_LIMIT_BYTES - stderrCapturedBytes;
+        stderrChunks.push(buffer.subarray(0, remaining));
+        stderrCapturedBytes += Math.min(buffer.length, remaining);
+      }
+      if (typeof options.onStderrChunk === 'function') {
+        options.onStderrChunk(buffer.subarray(0, STDERR_CHUNK_CALLBACK_LIMIT_BYTES).toString('utf8'));
+      }
+    });
     child.on('error', error => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new ProcessError({ phase: options.phase, command, args, timedOut: false, timeoutMs: options.timeoutMs, exitCode: null, stdout, stderr, cause: error }));
+      if (signal) signal.removeEventListener('abort', abort);
+      reject(buildProcessError({ options, command, args, timedOut: false, exitCode: null, stdoutChunks, stdoutBytes, stdoutHash, stderrChunks, stderrBytes, cause: error }));
     });
-    child.on('close', (code, signal) => {
+    child.on('close', (code, signalName) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (code === 0 && !timedOut) {
-        resolve({ stdout, stderr });
+      if (signal) signal.removeEventListener('abort', abort);
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+      const stderr = Buffer.concat(stderrChunks).toString('utf8');
+      const result = { stdout, stderr, stdoutBytes, stdoutSha256: stdoutHash.digest('hex'), stderrBytes, stderrTruncatedBytes: Math.max(0, stderrBytes - stderrCapturedBytes) };
+      if (code === 0 && !timedOut && !aborted) {
+        resolve(result);
       } else {
-        reject(new ProcessError({ phase: options.phase, command, args, timedOut, timeoutMs: options.timeoutMs, exitCode: code, stdout, stderr, cause: signal ? new Error(`terminated by ${signal}`) : undefined }));
+        reject(new ProcessError({ phase: options.phase, command, args, timedOut, timeoutMs: options.timeoutMs, exitCode: code, ...result, cause: signalName ? new Error(aborted ? 'aborted' : `terminated by ${signalName}`) : undefined }));
       }
     });
+  });
+}
+
+function buildProcessError({ options, command, args, timedOut, exitCode, stdoutChunks, stdoutBytes, stdoutHash, stderrChunks, stderrBytes, cause }) {
+  const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+  const stderr = Buffer.concat(stderrChunks).toString('utf8');
+  return new ProcessError({
+    phase: options.phase,
+    command,
+    args,
+    timedOut,
+    timeoutMs: options.timeoutMs,
+    exitCode,
+    stdout,
+    stdoutBytes,
+    stdoutSha256: stdoutHash.digest('hex'),
+    stderr,
+    stderrBytes,
+    stderrTruncatedBytes: Math.max(0, stderrBytes - Buffer.byteLength(stderr, 'utf8')),
+    cause,
   });
 }
 
@@ -496,24 +554,95 @@ async function postFailureComment(octokit, owner, repo, pullNumber, failure, dia
   });
 }
 
-async function handleReviewJob(payload, config) {
+function createReviewLogger(logger, config) {
+  const redact = createConfiguredSecretRedactor(config);
+  const noop = async () => {};
+  const write = async (level, message, fields) => {
+    if (!logger || typeof logger[level] !== 'function') return;
+    await logger[level](redactSensitiveString(String(message)), redact(fields ?? {}));
+  };
+  return {
+    debug: logger?.debug ? (message, fields) => write('debug', message, fields) : noop,
+    info: logger?.info ? (message, fields) => write('info', message, fields) : noop,
+    warn: logger?.warn ? (message, fields) => write('warn', message, fields) : noop,
+    error: logger?.error ? (message, fields) => write('error', message, fields) : noop,
+    phase: logger?.phase ? async (phase, message, fields) => logger.phase(phase, redactSensitiveString(String(message ?? '')), redact(fields ?? {})) : noop,
+  };
+}
+
+function stderrChunkLogger(logger, command, step) {
+  return chunk => {
+    const message = redactSensitiveString(String(chunk).trim());
+    if (message === '') return;
+    void logger.warn(`${command} ${step} stderr`, { command, step, stderr: message }).catch(() => {});
+  };
+}
+
+function createConfiguredSecretRedactor(config) {
+  const secrets = configuredSecretValues(config);
+  return value => redactConfiguredSecrets(sanitizeForAdminStorage(value), secrets);
+}
+
+function configuredSecretValues(config) {
+  return [
+    config?.webhookSecret,
+    config?.adminPassword,
+    config?.llmProxyInternalToken,
+    config?.llmProxyUpstreamToken,
+    config?.ocrEnv?.OCR_LLM_TOKEN,
+  ].filter(value => typeof value === 'string' && value.length > 0);
+}
+
+function redactConfiguredSecrets(value, secrets) {
+  if (typeof value === 'string') {
+    let redacted = redactSensitiveString(value);
+    for (const secret of secrets) redacted = redacted.split(secret).join('[REDACTED]');
+    return redacted;
+  }
+  if (Array.isArray(value)) return value.map(item => redactConfiguredSecrets(item, secrets));
+  if (!value || typeof value !== 'object') return value;
+  const redacted = {};
+  for (const [key, item] of Object.entries(value)) redacted[key] = redactConfiguredSecrets(item, secrets);
+  return redacted;
+}
+
+async function handleReviewJob(payload, config, context = {}) {
   let workdir = '';
+  let octokit = null;
   const owner = payload.repository.owner.login;
   const repo = payload.repository.name;
   const pullNumber = payload.issue.number;
   const installationId = payload.installation.id;
-  const privateKey = requiredEnvFromFile(config.privateKeyPath, 'GITHUB_APP_PRIVATE_KEY_PATH');
-  const app = new App({ appId: config.appId, privateKey });
-  const octokit = await app.getInstallationOctokit(installationId);
   const diagnosticId = `${owner}/${repo}#${pullNumber}@${payload.comment.id}`;
+  const logger = createReviewLogger(context.logger, config);
+  const signal = context.signal;
+  const redact = createConfiguredSecretRedactor(config);
+  const commonFields = { owner, repo, pullNumber, diagnosticId };
+  const ocrMetrics = {
+    ocrStdoutBytes: 0,
+    ocrStdoutSha256: '',
+    ocrParseSuccess: false,
+    ocrStatus: '',
+    commentsGenerated: 0,
+    warningsCount: 0,
+  };
 
   let finalResult = null;
   try {
+    await logger.phase('github_auth', 'Authenticating GitHub App installation', commonFields);
+    const privateKey = requiredEnvFromFile(config.privateKeyPath, 'GITHUB_APP_PRIVATE_KEY_PATH');
+    const app = new App({ appId: config.appId, privateKey });
+    octokit = await app.getInstallationOctokit(installationId);
+
+    await logger.phase('fetching_pr', 'Fetching pull request metadata', commonFields);
     const { data: pull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
-    console.log('job started', { owner, repo, pullNumber, head: pull.head.sha, diagnosticId });
+    console.log('job started', redact({ ...commonFields, head: pull.head.sha }));
+    await logger.info('Review job started', { ...commonFields, head: pull.head.sha });
     if (pull.base.repo.private) {
-      console.log('skipping private repo', { owner, repo, pullNumber });
-      return { outcome: 'skipped', diagnosticId, failure: null };
+      console.log('skipping private repo', redact(commonFields));
+      await logger.info('Skipping private repository', commonFields);
+      finalResult = { outcome: 'skipped', diagnosticId, ...ocrMetrics, failure: null };
+      return finalResult;
     }
 
     const headSha = pull.head.sha;
@@ -521,13 +650,22 @@ async function handleReviewJob(payload, config) {
     const baseRef = pull.base.ref;
     const baseSnapshot = { headSha, baseSha, baseRef };
     workdir = path.join(config.repoRoot, `${safeSlug(owner)}-${safeSlug(repo)}-${pullNumber}-${headSha.slice(0, 12)}`);
-    await ensureCleanDir(workdir);
 
+    await logger.phase('checkout', 'Preparing temporary checkout', { ...commonFields, base: baseSha, head: headSha });
+    await ensureCleanDir(workdir);
     const commonEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-    await runProcess('git', ['init'], { phase: 'git', cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
-    await runProcess('git', ['remote', 'add', 'origin', `https://github.com/${owner}/${repo}.git`], { phase: 'git', cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
-    await runProcess('git', ['fetch', '--no-tags', '--prune', 'origin', baseSha, `pull/${pullNumber}/head:refs/remotes/origin/pr-${pullNumber}`], { phase: 'git', cwd: workdir, env: commonEnv, timeoutMs: GIT_TIMEOUT_MS });
-    await runProcess('git', ['checkout', '--detach', headSha], { phase: 'git', cwd: workdir, env: commonEnv, timeoutMs: 60_000 });
+    const runGit = (args, timeoutMs) => runProcess('git', args, {
+      phase: 'git',
+      cwd: workdir,
+      env: commonEnv,
+      timeoutMs,
+      signal,
+      onStderrChunk: stderrChunkLogger(logger, 'git', args[0]),
+    });
+    await runGit(['init'], 60_000);
+    await runGit(['remote', 'add', 'origin', `https://github.com/${owner}/${repo}.git`], 60_000);
+    await runGit(['fetch', '--no-tags', '--prune', 'origin', baseSha, `pull/${pullNumber}/head:refs/remotes/origin/pr-${pullNumber}`], GIT_TIMEOUT_MS);
+    await runGit(['checkout', '--detach', headSha], 60_000);
 
     const ocrEnv = { ...process.env, ...config.ocrEnv, GIT_TERMINAL_PROMPT: '0' };
     const ocrArgs = [
@@ -539,46 +677,66 @@ async function handleReviewJob(payload, config) {
       '--max-git-procs', String(config.ocrMaxGitProcs),
       '--timeout', String(config.ocrPerFileTimeoutMinutes),
     ];
-    console.log('ocr started', { owner, repo, pullNumber, base: baseSha, head: headSha, concurrency: config.ocrConcurrency, maxGitProcs: config.ocrMaxGitProcs, perFileTimeoutMinutes: config.ocrPerFileTimeoutMinutes, diagnosticId });
-    const review = await runProcess('ocr', ocrArgs, { phase: 'ocr', cwd: workdir, env: ocrEnv, timeoutMs: config.jobTimeoutMs });
-    console.log('ocr completed', { owner, repo, pullNumber, diagnosticId });
+    await logger.phase('ocr', 'Running OCR review', { ...commonFields, base: baseSha, head: headSha, concurrency: config.ocrConcurrency, maxGitProcs: config.ocrMaxGitProcs, perFileTimeoutMinutes: config.ocrPerFileTimeoutMinutes });
+    console.log('ocr started', redact({ ...commonFields, base: baseSha, head: headSha, concurrency: config.ocrConcurrency, maxGitProcs: config.ocrMaxGitProcs, perFileTimeoutMinutes: config.ocrPerFileTimeoutMinutes }));
+    const review = await runProcess('ocr', ocrArgs, {
+      phase: 'ocr',
+      cwd: workdir,
+      env: ocrEnv,
+      timeoutMs: config.jobTimeoutMs,
+      signal,
+      onStderrChunk: stderrChunkLogger(logger, 'ocr', 'review'),
+    });
+    ocrMetrics.ocrStdoutBytes = review.stdoutBytes;
+    ocrMetrics.ocrStdoutSha256 = review.stdoutSha256;
+    console.log('ocr completed', redact(commonFields));
+    await logger.info('OCR completed', { ...commonFields, ocrStdoutBytes: review.stdoutBytes, ocrStdoutSha256: review.stdoutSha256, stderrBytes: review.stderrBytes, stderrTruncatedBytes: review.stderrTruncatedBytes });
+
     const { data: currentPull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
     if (shouldDiscardStaleReview(baseSnapshot, currentPull)) {
-      console.log('discarding stale review result', { owner, repo, pullNumber, diagnosticId, reviewedHead: headSha, currentHead: currentPull.head.sha, reviewedBase: baseSha, currentBase: currentPull.base.sha, reviewedBaseRef: baseRef, currentBaseRef: currentPull.base.ref });
+      console.log('discarding stale review result', redact({ ...commonFields, reviewedHead: headSha, currentHead: currentPull.head.sha, reviewedBase: baseSha, currentBase: currentPull.base.sha, reviewedBaseRef: baseRef, currentBaseRef: currentPull.base.ref }));
+      await logger.phase('publishing', 'Publishing stale review notice', commonFields);
       await octokit.rest.issues.createComment({
         owner,
         repo,
         issue_number: pullNumber,
         body: buildStaleReviewComment(baseSnapshot, currentPull, diagnosticId),
       });
-      finalResult = { outcome: 'stale', diagnosticId, commentsGenerated: 0, commentsPosted: 1, failure: null };
+      finalResult = { outcome: 'stale', diagnosticId, ...ocrMetrics, commentsPosted: 1, failure: null };
       return finalResult;
     }
 
     let result;
     try {
       result = JSON.parse(review.stdout);
+      ocrMetrics.ocrParseSuccess = true;
     } catch (error) {
       result = null;
-      console.error('invalid OCR JSON', { owner, repo, pullNumber, diagnosticId, stdoutBytes: Buffer.byteLength(review.stdout, 'utf8'), stdoutSha256: crypto.createHash('sha256').update(review.stdout).digest('hex'), error: error.message });
+      console.error('invalid OCR JSON', redact({ ...commonFields, stdoutBytes: review.stdoutBytes, stdoutSha256: review.stdoutSha256, error: error.message }));
+      await logger.warn('Invalid OCR JSON', { ...commonFields, ocrStdoutBytes: review.stdoutBytes, ocrStdoutSha256: review.stdoutSha256, error: error.message });
     }
     if (!validateOcrResult(result)) {
       const failure = buildInvalidOcrOutputFailure(review.stdout);
-      finalResult = { outcome: 'failed', diagnosticId, failure, commentsGenerated: 0, commentsPosted: 0, reportingError: null };
+      finalResult = { outcome: 'failed', diagnosticId, ...ocrMetrics, failure, commentsPosted: 0, reportingError: null };
       try {
+        await logger.phase('publishing', 'Publishing invalid OCR output notice', { ...commonFields, failure: failure.kind });
         await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
         finalResult.commentsPosted = 1;
       } catch (reportingError) {
         finalResult.reportingError = classifyReviewFailure(reportingError, config);
-        console.error('failed to post invalid output failure comment', { owner, repo, pullNumber, diagnosticId, originalFailure: failure.kind, reportingFailure: finalResult.reportingError.kind, error: reportingError.stack || reportingError.message });
+        console.error('failed to post invalid output failure comment', redact({ ...commonFields, originalFailure: failure.kind, reportingFailure: finalResult.reportingError.kind, error: reportingError.stack || reportingError.message }));
       }
       return finalResult;
     }
 
+    ocrMetrics.ocrStatus = result.status;
+    ocrMetrics.commentsGenerated = Array.isArray(result.comments) ? result.comments.length : 0;
+    ocrMetrics.warningsCount = Array.isArray(result.warnings) ? result.warnings.length : 0;
     const statusSummary = buildOcrStatusSummary(result, diagnosticId);
     const comments = Array.isArray(result.comments) ? result.comments.slice(0, config.maxComments) : [];
-    const overflow = Array.isArray(result.comments) && result.comments.length > config.maxComments ? result.comments.length - config.maxComments : 0;
+    const overflow = ocrMetrics.commentsGenerated > config.maxComments ? ocrMetrics.commentsGenerated - config.maxComments : 0;
 
+    await logger.phase('publishing', 'Publishing review result', { ...commonFields, commentsSelected: comments.length, commentsGenerated: ocrMetrics.commentsGenerated, warningsCount: ocrMetrics.warningsCount });
     if (comments.length === 0) {
       await octokit.rest.issues.createComment({
         owner,
@@ -589,10 +747,8 @@ async function handleReviewJob(payload, config) {
       finalResult = {
         outcome: statusSummary ? 'succeeded_with_warnings' : 'succeeded',
         diagnosticId,
-        ocrStatus: result.status,
-        commentsGenerated: 0,
+        ...ocrMetrics,
         commentsPosted: 1,
-        warningsCount: Array.isArray(result.warnings) ? result.warnings.length : 0,
         failure: null,
       };
       return finalResult;
@@ -617,7 +773,7 @@ async function handleReviewJob(payload, config) {
     }
 
     let commentsPosted = inline.length;
-    let publishWarnings = [];
+    let publishWarningCount = 0;
     try {
       await octokit.rest.pulls.createReview({
         owner,
@@ -653,43 +809,49 @@ async function handleReviewJob(payload, config) {
         await octokit.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body: fallback.join('\n\n---\n\n') });
         commentsPosted += 1;
       }
-      if (failed.length > 0) publishWarnings = failed.map(item => ({ message: item.error }));
+      publishWarningCount = failed.length;
     }
 
     finalResult = {
-      outcome: statusSummary || publishWarnings.length > 0 ? 'succeeded_with_warnings' : 'succeeded',
+      outcome: statusSummary || publishWarningCount > 0 ? 'succeeded_with_warnings' : 'succeeded',
       diagnosticId,
-      ocrStatus: result.status,
-      commentsGenerated: result.comments.length,
+      ...ocrMetrics,
       commentsSelected: comments.length,
       commentsPosted,
       commentsOmitted: overflow,
-      warningsCount: Array.isArray(result.warnings) ? result.warnings.length : 0,
-      publishWarnings,
+      publishWarningCount,
       failure: null,
     };
     return finalResult;
   } catch (error) {
+    if (signal?.aborted) throw error;
     const failure = classifyReviewFailure(error, config);
-    console.error('review job failed', { owner, repo, pullNumber, diagnosticId, failure: failure.kind, error: error.stack || error.message });
-    finalResult = { outcome: 'failed', diagnosticId, failure, reportingError: null };
-    try {
-      await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
-    } catch (reportingError) {
-      finalResult.reportingError = classifyReviewFailure(reportingError, config);
-      console.error('failed to post failure comment', { owner, repo, pullNumber, diagnosticId, originalFailure: failure.kind, reportingFailure: finalResult.reportingError.kind, error: reportingError.stack || reportingError.message });
+    console.error('review job failed', redact({ ...commonFields, failure: failure.kind, error: error.stack || error.message }));
+    await logger.error('Review job failed', { ...commonFields, failure: failure.kind, error: error.stack || error.message });
+    finalResult = { outcome: 'failed', diagnosticId, ...ocrMetrics, failure, reportingError: null };
+    if (octokit) {
+      try {
+        await logger.phase('publishing', 'Publishing failure notice', { ...commonFields, failure: failure.kind });
+        await postFailureComment(octokit, owner, repo, pullNumber, failure, diagnosticId);
+        finalResult.commentsPosted = 1;
+      } catch (reportingError) {
+        finalResult.reportingError = classifyReviewFailure(reportingError, config);
+        console.error('failed to post failure comment', redact({ ...commonFields, originalFailure: failure.kind, reportingFailure: finalResult.reportingError.kind, error: reportingError.stack || reportingError.message }));
+      }
     }
     return finalResult;
   } finally {
     if (config.cleanupWorkdir && workdir) {
       try {
+        await logger.phase('cleanup', 'Cleaning temporary checkout', commonFields);
         await fs.rm(workdir, { recursive: true, force: true });
-        console.log('workdir cleaned', { owner, repo, pullNumber });
+        console.log('workdir cleaned', redact(commonFields));
       } catch (cleanupError) {
         if (finalResult) finalResult.cleanupWarning = cleanupError.message;
-        console.error('workdir cleanup failed', { owner, repo, pullNumber, error: cleanupError.stack || cleanupError.message });
+        console.error('workdir cleanup failed', redact({ ...commonFields, error: cleanupError.stack || cleanupError.message }));
       }
     }
+    await logger.phase('finished', 'Review job finished', { ...commonFields, outcome: finalResult?.outcome ?? (signal?.aborted ? 'interrupted' : 'failed') });
   }
 }
 
@@ -697,25 +859,38 @@ function createServer(config, options = {}) {
   let currentConfig = config;
   const configProvider = options.configProvider || (() => currentConfig);
   const eventStore = options.eventStore || new JobEventStore({ adminDir: currentConfig.adminDataDir });
-  const queue = options.queue || new AdminJobQueue({ handler: (payload, context) => handleReviewJob(payload, context?.config || configProvider()), store: eventStore, configProvider });
-  const adminRuntime = options.adminRuntime || new AdminRuntime({ configManager: options.configManager, eventStore, queue });
+  const jobLogger = options.jobLogger || new BoundedJobLogger({ adminDir: currentConfig.adminDataDir, maxBytes: currentConfig.jobLogMaxBytes });
+  const queue = options.queue || new AdminJobQueue({
+    handler: (payload, context) => handleReviewJob(payload, context?.config || configProvider(), context),
+    store: eventStore,
+    logger: jobLogger,
+    configProvider,
+  });
+  const adminRuntime = options.adminRuntime || new AdminRuntime({ configManager: options.configManager, eventStore, queue, logger: jobLogger, configProvider, adminDir: currentConfig.adminDataDir });
   const adminRouter = options.adminRouter || createAdminRouter({
     adminPassword: currentConfig.adminPassword,
     allowedHosts: currentConfig.adminAllowedHosts,
-    secureCookies: true,
-    loadDashboard: () => adminRuntime.dashboard(),
-    loadJobs: () => adminRuntime.jobs({ limit: 50 }),
+    secureCookies: currentConfig.adminCookieSecure,
+    sessionTtlMs: currentConfig.adminSessionTtlMs,
+    loadDashboard: context => adminRuntime.dashboard(context),
+    loadJobs: context => adminRuntime.jobs(context),
+    loadJob: context => adminRuntime.job(context.jobId, context),
     loadConfig: () => adminRuntime.configSummary(),
     saveConfig: options.saveConfig,
     loadSecurityConfig: async () => {
       const next = await configProvider();
-      return { adminPassword: next.adminPassword, allowedHosts: next.adminAllowedHosts, trustProxy: next.adminTrustProxy, allowPrivateHosts: false };
+      return { adminPassword: next.adminPassword, allowedHosts: next.adminAllowedHosts, trustProxy: next.adminTrustProxy, cookieSecure: next.adminCookieSecure, sessionTtlMs: next.adminSessionTtlMs, allowPrivateHosts: false };
     },
     adminRoot: currentConfig.adminDataDir,
   });
+  let acceptingRequests = true;
 
   const server = http.createServer(async (req, res) => {
     try {
+      if (!acceptingRequests) {
+        json(res, 503, { error: 'server shutting down' });
+        return;
+      }
       if (req.url === '/admin') {
         res.writeHead(308, { location: '/admin/' });
         res.end();
@@ -775,7 +950,7 @@ function createServer(config, options = {}) {
       const key = `${payload.repository.full_name}#${payload.issue.number}@${payload.comment.id}`;
       const result = await queue.enqueue({
         key,
-        payload,
+        payload: minimalReviewPayload(payload),
         metadata: {
           diagnosticId: key,
           owner: payload.repository.owner.login,
@@ -785,13 +960,20 @@ function createServer(config, options = {}) {
           trigger: payload.comment.body,
         },
       });
-      json(res, result.queued ? 202 : 200, { ok: true, queued: result.queued, jobId: result.job?.jobId });
+      json(res, result.queued ? 202 : 200, { ok: true, queued: result.queued, jobId: result.job?.jobId, stopped: Boolean(result.stopped) });
     } catch (error) {
-      console.error('request failed', error.stack || error.message);
+      console.error('request failed', redactSensitiveString(error.stack || error.message));
       json(res, 500, { error: 'internal error' });
     }
   });
   server.adminRuntime = adminRuntime;
+  server.reviewQueue = queue;
+  server.shutdown = async ({ timeoutMs = 30_000 } = {}) => {
+    acceptingRequests = false;
+    queue.stop();
+    await closeServer(server);
+    await queue.shutdown({ timeoutMs });
+  };
   return server;
 }
 
@@ -803,21 +985,43 @@ function writeAdminResponse(res, response) {
   res.end(response.body || '');
 }
 
-async function saveAdminConfigOverride({ configManager, request, form }) {
-  const rawKey = form.get('key');
-  if (typeof rawKey !== 'string' || rawKey.trim() === '') return;
-  const key = normalizeOverrideKey(rawKey);
-  const value = form.get('value');
-  if (key === 'ADMIN_ALLOWED_HOSTS') assertHostRemainsAllowed(request, value);
-  if (SECRET_ENV_KEYS.includes(key)) await configManager.applySecretOverride(key, { value, clear: form.get('clear') === '1' });
-  else await configManager.setRawOverride(key, value);
+async function saveAdminConfigOverride({ configManager, form, expectedRevision, clientAddress, currentHost }) {
+  return configManager.applyEditorForm(form, { expectedRevision, clientAddress, currentHost });
 }
 
-function assertHostRemainsAllowed(request, value) {
-  const currentHost = normalizeHostHeader(request.headers.host);
-  if (!currentHost) throw new Error('Current admin host is invalid');
-  const allowed = parseAllowedHosts(value);
-  if (!allowed.has(currentHost)) throw new Error('ADMIN_ALLOWED_HOSTS must keep the current admin host allowed');
+function minimalReviewPayload(payload) {
+  return {
+    action: payload.action,
+    installation: { id: payload.installation.id },
+    repository: {
+      name: payload.repository.name,
+      full_name: payload.repository.full_name,
+      private: Boolean(payload.repository.private),
+      owner: { login: payload.repository.owner.login },
+    },
+    issue: { number: payload.issue.number, pull_request: payload.issue.pull_request ? {} : undefined },
+    comment: { id: payload.comment.id, body: payload.comment.body },
+    sender: { login: payload.sender.login, id: payload.sender.id },
+  };
+}
+
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close(error => {
+      if (!error || error.code === 'ERR_SERVER_NOT_RUNNING') resolve();
+      else reject(error);
+    });
+  });
+}
+
+async function runRetentionFailOpen(adminRuntime) {
+  if (!adminRuntime || typeof adminRuntime.runRetention !== 'function') return null;
+  try {
+    return await adminRuntime.runRetention();
+  } catch (error) {
+    console.error('admin retention run failed', redactSensitiveString(error.stack || error.message));
+    return null;
+  }
 }
 
 async function main() {
@@ -845,19 +1049,46 @@ async function main() {
       }
       return config;
     },
-    saveConfig: async ({ request, form }) => {
-      await saveAdminConfigOverride({ configManager, request, form });
+    saveConfig: async ({ form, expectedRevision, clientAddress, currentHost }) => {
+      const result = await saveAdminConfigOverride({ configManager, form, expectedRevision, clientAddress, currentHost });
       const next = await configManager.load();
       config = next.config;
+      return result;
     },
   });
   await server.adminRuntime.initialize();
-  server.listen(config.port, '0.0.0.0', () => {
-    console.log(`open-code-review-github-app-bot listening on ${config.port}`);
+  await runRetentionFailOpen(server.adminRuntime);
+  const retentionTimer = setInterval(() => { void runRetentionFailOpen(server.adminRuntime); }, config.retentionIntervalHours * 60 * 60 * 1000);
+  retentionTimer.unref();
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`received ${signal}; shutting down`);
+    try {
+      clearInterval(retentionTimer);
+      await server.shutdown({ timeoutMs: 30_000 });
+      process.exitCode = 0;
+    } catch (error) {
+      console.error('graceful shutdown failed', redactSensitiveString(error.stack || error.message));
+      process.exitCode = 1;
+    }
+  };
+  process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.once('SIGINT', () => { void shutdown('SIGINT'); });
+  server.listen(config.port, '0.0.0.0', async () => {
+    const address = server.address();
+    const runningPort = typeof address === 'object' && address ? address.port : config.port;
+    try {
+      await configManager.clearPendingRestartAfterSuccessfulBind({ desiredPort: config.port, runningPort });
+    } catch (error) {
+      console.error('pending restart clear failed', redactSensitiveString(error.stack || error.message));
+    }
+    console.log(`open-code-review-github-app-bot listening on ${runningPort}`);
   });
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
 
@@ -872,6 +1103,9 @@ export {
   copyProxyHeaders,
   createServer,
   extractInternalTokenFromHeaders,
+  minimalReviewPayload,
+  runProcess,
+  runRetentionFailOpen,
   proxyLLMRequest,
   readRequestBody,
   csvSet,

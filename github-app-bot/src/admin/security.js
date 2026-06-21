@@ -3,6 +3,7 @@ const DEFAULT_SECURITY_HEADERS = Object.freeze({
   'cross-origin-opener-policy': 'same-origin',
   'cross-origin-resource-policy': 'same-origin',
   'referrer-policy': 'no-referrer',
+  'permissions-policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()',
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
   'x-robots-tag': 'noindex, nofollow',

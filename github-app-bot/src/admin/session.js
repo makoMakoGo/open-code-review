@@ -11,22 +11,26 @@ export function createSessionStore({ ttlMs = DEFAULT_SESSION_TTL_MS, now = () =>
 }
 
 export class MemorySessionStore {
-  constructor({ ttlMs = DEFAULT_SESSION_TTL_MS, now = () => Date.now() } = {}) {
+  constructor({ ttlMs = DEFAULT_SESSION_TTL_MS, now = () => Date.now(), pruneLimit = 100 } = {}) {
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 1) throw new Error('ttlMs must be a positive integer');
     if (typeof now !== 'function') throw new Error('now must be a function');
+    if (!Number.isSafeInteger(pruneLimit) || pruneLimit < 1) throw new Error('pruneLimit must be a positive integer');
     this.ttlMs = ttlMs;
     this.now = now;
+    this.pruneLimit = pruneLimit;
     this.sessions = new Map();
   }
 
-  create(metadata = {}) {
+  create(metadata = {}, { ttlMs = this.ttlMs } = {}) {
+    if (!Number.isSafeInteger(ttlMs) || ttlMs < 1) throw new Error('ttlMs must be a positive integer');
+    this.prune();
     const id = randomToken(SESSION_ID_BYTES);
     const now = this.now();
     const session = {
       id,
       csrfToken: randomToken(CSRF_BYTES),
       createdAt: now,
-      expiresAt: now + this.ttlMs,
+      expiresAt: now + ttlMs,
       metadata: sanitizeSessionMetadata(metadata),
     };
     this.sessions.set(id, session);
@@ -57,11 +61,41 @@ export class MemorySessionStore {
     return this.sessions.delete(id);
   }
 
-  prune() {
+  prune({ maxDeletes = this.pruneLimit } = {}) {
+    if (!Number.isSafeInteger(maxDeletes) || maxDeletes < 1) throw new Error('maxDeletes must be a positive integer');
     const now = this.now();
+    let removed = 0;
     for (const [id, session] of this.sessions) {
-      if (session.expiresAt <= now) this.sessions.delete(id);
+      if (removed >= maxDeletes) break;
+      if (session.expiresAt <= now) {
+        this.sessions.delete(id);
+        removed += 1;
+      }
     }
+    return removed;
+  }
+
+  setTtlMs(ttlMs) {
+    if (!Number.isSafeInteger(ttlMs) || ttlMs < 1) throw new Error('ttlMs must be a positive integer');
+    this.ttlMs = ttlMs;
+  }
+
+  setFlash(id, flash) {
+    const session = this.get(id);
+    if (!session) return false;
+    const next = { ...session, flash: sanitizeFlash(flash) };
+    this.sessions.set(id, next);
+    return true;
+  }
+
+  consumeFlash(id) {
+    const session = this.get(id);
+    if (!session || !session.flash) return null;
+    const { flash } = session;
+    const next = { ...session };
+    delete next.flash;
+    this.sessions.set(id, next);
+    return flash;
   }
 }
 
@@ -169,10 +203,11 @@ export function serializeCookie(name, value, {
   return parts.join('; ');
 }
 
-export function buildSessionResponseHeaders(session, { secure = true } = {}) {
+export function buildSessionResponseHeaders(session, { secure = true, maxAgeSeconds = null } = {}) {
   if (!session || !isSafeToken(session.id) || !isSafeToken(session.csrfToken)) throw new Error('Invalid session');
+  const ttlSeconds = maxAgeSeconds ?? Math.max(0, Math.floor((session.expiresAt - Date.now()) / 1000));
   return {
-    'set-cookie': [createSessionCookie(session.id, { secure }), createCsrfCookie(session.csrfToken, { secure })],
+    'set-cookie': [createSessionCookie(session.id, { secure, maxAgeSeconds: ttlSeconds }), createCsrfCookie(session.csrfToken, { secure, maxAgeSeconds: ttlSeconds })],
   };
 }
 
@@ -186,6 +221,14 @@ function sanitizeSessionMetadata(metadata) {
     else if (typeof value === 'boolean') clean[key] = value;
   }
   return clean;
+}
+
+function sanitizeFlash(flash) {
+  if (!flash || typeof flash !== 'object' || Array.isArray(flash)) return null;
+  const type = flash.type === 'success' ? 'success' : 'error';
+  const message = typeof flash.message === 'string' ? flash.message.slice(0, 500) : '';
+  if (message === '') return null;
+  return { type, message };
 }
 
 function isValidCookieName(name) {
@@ -216,7 +259,7 @@ function getHeader(headers, name) {
 
 function readField(source, name) {
   if (!source || typeof source !== 'object') return null;
-  const value = source instanceof Map ? source.get(name) : source[name];
+  const value = source instanceof URLSearchParams || source instanceof Map ? source.get(name) : source[name];
   if (Array.isArray(value)) return value[0] ?? null;
   return typeof value === 'string' ? value : null;
 }
