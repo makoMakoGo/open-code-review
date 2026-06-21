@@ -31,6 +31,7 @@ export function createJobSnapshot(input = {}) {
     startSnapshot: sanitizeForAdminStorage(input.startSnapshot ?? null),
     result: sanitizeForAdminStorage(input.result ?? null),
     logCount: normalizeCount(input.logCount ?? 0, 'logCount'),
+    phaseTimeline: normalizePhaseTimeline(input.phaseTimeline),
   };
 }
 
@@ -138,9 +139,11 @@ export function applyJobEvent(store, event) {
     return store.jobs.get(event.jobId);
   }
   if (event.type === 'job.progress') {
+    const progress = normalizeProgress(data.progress ?? data);
     store.jobs.set(event.jobId, createJobSnapshot({
       ...current,
-      progress: { ...current.progress, ...normalizeProgress(data.progress ?? data) },
+      progress: { ...current.progress, ...progress },
+      phaseTimeline: appendPhaseTimeline(current.phaseTimeline, { type: 'job.progress', timestamp, progress }),
       updatedAt: timestamp,
     }));
     return store.jobs.get(event.jobId);
@@ -241,6 +244,7 @@ export function toPublicJobSnapshot(input) {
     result: job.result,
     logCount: job.logCount,
     startSnapshot: job.startSnapshot,
+    phaseTimeline: job.phaseTimeline,
     durationMs: computeDurationMs(job),
   };
 }
@@ -319,6 +323,19 @@ function normalizeProgress(progress) {
     message: sanitizeTextField(progress.message, 'progress.message'),
     percent,
   };
+}
+
+function normalizePhaseTimeline(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new TypeError('phaseTimeline must be an array');
+  return value.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new TypeError(`phaseTimeline[${index}] must be an object`);
+    return sanitizeForAdminStorage(item);
+  });
+}
+
+function appendPhaseTimeline(timeline, item) {
+  return [...normalizePhaseTimeline(timeline), sanitizeForAdminStorage(item)];
 }
 
 function compareQueueOrder(left, right) {

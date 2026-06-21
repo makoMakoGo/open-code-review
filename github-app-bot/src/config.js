@@ -996,6 +996,15 @@ async function atomicWriteJsonLines(filePath, records) {
     throw error;
   }
 }
+async function fileSize(filePath) {
+  try {
+    return (await fs.stat(filePath)).size;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return 0;
+    throw error;
+  }
+}
+
 class ConfigManager {
   constructor({ env = process.env, dataDir, storageDir, overrideFile, pendingRestartFile, auditFile } = {}) {
     this.env = env;
@@ -1005,6 +1014,20 @@ class ConfigManager {
     this.pendingRestartFile = pendingRestartFile || path.join(this.dataDir, PENDING_RESTART_FILE_NAME);
     this.auditFile = auditFile || path.join(this.dataDir, CONFIG_AUDIT_DIR_NAME, CONFIG_AUDIT_FILE_NAME);
     this.overrideWriteTail = Promise.resolve();
+    this.auditWriteTail = Promise.resolve();
+  }
+
+  async withAuditWriteLock(operation) {
+    if (typeof operation !== 'function') throw new Error('Config audit operation must be a function');
+    const previous = this.auditWriteTail;
+    let release;
+    this.auditWriteTail = new Promise(resolve => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   async withOverrideWriteLock(operation) {
@@ -1076,8 +1099,8 @@ class ConfigManager {
         pendingRestart: marker ?? current.pendingRestart ?? null,
       };
       if (beforePersist) await beforePersist({ current, next, changedKeys, restartRequired: changedKeysRequireRestart(changedKeys) });
-      await atomicWriteJson(this.overrideFile, next);
       await fs.rm(this.pendingRestartFile, { force: true });
+      await atomicWriteJson(this.overrideFile, next);
       return next;
     });
   }
@@ -1104,7 +1127,7 @@ class ConfigManager {
           current = latestCurrent;
           changedKeys = latestChangedKeys;
           await this.appendConfigAudit(auditEvent({
-            result: latestChangedKeys.length === 0 ? 'unchanged' : 'success',
+            result: latestChangedKeys.length === 0 ? 'unchanged' : 'attempt',
             changedKeys: latestChangedKeys,
             beforeRevision: latestCurrent.revision,
             afterRevision: pendingNext.revision,
@@ -1113,7 +1136,17 @@ class ConfigManager {
           }));
         },
       });
-      return { state: next, changedKeys, restartRequired: changedKeysRequireRestart(changedKeys) };
+      if (changedKeys.length === 0) return { state: next, changedKeys, restartRequired: false };
+      await this.appendConfigAudit(auditEvent({
+        result: 'success',
+        changedKeys,
+        beforeRevision: current.revision,
+        afterRevision: next.revision,
+        clientAddress,
+        restartRequired: changedKeysRequireRestart(changedKeys),
+      }));
+      const committed = await this.readOverrideState();
+      return { state: committed, changedKeys, restartRequired: changedKeysRequireRestart(changedKeys) };
     } catch (error) {
       const failureRevision = Number.isSafeInteger(error?.currentRevision) ? error.currentRevision : current?.revision ?? null;
       await this.appendConfigAudit(auditEvent({
@@ -1130,35 +1163,44 @@ class ConfigManager {
   }
 
   async appendConfigAudit(event) {
-    await appendJsonLine(this.auditFile, event);
+    return this.withAuditWriteLock(() => appendJsonLine(this.auditFile, event));
+  }
+
+  async compactConfigAudit({ retentionDays, now = new Date() } = {}) {
+    return this.withAuditWriteLock(async () => {
+      const days = retentionDays ?? this.buildConfig((await this.readOverrideState()).overrides).configAuditRetentionDays;
+      if (!Number.isSafeInteger(days) || days < 1) throw new Error('retentionDays must be a positive integer');
+      let text;
+      try {
+        text = await fs.readFile(this.auditFile, 'utf8');
+      } catch (error) {
+        if (error.code === 'ENOENT') return { retained: 0, removed: 0, bytesReclaimed: 0 };
+        throw error;
+      }
+      const before = Buffer.byteLength(text, 'utf8');
+      const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
+      const retained = [];
+      let removed = 0;
+      for (const line of text.split('\n')) {
+        if (line.trim() === '') continue;
+        try {
+          const record = JSON.parse(line);
+          const timestamp = typeof record.timestamp === 'string' ? new Date(record.timestamp).getTime() : Number.NaN;
+          if (!Number.isNaN(timestamp) && timestamp >= cutoff) retained.push(record);
+          else removed += 1;
+        } catch {
+          removed += 1;
+        }
+      }
+      if (removed > 0) await atomicWriteJsonLines(this.auditFile, retained);
+      const after = await fileSize(this.auditFile);
+      return { retained: retained.length, removed, bytesReclaimed: Math.max(0, before - after) };
+    });
   }
 
   async pruneConfigAudit({ retentionDays, now = new Date() } = {}) {
-    const days = retentionDays ?? this.buildConfig((await this.readOverrideState()).overrides).configAuditRetentionDays;
-    if (!Number.isSafeInteger(days) || days < 1) throw new Error('retentionDays must be a positive integer');
-    let text;
-    try {
-      text = await fs.readFile(this.auditFile, 'utf8');
-    } catch (error) {
-      if (error.code === 'ENOENT') return { retained: 0, removed: 0 };
-      throw error;
-    }
-    const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
-    const retained = [];
-    let removed = 0;
-    for (const line of text.split('\n')) {
-      if (line.trim() === '') continue;
-      try {
-        const record = JSON.parse(line);
-        const timestamp = typeof record.timestamp === 'string' ? new Date(record.timestamp).getTime() : Number.NaN;
-        if (!Number.isNaN(timestamp) && timestamp >= cutoff) retained.push(record);
-        else removed += 1;
-      } catch {
-        removed += 1;
-      }
-    }
-    if (removed > 0) await atomicWriteJsonLines(this.auditFile, retained);
-    return { retained: retained.length, removed };
+    const { retained, removed } = await this.compactConfigAudit({ retentionDays, now });
+    return { retained, removed };
   }
 
   async updateOverrides(mutator, { expectedRevision } = {}) {
@@ -1223,14 +1265,14 @@ class ConfigManager {
       await this.#migrateLegacyPendingRestartUnlocked();
       const current = await this.readOverrideState();
       const marker = current.pendingRestart;
-      if (!marker || !marker.keys.includes('PORT')) {
+      if (!marker) {
         await fs.rm(this.pendingRestartFile, { force: true });
-        return { cleared: false, reason: 'no-port-restart-pending' };
+        return { cleared: false, reason: 'no-restart-pending' };
       }
-      if (desired !== running) return { cleared: false, reason: 'running-port-differs' };
+      if (marker.keys.includes('PORT') && desired !== running) return { cleared: false, reason: 'running-port-differs' };
       await atomicWriteJson(this.overrideFile, { ...current, pendingRestart: null });
       await fs.rm(this.pendingRestartFile, { force: true });
-      return { cleared: true, reason: 'bound-desired-port' };
+      return { cleared: true, reason: marker.keys.includes('PORT') ? 'bound-desired-port' : 'restart-applied' };
     });
   }
 

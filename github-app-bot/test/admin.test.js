@@ -91,9 +91,10 @@ test('admin config editor form validates whole candidate, confirms high-risk cha
 
   const auditText = await fs.readFile(path.join(dir, 'audit', 'config-audit.jsonl'), 'utf8');
   const audit = auditText.trim().split('\n').map(line => JSON.parse(line));
-  assert.deepEqual(audit.map(event => event.result), ['failure', 'success', 'failure']);
+  assert.deepEqual(audit.map(event => event.result), ['failure', 'attempt', 'success', 'failure']);
   assert.deepEqual(audit[1].fieldsChanged, ['OCR_LLM_TOKEN', 'PORT']);
-  assert.equal(audit[1].restartRequired, true);
+  assert.deepEqual(audit[2].fieldsChanged, ['OCR_LLM_TOKEN', 'PORT']);
+  assert.equal(audit[2].restartRequired, true);
   assert.equal(JSON.stringify(audit).includes('replacement-token'), false);
 });
 
@@ -197,6 +198,47 @@ test('admin config legacy pending restart migration does not deadlock under lock
   const state = await manager.load();
   assert.equal(result.cleared, true);
   assert.equal(state.pendingRestart, null);
+});
+
+test('admin config clears non-port pending restart after successful process restart', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-non-port-restart-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  await manager.writePendingRestart({ keys: ['JOB_LOG_MAX_BYTES', 'RETENTION_INTERVAL_HOURS'], sinceRevision: 4, createdAt: '2026-01-01T00:00:00.000Z' });
+
+  const result = await manager.clearPendingRestartAfterSuccessfulBind({ desiredPort: 3008, runningPort: 3007 });
+  const state = await manager.load();
+
+  assert.deepEqual(result, { cleared: true, reason: 'restart-applied' });
+  assert.equal(state.pendingRestart, null);
+});
+
+test('admin config audit compaction shares audit writer lock', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-audit-lock-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  const auditFile = path.join(dir, 'audit', 'config-audit.jsonl');
+  await fs.mkdir(path.dirname(auditFile), { recursive: true });
+  await fs.writeFile(auditFile, `${JSON.stringify({ timestamp: '2026-01-01T00:00:00.000Z', result: 'success', fieldsChanged: ['PORT'] })}\n`, 'utf8');
+
+  let releaseAppend;
+  const appendStarted = new Promise(resolve => { releaseAppend = resolve; });
+  let unblockAppend;
+  const waitBeforeAppend = new Promise(resolve => { unblockAppend = resolve; });
+  const freshRecord = { timestamp: '2026-02-01T00:00:00.000Z', result: 'success', fieldsChanged: ['MAX_REVIEW_COMMENTS'] };
+  const append = manager.withAuditWriteLock(async () => {
+    releaseAppend();
+    await waitBeforeAppend;
+    await fs.appendFile(auditFile, `${JSON.stringify(freshRecord)}\n`, 'utf8');
+  });
+  await appendStarted;
+  const compact = manager.compactConfigAudit({ retentionDays: 7, now: new Date('2026-02-02T00:00:00.000Z') });
+  unblockAppend();
+  await append;
+  await compact;
+
+  const records = (await fs.readFile(auditFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(records.map(record => record.fieldsChanged), [['MAX_REVIEW_COMMENTS']]);
 });
 
 test('admin config audit write failure prevents persisting editor overrides', async () => {
@@ -841,6 +883,30 @@ test('admin retention removes expired terminal jobs from compacted event history
   assert.deepEqual(stats.records.map(record => record.day).sort(), ['2026-01-01', '2026-05-15']);
 });
 
+test('admin retention keeps expired terminal jobs when stats aggregation fails', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-retention-stats-failure-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const oldId = cryptoRandomUuid();
+  await store.append(createJobEvent({ type: 'job.queued', jobId: oldId, timestamp: '2026-01-01T00:00:00.000Z', data: { repository: 'alice/old-retention', pullNumber: 1 } }));
+  await store.append(createJobEvent({ type: 'job.completed', jobId: oldId, timestamp: '2026-01-01T00:01:00.000Z', data: { status: 'succeeded', finishedAt: '2026-01-01T00:01:00.000Z', result: { outcome: 'succeeded' } } }));
+  await fs.mkdir(path.join(dir, 'stats', 'daily-stats.jsonl'), { recursive: true });
+
+  const runtime = new AdminRuntime({ eventStore: store, configProvider: () => ({ jobLogRetentionDays: 14, jobHistoryRetentionDays: 90, statsRetentionDays: 365, configAuditRetentionDays: 365, jobLogMaxBytes: 4096 }) });
+  const originalError = console.error;
+  console.error = () => {};
+  let result;
+  try {
+    result = await runtime.runRetention({ now: '2026-06-01T00:00:00.000Z' });
+  } finally {
+    console.error = originalError;
+  }
+  const replayed = await store.replay({ force: true });
+
+  assert.equal(result.stats, null);
+  assert.equal(result.events.terminalJobsDropped, 0);
+  assert.equal(replayed.jobs.some(job => job.id === oldId), true);
+});
+
 test('admin retention keeps fresh orphan logs and aggregate stats under soft cap', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-retention-'));
   const store = new JobEventStore({ adminDir: dir });
@@ -889,6 +955,35 @@ test('job stats compute windowed rates percentiles comments failure kinds repos 
   assert.equal(stats.total.failureKinds.provider_unavailable, 1);
   assert.equal(stats.total.repos['alice/repo'], 2);
   assert.deepEqual(stats.dailyTrend.map(day => day.day), ['2026-05-30', '2026-05-31']);
+});
+
+test('admin dashboard merges persisted daily stats after job retention', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-dashboard-stats-'));
+  const store = new JobEventStore({ adminDir: dir });
+  await fs.mkdir(path.join(dir, 'stats'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'stats', 'daily-stats.jsonl'), `${JSON.stringify({ day: '2026-01-01', jobs: 3, succeeded: 2, failed: 1, successRate: 2 / 3, commentsGeneratedTotal: 7, commentsPostedTotal: 5 })}\n`, 'utf8');
+
+  const runtime = new AdminRuntime({ eventStore: store });
+  const dashboard = await runtime.dashboard();
+
+  assert.deepEqual(dashboard.stats.dailyTrend.map(day => day.day), ['2026-01-01']);
+  assert.equal(dashboard.stats.dailyTrend[0].jobs, 3);
+  assert.equal(dashboard.stats.dailyTrend[0].commentsGeneratedTotal, 7);
+});
+
+test('job event compaction preserves progress phase timeline', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-compact-progress-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const jobId = cryptoRandomUuid();
+  await store.append(createJobEvent({ type: 'job.queued', jobId, timestamp: '2026-01-01T00:00:00.000Z', data: { repository: 'alice/repo', pullNumber: 1 } }));
+  await store.append(createJobEvent({ type: 'job.progress', jobId, timestamp: '2026-01-01T00:00:30.000Z', data: { progress: { phase: 'checkout', message: 'Checking out', percent: 25 } } }));
+  await store.append(createJobEvent({ type: 'job.completed', jobId, timestamp: '2026-01-01T00:01:00.000Z', data: { status: 'succeeded', finishedAt: '2026-01-01T00:01:00.000Z', result: { outcome: 'succeeded' } } }));
+
+  await store.compact({ now: '2026-06-01T00:00:00.000Z', terminalDetailsBefore: '2026-06-01T00:00:00.000Z' });
+  const replayed = await store.replay({ force: true });
+
+  assert.equal(replayed.jobs[0].phaseTimeline.some(item => item.progress.phase === 'checkout'), true);
+  assert.equal(replayed.jobs[0].progress.phase, 'checkout');
 });
 
 

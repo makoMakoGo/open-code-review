@@ -235,20 +235,30 @@ export class AdminRuntime {
       return { ...compact, appended: append.appended, bytesReclaimed: compact.bytesReclaimed };
     });
 
+    const historyCutoff = new Date(nowMs - config.jobHistoryRetentionDays * DAY_MS).toISOString();
+    const statsReadyForTerminalDrop = result.stats && result.stats.degraded !== true;
     if (this.eventStore?.compact) {
       await this.captureRetentionStep(result, 'events', () => this.eventStore.compact({
         now,
-        terminalDetailsBefore: new Date(nowMs - config.jobHistoryRetentionDays * DAY_MS).toISOString(),
-        terminalJobsBefore: new Date(nowMs - config.jobHistoryRetentionDays * DAY_MS).toISOString(),
+        terminalDetailsBefore: historyCutoff,
+        terminalJobsBefore: statsReadyForTerminalDrop ? historyCutoff : null,
       }));
       await this.refresh();
     }
 
-    await this.captureRetentionStep(result, 'audit', () => pruneAuditFiles({
-      adminDir: this.adminDir,
-      retentionDays: config.configAuditRetentionDays,
-      nowMs,
-    }));
+    await this.captureRetentionStep(result, 'audit', () => {
+      if (this.configManager?.compactConfigAudit) {
+        return this.configManager.compactConfigAudit({
+          retentionDays: config.configAuditRetentionDays,
+          now: new Date(nowMs),
+        });
+      }
+      return pruneAuditFiles({
+        adminDir: this.adminDir,
+        retentionDays: config.configAuditRetentionDays,
+        nowMs,
+      });
+    });
 
     if (config.adminDataMaxBytes != null) {
       await this.captureRetentionStep(result, 'softCap', () => enforceSoftCap({
@@ -276,7 +286,7 @@ export class AdminRuntime {
     applyQueueCounts(summary, queue);
     const jobsPage = await this.jobs({ limit: 20, pageSize: 20, page: 1, asPage: true });
     const nowMs = Date.now();
-    const stats = enrichDashboardStats(computeJobStats(this.replay.jobs, { now: nowMs }), this.replay.jobs, nowMs);
+    const stats = mergePersistedDailyTrend(enrichDashboardStats(await this.stats({ now: nowMs }), this.replay.jobs, nowMs));
     const diagnostics = [...this.diagnostics(), ...queueDiagnostics(queue)];
     return {
       summary,
@@ -888,6 +898,20 @@ function redactRuntimeSettings(values) {
 }
 
 const DASHBOARD_STATS_WINDOWS = Object.freeze({ '24h': DAY_MS, '7d': 7 * DAY_MS, '30d': 30 * DAY_MS });
+
+function mergePersistedDailyTrend(stats) {
+  const mergedByDay = new Map();
+  for (const record of stats.daily?.records ?? []) {
+    mergedByDay.set(record.day, { ...record });
+  }
+  for (const day of stats.dailyTrend ?? []) {
+    mergedByDay.set(day.day, { ...day });
+  }
+  return {
+    ...stats,
+    dailyTrend: Array.from(mergedByDay.values()).sort((left, right) => left.day.localeCompare(right.day)),
+  };
+}
 
 function enrichDashboardStats(stats, jobs, nowMs) {
   const allJobs = Array.isArray(jobs) ? jobs : [];

@@ -223,6 +223,9 @@ function compactJobsToEvents(jobs, { now, terminalDetailsBefore, terminalJobsBef
     if (job.startedAt || job.status === 'running' || isTerminalStatus(job.status)) {
       events.push(compactedEvent('job.started', job.id, job.startedAt ?? job.queuedAt, { startedAt: job.startedAt ?? job.queuedAt }));
     }
+    for (const progress of compactedProgressEvents(job)) {
+      events.push(compactedEvent('job.progress', job.id, progress.timestamp, { progress: progress.progress }));
+    }
     if (isActiveStatus(job.status)) continue;
     events.push(compactedTerminalEvent(job, { now, compactTerminalDetails }));
   }
@@ -237,6 +240,13 @@ function shouldDropTerminalJob(job, terminalJobsBefore) {
 function shouldCompactTerminalDetails(job, terminalDetailsBefore) {
   if (terminalDetailsBefore == null || !isTerminalStatus(job.status) || !job.finishedAt) return false;
   return timestampMs(job.finishedAt, 'finishedAt') < terminalDetailsBefore;
+}
+
+function compactedProgressEvents(job) {
+  const timeline = Array.isArray(job.phaseTimeline) ? job.phaseTimeline : [];
+  return timeline
+    .filter(item => item && item.type === 'job.progress' && item.timestamp && item.progress)
+    .map(item => ({ timestamp: item.timestamp, progress: item.progress }));
 }
 
 function compactedTerminalEvent(job, { now, compactTerminalDetails }) {
