@@ -14,7 +14,9 @@ export class BoundedJobLogger {
     this.maxEntries = assertPositiveInteger(options.maxEntries ?? DEFAULT_MAX_LOG_ENTRIES, 'maxEntries');
     this.maxMessageLength = assertPositiveInteger(options.maxMessageLength ?? DEFAULT_MAX_MESSAGE_LENGTH, 'maxMessageLength');
     this.maxBytes = assertPositiveInteger(options.maxBytes ?? DEFAULT_MAX_LOG_BYTES, 'maxBytes');
+    this.compactInterval = assertPositiveInteger(options.compactInterval ?? 25, 'compactInterval');
     this.writeChains = new Map();
+    this.appendCounts = new Map();
   }
 
   logPath(jobId) {
@@ -27,6 +29,10 @@ export class BoundedJobLogger {
     return this.#serialize(jobId, async () => {
       const filePath = this.logPath(jobId);
       await appendJsonLines(filePath, [normalized]);
+      const appendCount = (this.appendCounts.get(assertUuid(jobId, 'jobId')) ?? 0) + 1;
+      this.appendCounts.set(assertUuid(jobId, 'jobId'), appendCount);
+      const stat = await fs.stat(filePath);
+      if (stat.size <= this.maxBytes && appendCount < this.maxEntries && appendCount % this.compactInterval !== 0) return normalized;
       const compaction = await this.compact(jobId, { alreadySerialized: true });
       return compaction.truncated ? compaction.truncationEntry : normalized;
     });
@@ -69,6 +75,7 @@ export class BoundedJobLogger {
       const capped = capEntriesByBytes(cappedByCount, this.maxBytes);
       if (entries.length !== capped.entries.length || capped.truncated || parsed.degraded || parsed.truncatedTail) {
         await atomicWriteFile(filePath, jsonlFromRecords(capped.entries));
+        this.appendCounts.set(assertUuid(jobId, 'jobId'), 0);
       }
       return {
         retained: capped.entries.length,

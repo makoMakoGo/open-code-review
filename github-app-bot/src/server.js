@@ -1057,7 +1057,6 @@ async function main() {
     },
   });
   await server.adminRuntime.initialize();
-  await runRetentionFailOpen(server.adminRuntime);
   const retentionTimer = setInterval(() => { void runRetentionFailOpen(server.adminRuntime); }, config.retentionIntervalHours * 60 * 60 * 1000);
   retentionTimer.unref();
   let shuttingDown = false;
@@ -1084,6 +1083,7 @@ async function main() {
     } catch (error) {
       console.error('pending restart clear failed', redactSensitiveString(error.stack || error.message));
     }
+    void runRetentionFailOpen(server.adminRuntime);
     console.log(`open-code-review-github-app-bot listening on ${runningPort}`);
   });
 }

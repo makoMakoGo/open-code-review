@@ -284,8 +284,9 @@ function hasSameOrigin(request, expectedHost) {
   if (!source) return false;
   try {
     const url = new URL(source);
-    if (url.protocol !== expectedOriginProtocol(request)) return false;
-    return normalizeOriginHost(url.host) === expectedHost;
+    const expectedProtocol = expectedOriginProtocol(request);
+    if (url.protocol !== expectedProtocol) return false;
+    return stripDefaultOriginPort(normalizeOriginHost(url.host), expectedProtocol) === stripDefaultOriginPort(expectedHost, expectedProtocol);
   } catch {
     return false;
   }
@@ -301,6 +302,14 @@ function normalizeOriginHost(host) {
   const normalizedHost = hostName.replace(/\.$/, '');
   const normalized = port === '' ? normalizedHost : `${normalizedHost}:${port}`;
   return normalizeHostHeader(normalized) ? normalized : null;
+}
+
+function stripDefaultOriginPort(host, protocol) {
+  if (typeof host !== 'string') return host;
+  const suffix = protocol === 'https:' ? ':443' : protocol === 'http:' ? ':80' : '';
+  if (!suffix || !host.endsWith(suffix)) return host;
+  if (host.startsWith('[') || (host.match(/:/g) ?? []).length === 1) return host.slice(0, -suffix.length);
+  return host;
 }
 
 function requestOriginHost(headers) {
@@ -332,7 +341,7 @@ function getHeader(headers, name) {
 }
 
 function getFormString(form, name) {
-  const value = form instanceof Map ? form.get(name) : form.get(name);
+  const value = form.get(name);
   if (Array.isArray(value)) return value[0] ?? '';
   return typeof value === 'string' ? value : '';
 }

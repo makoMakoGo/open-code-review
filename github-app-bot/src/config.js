@@ -55,6 +55,7 @@ const DEFAULT_ENV = Object.freeze({
   ADMIN_SESSION_TTL_HOURS: String(DEFAULT_ADMIN_SESSION_TTL_HOURS),
   ADMIN_PASSWORD: '',
   ADMIN_STORAGE_DIR: DEFAULT_ADMIN_STORAGE_DIR,
+  ADMIN_DATA_DIR: DEFAULT_ADMIN_DATA_DIR,
   ADMIN_ALLOWED_HOSTS: '',
   ADMIN_COOKIE_SECURE: '',
   ADMIN_TRUST_PROXY: '',
@@ -405,14 +406,13 @@ function loadConfig(env = process.env, rawOverrides) {
   };
 }
 
-function buildOcrEnv(env = process.env, rawOverrides) {
-  const effectiveEnv = rawOverrides == null ? env : mergeConfigLayers(env, rawOverrides).env;
+function buildOcrEnv(env = process.env) {
   return {
-    OCR_LLM_URL: requiredEnv('OCR_LLM_URL', effectiveEnv),
-    OCR_LLM_TOKEN: requiredEnv('OCR_LLM_TOKEN', effectiveEnv),
-    OCR_LLM_MODEL: requiredEnv('OCR_LLM_MODEL', effectiveEnv),
-    OCR_USE_ANTHROPIC: optionalEnv('OCR_USE_ANTHROPIC', 'false', effectiveEnv),
-    OCR_LLM_AUTH_HEADER: optionalEnv('OCR_LLM_AUTH_HEADER', '', effectiveEnv),
+    OCR_LLM_URL: requiredEnv('OCR_LLM_URL', env),
+    OCR_LLM_TOKEN: requiredEnv('OCR_LLM_TOKEN', env),
+    OCR_LLM_MODEL: requiredEnv('OCR_LLM_MODEL', env),
+    OCR_USE_ANTHROPIC: optionalEnv('OCR_USE_ANTHROPIC', 'false', env),
+    OCR_LLM_AUTH_HEADER: optionalEnv('OCR_LLM_AUTH_HEADER', '', env),
   };
 }
 
@@ -950,7 +950,6 @@ async function atomicWriteJson(filePath, data, { mode = 0o600 } = {}) {
     await handle.close();
     handle = null;
     await fs.rename(tempPath, filePath);
-    await fs.chmod(filePath, mode);
   } catch (error) {
     if (handle) await closeHandleAfterFailedWrite(handle, error);
     await removeTempFileAfterFailedWrite(tempPath, error);

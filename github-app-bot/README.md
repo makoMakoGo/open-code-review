@@ -163,7 +163,7 @@ RETENTION_INTERVAL_HOURS=6
 
 The dashboard stores job history, bounded per-job logs, daily stats, config audit records, session state, and retention state under `/data/admin`. Logs keep stage messages, errors, git stderr, and OCR stderr; they do not store OCR stdout, webhook payloads, raw provider output, or secrets. Retention runs at startup and then every `RETENTION_INTERVAL_HOURS` hours. Defaults retain task details for 90 days, logs for 14 days, stats and config audit records for 365 days, cap each job log at 5 MiB, and apply a 512 MiB soft cap to `/data/admin`.
 
-Authenticated admin POSTs require same-origin `Origin` or `Referer` plus CSRF. Admin cookies are `HttpOnly`, `SameSite=Strict`, `Path=/admin`, and use `Secure` when `ADMIN_COOKIE_SECURE=true`. Keep `ADMIN_TRUST_PROXY=false` unless the process is behind a trusted reverse proxy that overwrites `X-Real-IP` and `X-Forwarded-Proto`.
+All admin POSTs require same-origin `Origin` or `Referer` plus CSRF. Admin cookies are `HttpOnly`, `SameSite=Strict`, `Path=/admin/`, and use `Secure` when `ADMIN_COOKIE_SECURE=true`. Keep `ADMIN_TRUST_PROXY=false` unless the process is behind a trusted reverse proxy that overwrites `X-Real-IP` and `X-Forwarded-Proto`.
 
 ## Run
 
@@ -219,6 +219,10 @@ server {
         proxy_connect_timeout 10s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
+    }
+
+    location = /admin {
+        return 308 /admin/;
     }
 
     location /admin/ {

@@ -225,8 +225,10 @@ export function redactSensitiveString(value) {
   if (typeof value !== 'string') throw new TypeError('value must be a string');
   return value
     .replace(/(https?:\/\/[^:\s/@]+:)[^\s/@]+(@)/gi, '$1[REDACTED]$2')
-    .replace(/\b(bearer|token|password|secret|api[-_]?key)\s*[:=]\s*([^\s,;]+)/gi, '$1=[REDACTED]')
-    .replace(/\b(authorization)\s*:\s*([^\n]+)/gi, '$1: [REDACTED]');
+    .replace(/([?&](?:api[-_]?key|apikey|token|secret|password)=)([^&#\s]+)/gi, '$1[REDACTED]')
+    .replace(/\b(bearer|token|password|secret|api[-_]?key|apikey)\s*[:=]\s*([^\s,;]+)/gi, '$1=[REDACTED]')
+    .replace(/\b(authorization)\s*:\s*([^\r\n]+(?:\r?\n[ \t]+[^\r\n]+)*)/gi, '$1: [REDACTED]')
+    .replace(/\b(basic)\s+[A-Za-z0-9+/=]+(?:\r?\n[ \t]*[A-Za-z0-9+/=]+)*/gi, '$1 [REDACTED]');
 }
 
 

@@ -163,7 +163,7 @@ RETENTION_INTERVAL_HOURS=6
 
 面板在 `/data/admin` 下保存任务历史、受限大小的单任务日志、每日统计、配置审计、会话状态和保留策略状态。日志只保存阶段消息、错误、git stderr 和 OCR stderr；不保存 OCR stdout、webhook payload、原始供应商输出或密钥。保留策略在启动时运行一次，之后每 `RETENTION_INTERVAL_HOURS` 小时运行一次。默认保留任务详情 90 天、日志 14 天、统计和配置审计 365 天，单任务日志上限 5 MiB，并对 `/data/admin` 应用 512 MiB 软上限。
 
-已登录的管理 POST 请求必须包含同源 `Origin` 或 `Referer`，并通过 CSRF 校验。管理 cookie 使用 `HttpOnly`、`SameSite=Strict`、`Path=/admin`；`ADMIN_COOKIE_SECURE=true` 时带 `Secure`。除非进程位于可信反向代理后方且代理会覆盖 `X-Real-IP` 和 `X-Forwarded-Proto`，否则保持 `ADMIN_TRUST_PROXY=false`。
+所有管理 POST 请求都必须包含同源 `Origin` 或 `Referer`，并通过 CSRF 校验。管理 cookie 使用 `HttpOnly`、`SameSite=Strict`、`Path=/admin/`；`ADMIN_COOKIE_SECURE=true` 时带 `Secure`。除非进程位于可信反向代理后方且代理会覆盖 `X-Real-IP` 和 `X-Forwarded-Proto`，否则保持 `ADMIN_TRUST_PROXY=false`。
 
 ## 运行
 
@@ -219,6 +219,10 @@ server {
         proxy_connect_timeout 10s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
+    }
+
+    location = /admin {
+        return 308 /admin/;
     }
 
     location /admin/ {

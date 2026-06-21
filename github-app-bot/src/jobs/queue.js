@@ -95,7 +95,10 @@ export class AdminJobQueue {
         try {
           const config = this.configProvider ? await this.configProvider() : undefined;
           const result = await this.handler(job.payload, { job: this.runningJob, config, logger: jobLogger, signal: this.abortController.signal });
-          if (this.stopping || this.abortController.signal.aborted) continue;
+          if (this.stopping || this.abortController.signal.aborted) {
+            await this.#recordInterrupted(this.runningJob, 'server shutting down');
+            continue;
+          }
           const status = result?.outcome ?? 'succeeded';
           const eventType = status === 'failed' ? 'job.failed' : 'job.completed';
           await this.#record(eventType, this.runningJob, {
@@ -108,7 +111,9 @@ export class AdminJobQueue {
           });
         } catch (error) {
           if (this.stopping || this.abortController.signal.aborted) {
-            await jobLogger.warn('Review job interrupted by shutdown', { error: error?.message ?? String(error) });
+            const reason = error?.message ?? String(error);
+            await jobLogger.warn('Review job interrupted by shutdown', { error: reason });
+            await this.#recordInterrupted(this.runningJob, reason);
             continue;
           }
           await this.#record('job.failed', this.runningJob, {
@@ -128,6 +133,14 @@ export class AdminJobQueue {
       this.draining = false;
       this.drainPromise = null;
     }
+  }
+
+  async #recordInterrupted(job, reason) {
+    await this.#record('job.interrupted', job, {
+      ...queueMetadata(job),
+      finishedAt: new Date().toISOString(),
+      reason,
+    });
   }
 
   async #record(type, job, data) {

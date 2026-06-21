@@ -10,7 +10,7 @@ import { once } from 'node:events';
 import { ConfigManager, loadConfig } from '../src/config.js';
 import { createServer } from '../src/server.js';
 import { createAdminRouter, AdminRuntime, formatRepository } from '../src/admin/index.js';
-import { AdminJobQueue, BoundedJobLogger, JobEventStore, computeJobStats, createJobEvent, readDailyStats } from '../src/jobs/index.js';
+import { AdminJobQueue, BoundedJobLogger, JobEventStore, computeJobStats, createJobEvent, readDailyStats, redactSensitiveString } from '../src/jobs/index.js';
 
 const env = {
   PORT: '3007',
@@ -222,6 +222,18 @@ test('admin POST origin must match protocol host and port', async () => {
   });
   const forwardedHttp = await httpTrusted.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:8080', origin: 'http://juya.011070.xyz:8080', 'x-forwarded-proto': 'http' }, body: new URLSearchParams({ password: 'x' }).toString() });
   assert.equal(forwardedHttp.status, 200);
+  const defaultHttpsPort = createAdminRouter({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:443' });
+  const defaultHttpsPortResponse = await defaultHttpsPort.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:443', origin: 'https://juya.011070.xyz' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(defaultHttpsPortResponse.status, 200);
+
+  const defaultHttpPort = createAdminRouter({
+    adminPassword: 'a-secure-admin-password',
+    allowedHosts: 'juya.011070.xyz:80',
+    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:80', trustProxy: true }),
+  });
+  const defaultHttpPortResponse = await defaultHttpPort.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:80', origin: 'http://juya.011070.xyz', 'x-forwarded-proto': 'http' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(defaultHttpPortResponse.status, 200);
+
 });
 
 test('admin queue persists job history and replay marks active jobs interrupted', async () => {
@@ -267,6 +279,30 @@ test('queued jobs use latest start-time config snapshot', async () => {
   await queue.drain();
 
   assert.deepEqual(startedModels, ['initial-model', 'updated-model']);
+});
+
+test('shutdown persists interrupted active job state', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-interrupted-'));
+  const store = new JobEventStore({ adminDir: dir });
+  let started;
+  const startedPromise = new Promise(resolve => { started = resolve; });
+  const queue = new AdminJobQueue({
+    store,
+    configProvider: () => loadConfig(env),
+    handler: async (_payload, { signal }) => {
+      started();
+      await once(signal, 'abort');
+      throw signal.reason;
+    },
+  });
+
+  await queue.enqueue({ key: 'alice/repo#11@12', payload: {}, metadata: { owner: 'alice', repo: 'repo', pullNumber: 11 } });
+  await startedPromise;
+  queue.stop();
+  await queue.shutdown({ timeoutMs: 1000 });
+
+  const replayed = await store.replay({ force: true });
+  assert.equal(replayed.jobs[0].status, 'interrupted');
 });
 
 test('admin runtime interrupts active replayed jobs and refreshes history', async () => {
@@ -404,7 +440,7 @@ test('job event compaction preserves active jobs and structured terminal failure
 test('bounded job logger enforces byte cap with one terminal truncation marker', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-logs-'));
   const jobId = cryptoRandomUuid();
-  const logger = new BoundedJobLogger({ adminDir: dir, maxBytes: 650, maxMessageLength: 200, maxEntries: 100 });
+  const logger = new BoundedJobLogger({ adminDir: dir, maxBytes: 650, maxMessageLength: 200, maxEntries: 100, compactInterval: 1 });
 
   for (let index = 0; index < 12; index += 1) {
     await logger.append(jobId, { level: 'info', message: `line-${index}-${'x'.repeat(90)}` });
@@ -453,6 +489,37 @@ test('admin retention deletes expired and orphan logs, keeps active logs, compac
   assert.equal(replayed.jobs.find(job => job.id === failedId).result.failure.kind, 'ocr_runtime_error');
   assert.equal(stats.records.length, 1);
   assert.equal(stats.records[0].failureKinds.ocr_runtime_error, 1);
+});
+
+test('admin retention keeps fresh orphan logs and aggregate stats under soft cap', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-retention-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const logger = new BoundedJobLogger({ adminDir: dir, maxBytes: 4096 });
+  const orphanId = cryptoRandomUuid();
+  await fs.mkdir(path.join(dir, 'jobs', 'logs'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'jobs', 'logs', `${orphanId}.jsonl`), '{"timestamp":"2026-06-01T00:00:00.000Z","level":"info","message":"fresh orphan","fields":{}}\n');
+  await fs.mkdir(path.join(dir, 'stats'), { recursive: true });
+  const statsFile = path.join(dir, 'stats', 'daily-stats.jsonl');
+  await fs.writeFile(statsFile, `${JSON.stringify({ day: '2026-06-01', jobs: 1 })}\n`);
+  await fs.writeFile(path.join(dir, 'retention-state.json'), `${JSON.stringify({ seed: 'x'.repeat(512) })}\n`);
+
+  const runtime = new AdminRuntime({ eventStore: store, logger, configProvider: () => ({ jobLogRetentionDays: 14, jobHistoryRetentionDays: 90, statsRetentionDays: 365, configAuditRetentionDays: 365, jobLogMaxBytes: 4096, adminDataMaxBytes: 1 }) });
+  const result = await runtime.runRetention({ now: '2026-06-01T00:00:00.000Z' });
+
+  await fs.access(path.join(dir, 'jobs', 'logs', `${orphanId}.jsonl`));
+  await fs.access(statsFile);
+  assert.equal(result.logs.orphanDeleted, 0);
+  assert.equal(result.softCap.earlyDeletion.some(item => item.path === 'stats/daily-stats.jsonl'), false);
+});
+
+test('admin log redaction covers query credentials and folded auth headers', () => {
+  const redacted = redactSensitiveString('https://example.test/?apiKey=abc123&x=1\nAuthorization: Bearer first\n second\nProxy: Basic dXNlcjpwYXNz');
+  assert.doesNotMatch(redacted, /abc123/);
+  assert.doesNotMatch(redacted, /Bearer first/);
+  assert.doesNotMatch(redacted, /dXNlcjpwYXNz/);
+  assert.match(redacted, /apiKey=\[REDACTED\]/);
+  assert.match(redacted, /Authorization: \[REDACTED\]/);
+  assert.match(redacted, /Basic \[REDACTED\]/);
 });
 
 test('job stats compute windowed rates percentiles comments failure kinds repos and daily trend', () => {
@@ -583,8 +650,22 @@ test('core health route survives admin runtime failures', async () => {
     const health = await requestJson(server, 'GET', '/health');
     assert.equal(health.status, 200);
     assert.equal(health.body.ok, true);
-    const admin = await requestText(server, 'GET', '/admin/', { host: 'juya.011070.xyz' });
-    assert.equal(admin.status, 303);
+    const loginBody = new URLSearchParams({ password: 'a-secure-admin-password' }).toString();
+    const login = await requestText(server, 'POST', '/admin/login', { host: 'juya.011070.xyz', origin: 'https://juya.011070.xyz', 'content-type': 'application/x-www-form-urlencoded', 'content-length': String(Buffer.byteLength(loginBody)) }, loginBody);
+    assert.equal(login.status, 303);
+    const cookie = Array.isArray(login.headers['set-cookie']) ? login.headers['set-cookie'].join('; ') : login.headers['set-cookie'];
+    const originalError = console.error;
+    console.error = () => {};
+    let admin;
+    try {
+      admin = await requestText(server, 'GET', '/admin/', { host: 'juya.011070.xyz', cookie });
+    } finally {
+      console.error = originalError;
+    }
+    assert.equal(admin.status, 500);
+    const healthAfterAdminFailure = await requestJson(server, 'GET', '/health');
+    assert.equal(healthAfterAdminFailure.status, 200);
+    assert.equal(healthAfterAdminFailure.body.ok, true);
   } finally {
     await server.shutdown({ timeoutMs: 1000 });
   }
@@ -631,7 +712,7 @@ async function requestJson(server, method, pathName, headers = {}) {
   return { ...response, body: JSON.parse(response.body) };
 }
 
-function requestText(server, method, pathName, headers = {}) {
+function requestText(server, method, pathName, headers = {}, body = null) {
   return new Promise((resolve, reject) => {
     const req = http.request({ hostname: '127.0.0.1', port: serverPort(server), method, path: pathName, headers }, (res) => {
       const chunks = [];
@@ -639,6 +720,7 @@ function requestText(server, method, pathName, headers = {}) {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
     });
     req.on('error', reject);
+    if (body != null) req.write(body);
     req.end();
   });
 }

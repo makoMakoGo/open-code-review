@@ -19,7 +19,7 @@ import {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_STATE_FILE = 'retention-state.json';
 const AUDIT_DIR_NAMES = ['audit', 'config-audit'];
-const EXPENDABLE_ADMIN_FILES = [path.join('stats', 'daily-stats.jsonl'), RETENTION_STATE_FILE];
+const EXPENDABLE_ADMIN_FILES = [RETENTION_STATE_FILE];
 
 export class AdminRuntime {
   constructor({ configManager, eventStore, queue, logger = null, configProvider = null, adminDir = null, startedAt = new Date() } = {}) {
@@ -473,7 +473,7 @@ async function pruneRuntimeLogs({ adminDir, jobs, activeJobIds, retentionDays, n
     const job = jobById.get(jobId);
     const orphan = !job;
     const expired = stat.mtimeMs < cutoffMs;
-    if (!orphan && !expired) continue;
+    if (!expired) continue;
     await fs.rm(filePath, { force: true });
     result.deleted += 1;
     result.bytesReclaimed += stat.size;
@@ -514,7 +514,7 @@ async function enforceSoftCap({ adminDir, maxBytes, activeJobIds, terminalJobIds
   let currentBytes = await directorySize(adminDir);
   if (currentBytes <= maxBytes) return { ...result, applied: false };
 
-  const logs = await logFileInfos(adminDir, activeJobIds);
+  const logs = await logFileInfos(adminDir, activeJobIds, terminalJobIds);
   for (const log of logs.sort((left, right) => left.mtimeMs - right.mtimeMs)) {
     if (currentBytes <= maxBytes) break;
     await fs.rm(log.path, { force: true });
@@ -550,7 +550,7 @@ async function enforceSoftCap({ adminDir, maxBytes, activeJobIds, terminalJobIds
   return result;
 }
 
-async function logFileInfos(adminDir, activeJobIds) {
+async function logFileInfos(adminDir, activeJobIds, terminalJobIds = new Set()) {
   const logsDir = resolveJobLogsDir(adminDir);
   let entries;
   try {
@@ -563,7 +563,7 @@ async function logFileInfos(adminDir, activeJobIds) {
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
     const jobId = entry.name.slice(0, -'.jsonl'.length);
-    if (!isUuid(jobId) || activeJobIds.has(jobId)) continue;
+    if (!isUuid(jobId) || activeJobIds.has(jobId) || !terminalJobIds.has(jobId)) continue;
     const filePath = path.join(logsDir, entry.name);
     const stat = await fs.stat(filePath);
     files.push({ path: filePath, jobId, size: stat.size, mtimeMs: stat.mtimeMs });
