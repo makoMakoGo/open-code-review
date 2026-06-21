@@ -2,7 +2,7 @@ const DEFAULT_SECURITY_HEADERS = Object.freeze({
   'content-security-policy': "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'",
   'cross-origin-opener-policy': 'same-origin',
   'cross-origin-resource-policy': 'same-origin',
-  'referrer-policy': 'no-referrer',
+  'referrer-policy': 'same-origin',
   'permissions-policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()',
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',

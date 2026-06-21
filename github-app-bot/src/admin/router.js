@@ -283,6 +283,7 @@ function positiveInteger(value, name) {
 function hasSameOrigin(request, expectedHost) {
   const source = getHeader(request.headers, 'origin') ?? getHeader(request.headers, 'referer');
   if (!source) return false;
+  if (source === 'null' && request.method === 'POST' && request.pathname === '/admin/login') return true;
   try {
     const url = new URL(source);
     const expectedProtocol = expectedOriginProtocol(request);

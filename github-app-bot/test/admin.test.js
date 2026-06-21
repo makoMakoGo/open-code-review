@@ -311,6 +311,11 @@ test('admin POST requires same-origin metadata and trusts proxy headers only whe
   const router = createAdminRouter({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz' });
   const noOrigin = await router.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz' }, body: new URLSearchParams({ password: 'x' }).toString() });
   assert.equal(noOrigin.status, 403);
+  const nullOriginLogin = await router.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz', origin: 'null' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(nullOriginLogin.status, 200);
+  assert.match(nullOriginLogin.body, /Invalid password/);
+  const nullOriginConfig = await router.route({ method: 'POST', url: '/admin/config', headers: { host: 'juya.011070.xyz', origin: 'null' }, body: new URLSearchParams({ revision: '0' }).toString() });
+  assert.equal(nullOriginConfig.status, 403);
 
   const trusted = createAdminRouter({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz', loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz', trustProxy: true }) });
   for (let attempt = 0; attempt < 5; attempt += 1) {
