@@ -146,7 +146,8 @@ export function applyJobEvent(store, event) {
     return store.jobs.get(event.jobId);
   }
   if (event.type === 'job.completed') {
-    const status = data.status ? normalizeStatus(data.status) : 'succeeded';
+    const status = normalizeStatus(data.status ?? 'succeeded');
+    if (!isTerminalStatus(status)) throw new TypeError(`job.completed requires terminal status: ${status}`);
     const finishedAt = data.finishedAt ?? timestamp;
     store.jobs.set(event.jobId, createJobSnapshot({
       ...current,

@@ -587,7 +587,7 @@ async function enforceSoftCap({ adminDir, maxBytes, activeJobIds, terminalJobIds
   for (const log of logs.sort((left, right) => left.mtimeMs - right.mtimeMs)) {
     if (currentBytes <= maxBytes) break;
     await fs.rm(log.path, { force: true });
-    currentBytes = await directorySize(adminDir);
+    currentBytes = Math.max(0, currentBytes - log.size);
     result.bytesReclaimed = Math.max(0, result.bytesBefore - currentBytes);
     result.earlyDeletion.push({ kind: 'job-log', jobId: log.jobId, bytes: log.size, reason: 'soft_cap' });
   }
@@ -611,11 +611,13 @@ async function enforceSoftCap({ adminDir, maxBytes, activeJobIds, terminalJobIds
       throw error;
     }
     await fs.rm(filePath, { force: true });
-    currentBytes = await directorySize(adminDir);
+    currentBytes = Math.max(0, currentBytes - stat.size);
     result.bytesReclaimed = Math.max(0, result.bytesBefore - currentBytes);
     result.earlyDeletion.push({ kind: 'admin-data', path: relative, bytes: stat.size, reason: 'soft_cap' });
   }
 
+  currentBytes = await directorySize(adminDir);
+  result.bytesReclaimed = Math.max(0, result.bytesBefore - currentBytes);
   result.bytesAfter = currentBytes;
   result.overageBytes = Math.max(0, currentBytes - maxBytes);
   result.targetMet = result.overageBytes === 0;

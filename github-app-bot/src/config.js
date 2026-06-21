@@ -1192,11 +1192,14 @@ class ConfigManager {
   async writePendingRestart(marker) {
     const normalized = normalizePendingRestartMarker(marker, 'pending restart marker');
     if (!normalized) throw new Error('Pending restart marker must include keys');
-    const current = await this.readOverrideState();
-    const next = { ...current, pendingRestart: normalized };
-    await atomicWriteJson(this.overrideFile, next);
-    await fs.rm(this.pendingRestartFile, { force: true });
-    return normalized;
+    return this.withOverrideWriteLock(async () => {
+      await this.#migrateLegacyPendingRestartUnlocked();
+      const current = await this.readOverrideState();
+      const next = { ...current, pendingRestart: normalized };
+      await atomicWriteJson(this.overrideFile, next);
+      await fs.rm(this.pendingRestartFile, { force: true });
+      return normalized;
+    });
   }
 
   async readPendingRestart() {
@@ -1205,29 +1208,37 @@ class ConfigManager {
   }
 
   async clearPendingRestart() {
-    const current = await this.readOverrideState();
-    if (current.pendingRestart) await atomicWriteJson(this.overrideFile, { ...current, pendingRestart: null });
-    await fs.rm(this.pendingRestartFile, { force: true });
+    return this.withOverrideWriteLock(async () => {
+      const current = await this.readOverrideState();
+      if (current.pendingRestart) await atomicWriteJson(this.overrideFile, { ...current, pendingRestart: null });
+      await fs.rm(this.pendingRestartFile, { force: true });
+    });
   }
 
   async clearPendingRestartAfterSuccessfulBind({ desiredPort, runningPort } = {}) {
     const desired = Number(desiredPort);
     const running = Number(runningPort);
     if (!Number.isSafeInteger(desired) || !Number.isSafeInteger(running)) throw new Error('desiredPort and runningPort must be integers');
-    await this.migrateLegacyPendingRestart();
-    const current = await this.readOverrideState();
-    const marker = current.pendingRestart;
-    if (!marker || !marker.keys.includes('PORT')) {
+    return this.withOverrideWriteLock(async () => {
+      await this.#migrateLegacyPendingRestartUnlocked();
+      const current = await this.readOverrideState();
+      const marker = current.pendingRestart;
+      if (!marker || !marker.keys.includes('PORT')) {
+        await fs.rm(this.pendingRestartFile, { force: true });
+        return { cleared: false, reason: 'no-port-restart-pending' };
+      }
+      if (desired !== running) return { cleared: false, reason: 'running-port-differs' };
+      await atomicWriteJson(this.overrideFile, { ...current, pendingRestart: null });
       await fs.rm(this.pendingRestartFile, { force: true });
-      return { cleared: false, reason: 'no-port-restart-pending' };
-    }
-    if (desired !== running) return { cleared: false, reason: 'running-port-differs' };
-    await atomicWriteJson(this.overrideFile, { ...current, pendingRestart: null });
-    await fs.rm(this.pendingRestartFile, { force: true });
-    return { cleared: true, reason: 'bound-desired-port' };
+      return { cleared: true, reason: 'bound-desired-port' };
+    });
   }
 
   async migrateLegacyPendingRestart() {
+    return this.withOverrideWriteLock(() => this.#migrateLegacyPendingRestartUnlocked());
+  }
+
+  async #migrateLegacyPendingRestartUnlocked() {
     const legacy = await readPendingRestartMarker(this.pendingRestartFile);
     if (!legacy) return null;
     const normalized = normalizePendingRestartMarker(legacy, this.pendingRestartFile);

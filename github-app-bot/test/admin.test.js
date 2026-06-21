@@ -145,6 +145,60 @@ test('admin config rejects concurrent stale editor submissions without losing th
   assert.equal(state.overrides.MAX_REVIEW_COMMENTS, fulfilled[0].value.state.overrides.MAX_REVIEW_COMMENTS);
 });
 
+test('admin config pending restart writes share override lock without deadlock', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-lock-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  const initial = await manager.load();
+
+  let releasePersist;
+  const persistStarted = new Promise(resolve => {
+    releasePersist = resolve;
+  });
+  let unblockPersist;
+  const waitBeforePersist = new Promise(resolve => {
+    unblockPersist = resolve;
+  });
+
+  const write = manager.writeOverrides(
+    { MAX_REVIEW_COMMENTS: '31' },
+    {
+      expectedRevision: initial.revision,
+      beforePersist: async () => {
+        releasePersist();
+        await waitBeforePersist;
+      },
+    },
+  );
+  await persistStarted;
+  const pending = manager.writePendingRestart({ keys: ['PORT'], revision: 99, createdAt: '2026-06-01T00:00:00.000Z' });
+  unblockPersist();
+
+  await write;
+  await pending;
+  const state = await manager.load();
+  assert.equal(state.overrides.MAX_REVIEW_COMMENTS, '31');
+  assert.deepEqual(state.pendingRestart.keys, ['PORT']);
+
+  await manager.clearPendingRestartAfterSuccessfulBind({ desiredPort: 3007, runningPort: 3007 });
+  const cleared = await manager.load();
+  assert.equal(cleared.overrides.MAX_REVIEW_COMMENTS, '31');
+  assert.equal(cleared.pendingRestart, null);
+});
+
+test('admin config legacy pending restart migration does not deadlock under locked clear', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-legacy-lock-'));
+  const pendingRestartFile = path.join(dir, 'pending-restart.json');
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir, pendingRestartFile });
+  await manager.ensureStorageDir();
+  await fs.writeFile(pendingRestartFile, JSON.stringify({ keys: ['PORT'], revision: 1, createdAt: '2026-06-01T00:00:00.000Z' }));
+
+  const result = await manager.clearPendingRestartAfterSuccessfulBind({ desiredPort: 3007, runningPort: 3007 });
+  const state = await manager.load();
+  assert.equal(result.cleared, true);
+  assert.equal(state.pendingRestart, null);
+});
+
 test('admin config audit write failure prevents persisting editor overrides', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
   const auditFile = path.join(dir, 'audit', 'config-audit.jsonl');
@@ -404,6 +458,39 @@ test('admin queue persists job history and replay marks active jobs interrupted'
   const replayed = await store.replay();
   assert.equal(replayed.jobs[0].status, 'succeeded_with_warnings');
   assert.equal(replayed.jobs[0].repository.fullName, 'alice/repo');
+});
+
+test('job completed events reject active statuses', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-terminal-status-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const jobId = cryptoRandomUuid();
+  await store.append(createJobEvent({ type: 'job.queued', jobId, data: { repository: 'alice/repo', pullNumber: 1 } }));
+
+  await assert.rejects(
+    () => store.append(createJobEvent({ type: 'job.completed', jobId, data: { status: 'running' } })),
+    /job.completed requires terminal status: running/,
+  );
+  const replayed = await store.replay({ force: true });
+  assert.equal(replayed.jobs[0].status, 'queued');
+});
+
+test('admin queue drain outer failure records diagnostic without rejecting', async () => {
+  const queue = new AdminJobQueue({ handler: async () => ({ outcome: 'succeeded' }) });
+  queue.queuedJobs = {
+    length: 1,
+    shift: () => {
+      throw new Error('queue metadata corrupted');
+    },
+  };
+
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await queue.drain();
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(queue.diagnostics.some(item => item.id === 'queue-drain'), true);
 });
 
 test('queued jobs use latest start-time config snapshot', async () => {

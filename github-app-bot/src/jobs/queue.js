@@ -136,7 +136,22 @@ export class AdminJobQueue {
           this.runningJob = null;
         }
       }
+    } catch (error) {
+      const job = this.runningJob;
+      this.#noteDiagnostic('queue-drain', 'Queue drain cycle failed', error);
+      if (job) {
+        await this.#record('job.failed', job, {
+          ...queueMetadata(job),
+          finishedAt: new Date().toISOString(),
+          errorKind: error?.kind ?? error?.name ?? 'Error',
+          errorMessage: error?.message ?? String(error),
+        });
+        this.known.delete(job.key);
+      }
+      console.error('queue drain failed', safeErrorMessage(error));
     } finally {
+      this.abortController = null;
+      this.runningJob = null;
       this.draining = false;
       this.drainPromise = null;
     }
