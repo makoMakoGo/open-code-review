@@ -973,6 +973,12 @@ function createServer(config, options = {}) {
     queue.stop();
     await closeServer(server);
     await queue.shutdown({ timeoutMs });
+    try {
+      await adminRuntime.refresh?.();
+      await adminRuntime.markInterruptedJobs?.();
+    } catch (error) {
+      console.error('admin interrupted shutdown persistence failed', redactSensitiveString(error.stack || error.message));
+    }
   };
   return server;
 }
