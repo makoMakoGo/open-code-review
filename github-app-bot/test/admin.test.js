@@ -97,6 +97,126 @@ test('admin config editor form validates whole candidate, confirms high-risk cha
   assert.equal(JSON.stringify(audit).includes('replacement-token'), false);
 });
 
+test('admin config rejects concurrent stale editor submissions without losing the first update', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  const initial = await manager.load();
+
+  const originalReadOverrideState = manager.readOverrideState.bind(manager);
+  let initialReads = 0;
+  let releaseInitialReads;
+  const bothInitialReads = new Promise(resolve => { releaseInitialReads = resolve; });
+  manager.readOverrideState = async () => {
+    const state = await originalReadOverrideState();
+    if (initialReads < 2) {
+      initialReads += 1;
+      if (initialReads === 2) releaseInitialReads();
+      await bothInitialReads;
+    }
+    return state;
+  };
+
+  const originalWriteOverrides = manager.writeOverrides.bind(manager);
+  let writeAttempts = 0;
+  let releaseWriteAttempts;
+  const bothWriteAttempts = new Promise(resolve => { releaseWriteAttempts = resolve; });
+  manager.writeOverrides = async (...args) => {
+    writeAttempts += 1;
+    if (writeAttempts === 2) releaseWriteAttempts();
+    await bothWriteAttempts;
+    return originalWriteOverrides(...args);
+  };
+
+  const submit = maxComments => manager.applyEditorForm(new Map([
+    ['revision', String(initial.revision)],
+    ['value_MAX_REVIEW_COMMENTS', String(maxComments)],
+  ]), { expectedRevision: initial.revision, clientAddress: '203.0.113.10' });
+
+  const settled = await Promise.allSettled([submit(31), submit(32)]);
+  const fulfilled = settled.filter(result => result.status === 'fulfilled');
+  const rejected = settled.filter(result => result.status === 'rejected');
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.match(rejected[0].reason.message, /Config override revision 1 does not match expected revision 0/);
+
+  const state = await manager.load();
+  assert.equal(state.revision, 1);
+  assert.equal(state.overrides.MAX_REVIEW_COMMENTS, fulfilled[0].value.state.overrides.MAX_REVIEW_COMMENTS);
+});
+
+test('admin config audit write failure prevents persisting editor overrides', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
+  const auditFile = path.join(dir, 'audit', 'config-audit.jsonl');
+  await fs.mkdir(auditFile, { recursive: true });
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir, auditFile });
+  await manager.ensureStorageDir();
+  const initial = await manager.load();
+
+  await assert.rejects(() => manager.applyEditorForm(new Map([
+    ['revision', String(initial.revision)],
+    ['value_MAX_REVIEW_COMMENTS', '31'],
+  ]), { expectedRevision: initial.revision, clientAddress: '203.0.113.10' }), /EISDIR|illegal operation on a directory/);
+
+  const state = await manager.load();
+  assert.equal(state.revision, 0);
+  assert.equal(state.overrides.MAX_REVIEW_COMMENTS, undefined);
+  assert.equal(state.config.maxComments, 30);
+});
+
+test('admin config audit retention compacts JSONL by event timestamp inside a file', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  const auditFile = path.join(dir, 'audit', 'config-audit.jsonl');
+  await fs.mkdir(path.dirname(auditFile), { recursive: true });
+  const oldRecord = { timestamp: '2026-01-01T00:00:00.000Z', result: 'success', fieldsChanged: ['PORT'] };
+  const freshRecord = { timestamp: '2026-02-01T00:00:00.000Z', result: 'failure', fieldsChanged: ['MAX_REVIEW_COMMENTS'] };
+  await fs.writeFile(auditFile, `${JSON.stringify(oldRecord)}\n${JSON.stringify(freshRecord)}\n`, 'utf8');
+  const oldMtime = new Date('2026-01-01T00:00:00.000Z');
+  await fs.utimes(auditFile, oldMtime, oldMtime);
+
+  const result = await manager.pruneConfigAudit({ retentionDays: 7, now: new Date('2026-02-02T00:00:00.000Z') });
+  assert.deepEqual(result, { retained: 1, removed: 1 });
+  const retained = (await fs.readFile(auditFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(retained, [freshRecord]);
+});
+
+test('admin retention compacts config audit JSONL by event timestamp, not file mtime', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-retention-audit-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const auditFile = path.join(dir, 'audit', 'config-audit.jsonl');
+  await fs.mkdir(path.dirname(auditFile), { recursive: true });
+  const oldRecord = { timestamp: '2026-01-01T00:00:00.000Z', result: 'success', fieldsChanged: ['PORT'] };
+  const freshRecord = { timestamp: '2026-02-01T00:00:00.000Z', result: 'success', fieldsChanged: ['MAX_REVIEW_COMMENTS'] };
+  await fs.writeFile(auditFile, `${JSON.stringify(oldRecord)}\n${JSON.stringify(freshRecord)}\n`, 'utf8');
+  const oldMtime = new Date('2026-01-01T00:00:00.000Z');
+  await fs.utimes(auditFile, oldMtime, oldMtime);
+
+  const runtime = new AdminRuntime({ eventStore: store, configProvider: () => ({ jobLogRetentionDays: 14, jobHistoryRetentionDays: 90, statsRetentionDays: 365, configAuditRetentionDays: 7, jobLogMaxBytes: 4096 }) });
+  const result = await runtime.runRetention({ now: '2026-02-02T00:00:00.000Z' });
+  const retained = (await fs.readFile(auditFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+
+  assert.equal(result.audit.compacted, 1);
+  assert.equal(result.audit.recordsRemoved, 1);
+  assert.deepEqual(retained, [freshRecord]);
+});
+
+test('admin config editor exposes legacy trigger phrase and startup-fixed fields', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  const state = await manager.load();
+  const fields = new Map(state.summary.fields.map(field => [field.envKey, field]));
+
+  assert.equal(fields.get('BOT_TRIGGER_PHRASE').editable, true);
+  assert.equal(fields.get('BOT_TRIGGER_PHRASE').effectiveValue, '/juya review');
+  for (const envKey of ['JOB_LOG_MAX_BYTES', 'RETENTION_INTERVAL_HOURS']) {
+    assert.equal(fields.get(envKey).restartRequired, true);
+    assert.equal(fields.get(envKey).hotReloadable, false);
+  }
+});
+
 test('admin router stays hidden when disabled and serves dashboard after login', async () => {
   const disabled = createAdminRouter({ adminPassword: '', allowedHosts: 'juya.011070.xyz' });
   const disabledResponse = await disabled.route({ method: 'GET', url: '/admin/', headers: { host: 'juya.011070.xyz' } });
@@ -218,10 +338,17 @@ test('admin POST origin must match protocol host and port', async () => {
   const httpTrusted = createAdminRouter({
     adminPassword: 'a-secure-admin-password',
     allowedHosts: 'juya.011070.xyz:8080',
-    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:8080', trustProxy: true }),
+    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:8080', trustProxy: true, cookieSecure: false }),
   });
   const forwardedHttp = await httpTrusted.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:8080', origin: 'http://juya.011070.xyz:8080', 'x-forwarded-proto': 'http' }, body: new URLSearchParams({ password: 'x' }).toString() });
   assert.equal(forwardedHttp.status, 200);
+  const secureProxyHttp = createAdminRouter({
+    adminPassword: 'a-secure-admin-password',
+    allowedHosts: 'juya.011070.xyz:8080',
+    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:8080', trustProxy: true, cookieSecure: true }),
+  });
+  const secureProxyHttpResponse = await secureProxyHttp.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:8080', origin: 'http://juya.011070.xyz:8080', 'x-forwarded-proto': 'http' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(secureProxyHttpResponse.status, 403);
   const defaultHttpsPort = createAdminRouter({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:443' });
   const defaultHttpsPortResponse = await defaultHttpsPort.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:443', origin: 'https://juya.011070.xyz' }, body: new URLSearchParams({ password: 'x' }).toString() });
   assert.equal(defaultHttpsPortResponse.status, 200);
@@ -229,10 +356,26 @@ test('admin POST origin must match protocol host and port', async () => {
   const defaultHttpPort = createAdminRouter({
     adminPassword: 'a-secure-admin-password',
     allowedHosts: 'juya.011070.xyz:80',
-    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:80', trustProxy: true }),
+    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:80', trustProxy: true, cookieSecure: false }),
   });
   const defaultHttpPortResponse = await defaultHttpPort.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:80', origin: 'http://juya.011070.xyz', 'x-forwarded-proto': 'http' }, body: new URLSearchParams({ password: 'x' }).toString() });
   assert.equal(defaultHttpPortResponse.status, 200);
+
+  const localhostHttp = createAdminRouter({
+    adminPassword: 'a-secure-admin-password',
+    allowedHosts: 'localhost',
+    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'localhost', trustProxy: false, cookieSecure: false }),
+  });
+  const localhostHttpResponse = await localhostHttp.route({ method: 'POST', url: '/admin/login', headers: { host: 'localhost:3007', origin: 'http://localhost:3007' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(localhostHttpResponse.status, 200);
+
+  const publicHttpWithoutProxy = createAdminRouter({
+    adminPassword: 'a-secure-admin-password',
+    allowedHosts: 'juya.011070.xyz:8080',
+    loadSecurityConfig: () => ({ adminPassword: 'a-secure-admin-password', allowedHosts: 'juya.011070.xyz:8080', trustProxy: false, cookieSecure: false }),
+  });
+  const publicHttpWithoutProxyResponse = await publicHttpWithoutProxy.route({ method: 'POST', url: '/admin/login', headers: { host: 'juya.011070.xyz:8080', origin: 'http://juya.011070.xyz:8080' }, body: new URLSearchParams({ password: 'x' }).toString() });
+  assert.equal(publicHttpWithoutProxyResponse.status, 403);
 
 });
 
@@ -437,6 +580,52 @@ test('job event compaction preserves active jobs and structured terminal failure
   assert.equal(JSON.stringify(failed).includes('raw provider said'), false);
 });
 
+test('job event compaction drops expired terminal jobs while preserving active and retained terminal jobs', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-compact-retention-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const oldId = cryptoRandomUuid();
+  const retainedId = cryptoRandomUuid();
+  const activeId = cryptoRandomUuid();
+
+  await store.append(createJobEvent({ type: 'job.queued', jobId: oldId, timestamp: '2026-01-01T00:00:00.000Z', data: { repository: 'alice/old', pullNumber: 1 } }));
+  await store.append(createJobEvent({ type: 'job.completed', jobId: oldId, timestamp: '2026-01-01T00:10:00.000Z', data: { status: 'succeeded', finishedAt: '2026-01-01T00:10:00.000Z', result: { outcome: 'succeeded', commentsGenerated: 1 } } }));
+  await store.append(createJobEvent({ type: 'job.queued', jobId: retainedId, timestamp: '2026-05-01T00:00:00.000Z', data: { repository: 'alice/retained', pullNumber: 2 } }));
+  await store.append(createJobEvent({ type: 'job.completed', jobId: retainedId, timestamp: '2026-05-01T00:10:00.000Z', data: { status: 'succeeded', finishedAt: '2026-05-01T00:10:00.000Z', result: { outcome: 'succeeded', commentsGenerated: 2 } } }));
+  await store.append(createJobEvent({ type: 'job.queued', jobId: activeId, timestamp: '2026-01-01T00:00:00.000Z', data: { repository: 'alice/active', pullNumber: 3 } }));
+  await store.append(createJobEvent({ type: 'job.started', jobId: activeId, timestamp: '2026-01-01T00:05:00.000Z', data: { startedAt: '2026-01-01T00:05:00.000Z' } }));
+
+  const result = await store.compact({
+    now: '2026-06-01T00:00:00.000Z',
+    terminalJobsBefore: '2026-03-03T00:00:00.000Z',
+    terminalDetailsBefore: '2026-03-03T00:00:00.000Z',
+  });
+  const replayed = await store.replay({ force: true });
+  const eventsText = await fs.readFile(path.join(dir, 'jobs', 'events.jsonl'), 'utf8');
+
+  assert.equal(result.terminalJobsDropped, 1);
+  assert.equal(replayed.jobs.some(job => job.id === oldId), false);
+  assert.equal(replayed.jobs.find(job => job.id === retainedId).status, 'succeeded');
+  assert.equal(replayed.jobs.find(job => job.id === activeId).status, 'running');
+  assert.equal(eventsText.includes(oldId), false);
+  assert.equal(eventsText.includes(retainedId), true);
+  assert.equal(eventsText.includes(activeId), true);
+});
+
+test('job log events omit log payloads from events file', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-log-events-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const jobId = cryptoRandomUuid();
+  const largeLog = 'x'.repeat(64 * 1024);
+
+  await store.append({ type: 'job.log', jobId, data: { level: 'info', message: largeLog, fields: { stdout: largeLog } } });
+  const eventsText = await fs.readFile(path.join(dir, 'jobs', 'events.jsonl'), 'utf8');
+  const [event] = eventsText.trim().split('\n').map(line => JSON.parse(line));
+
+  assert.equal(Buffer.byteLength(eventsText, 'utf8') < 1024, true);
+  assert.deepEqual(event.data, { level: 'info' });
+  assert.equal(eventsText.includes(largeLog.slice(0, 128)), false);
+});
+
 test('bounded job logger enforces byte cap with one terminal truncation marker', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-logs-'));
   const jobId = cryptoRandomUuid();
@@ -454,7 +643,48 @@ test('bounded job logger enforces byte cap with one terminal truncation marker',
   assert.equal(logs.entries.some(entry => entry.message.includes('after-cap-should-not-appear')), false);
 });
 
-test('admin retention deletes expired and orphan logs, keeps active logs, compacts details, and writes daily stats', async () => {
+test('bounded job logger flushes pending writes and recovers after write failure', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-logger-flush-'));
+  const jobId = cryptoRandomUuid();
+  const logger = new BoundedJobLogger({ adminDir: dir, maxBytes: 4096 });
+
+  const pending = logger.append(jobId, { level: 'info', message: 'first pending write' });
+  await logger.flush();
+  await pending;
+  assert.deepEqual((await logger.read(jobId)).entries.map(entry => entry.message), ['first pending write']);
+
+  const blockedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-logger-fail-'));
+  const logsPath = path.join(blockedDir, 'logs-file');
+  await fs.writeFile(logsPath, 'not a directory', 'utf8');
+  const failingLogger = new BoundedJobLogger({ logsDir: logsPath, maxBytes: 4096 });
+  await assert.rejects(() => failingLogger.append(jobId, { message: 'will fail' }), /ENOTDIR/);
+  await assert.doesNotReject(() => failingLogger.flush());
+  await fs.rm(logsPath, { force: true });
+  await fs.mkdir(logsPath, { recursive: true });
+  await failingLogger.append(jobId, { message: 'recovered write' });
+  assert.deepEqual((await failingLogger.read(jobId)).entries.map(entry => entry.message), ['recovered write']);
+});
+
+test('admin queue shutdown waits for logger flush and records flush timeout diagnostics', async () => {
+  let releaseFlush;
+  let shutdownSettled = false;
+  const blockingLogger = { flush: () => new Promise(resolve => { releaseFlush = resolve; }) };
+  const queue = new AdminJobQueue({ handler: async () => ({ outcome: 'succeeded' }), logger: blockingLogger });
+
+  const shutdown = queue.shutdown({ timeoutMs: 1000 }).then(() => { shutdownSettled = true; });
+  await Promise.resolve();
+  assert.equal(shutdownSettled, false);
+  releaseFlush();
+  await shutdown;
+  assert.equal(shutdownSettled, true);
+
+  const hangingQueue = new AdminJobQueue({ handler: async () => ({ outcome: 'succeeded' }), logger: { flush: () => new Promise(() => {}) } });
+  await hangingQueue.shutdown({ timeoutMs: 1 });
+  const diagnostics = hangingQueue.snapshot().diagnostics;
+  assert.equal(diagnostics.some(item => item.id === 'job-log-flush' && /Timed out/.test(item.message)), true);
+});
+
+test('admin retention deletes expired and orphan logs, keeps active logs, preserves retained jobs, and writes daily stats', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-retention-'));
   const store = new JobEventStore({ adminDir: dir });
   const logger = new BoundedJobLogger({ adminDir: dir, maxBytes: 4096 });
@@ -465,8 +695,8 @@ test('admin retention deletes expired and orphan logs, keeps active logs, compac
   const oldMtime = new Date('2026-05-01T00:00:00.000Z');
 
   await store.append(createJobEvent({ type: 'job.queued', jobId: activeId, timestamp: '2026-05-31T00:00:00.000Z', data: { repository: 'alice/active', pullNumber: 1 } }));
-  await store.append(createJobEvent({ type: 'job.queued', jobId: failedId, timestamp: '2026-02-01T00:00:00.000Z', data: { repository: 'alice/failed', pullNumber: 2 } }));
-  await store.append(createJobEvent({ type: 'job.failed', jobId: failedId, timestamp: '2026-02-01T00:05:00.000Z', data: { errorKind: 'ocr_runtime_error', errorMessage: 'stack with secret=hidden', result: { outcome: 'failed', failure: { kind: 'ocr_runtime_error', reason: 'runtime' }, commentsGenerated: 3, commentsPosted: 1 } } }));
+  await store.append(createJobEvent({ type: 'job.queued', jobId: failedId, timestamp: '2026-05-01T00:00:00.000Z', data: { repository: 'alice/failed', pullNumber: 2 } }));
+  await store.append(createJobEvent({ type: 'job.failed', jobId: failedId, timestamp: '2026-05-01T00:05:00.000Z', data: { errorKind: 'ocr_runtime_error', errorMessage: 'stack with secret=hidden', result: { outcome: 'failed', failure: { kind: 'ocr_runtime_error', reason: 'runtime' }, commentsGenerated: 3, commentsPosted: 1 } } }));
   await logger.append(activeId, { message: 'active log' });
   await logger.append(failedId, { message: 'expired terminal log' });
   await fs.mkdir(path.join(dir, 'jobs', 'logs'), { recursive: true });
@@ -489,6 +719,34 @@ test('admin retention deletes expired and orphan logs, keeps active logs, compac
   assert.equal(replayed.jobs.find(job => job.id === failedId).result.failure.kind, 'ocr_runtime_error');
   assert.equal(stats.records.length, 1);
   assert.equal(stats.records[0].failureKinds.ocr_runtime_error, 1);
+});
+
+test('admin retention removes expired terminal jobs from compacted event history', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-retention-history-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const oldId = cryptoRandomUuid();
+  const retainedId = cryptoRandomUuid();
+  const activeId = cryptoRandomUuid();
+  const now = '2026-06-01T00:00:00.000Z';
+
+  await store.append(createJobEvent({ type: 'job.queued', jobId: oldId, timestamp: '2026-01-01T00:00:00.000Z', data: { repository: 'alice/old-retention', pullNumber: 1 } }));
+  await store.append(createJobEvent({ type: 'job.completed', jobId: oldId, timestamp: '2026-01-01T00:01:00.000Z', data: { status: 'succeeded', finishedAt: '2026-01-01T00:01:00.000Z', result: { outcome: 'succeeded' } } }));
+  await store.append(createJobEvent({ type: 'job.queued', jobId: retainedId, timestamp: '2026-05-15T00:00:00.000Z', data: { repository: 'alice/retained-retention', pullNumber: 2 } }));
+  await store.append(createJobEvent({ type: 'job.completed', jobId: retainedId, timestamp: '2026-05-15T00:01:00.000Z', data: { status: 'succeeded', finishedAt: '2026-05-15T00:01:00.000Z', result: { outcome: 'succeeded' } } }));
+  await store.append(createJobEvent({ type: 'job.queued', jobId: activeId, timestamp: '2026-01-01T00:00:00.000Z', data: { repository: 'alice/active-retention', pullNumber: 3 } }));
+
+  const runtime = new AdminRuntime({ eventStore: store, configProvider: () => ({ jobLogRetentionDays: 14, jobHistoryRetentionDays: 90, statsRetentionDays: 365, configAuditRetentionDays: 365, jobLogMaxBytes: 4096 }) });
+  const result = await runtime.runRetention({ now });
+  const replayed = await store.replay({ force: true });
+  const eventsText = await fs.readFile(path.join(dir, 'jobs', 'events.jsonl'), 'utf8');
+  const stats = await readDailyStats({ adminDir: dir });
+
+  assert.equal(result.events.terminalJobsDropped, 1);
+  assert.equal(replayed.jobs.some(job => job.id === oldId), false);
+  assert.equal(replayed.jobs.some(job => job.id === retainedId), true);
+  assert.equal(replayed.jobs.some(job => job.id === activeId), true);
+  assert.equal(eventsText.includes(oldId), false);
+  assert.deepEqual(stats.records.map(record => record.day).sort(), ['2026-01-01', '2026-05-15']);
 });
 
 test('admin retention keeps fresh orphan logs and aggregate stats under soft cap', async () => {
@@ -562,6 +820,32 @@ test('admin retention soft cap records early deletion and last run state', async
   assert.equal(result.softCap.earlyDeletion.some(item => item.kind === 'job-log' && item.jobId === jobId), true);
   assert.equal(result.softCap.bytesReclaimed >= before.size, true);
   assert.equal(status.lastRun.bytesReclaimed, result.bytesReclaimed);
+});
+
+test('admin retention soft cap deletes every eligible log and reports unmet target', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-soft-cap-unmet-'));
+  const store = new JobEventStore({ adminDir: dir });
+  const logger = new BoundedJobLogger({ adminDir: dir, maxBytes: 20_000 });
+  const jobIds = [cryptoRandomUuid(), cryptoRandomUuid()];
+
+  for (const [index, jobId] of jobIds.entries()) {
+    await store.append(createJobEvent({ type: 'job.queued', jobId, timestamp: `2026-05-${20 + index}T00:00:00.000Z`, data: { repository: `alice/soft-cap-${index}`, pullNumber: index + 1 } }));
+    await store.append(createJobEvent({ type: 'job.completed', jobId, timestamp: `2026-05-${20 + index}T00:01:00.000Z`, data: { status: 'succeeded', result: { outcome: 'succeeded', commentsGenerated: 1, commentsPosted: 1 } } }));
+    await logger.append(jobId, { message: `retained soft cap log ${index} `.repeat(120) });
+    await fs.utimes(logger.logPath(jobId), new Date('2026-05-31T00:00:00.000Z'), new Date('2026-05-31T00:00:00.000Z'));
+  }
+
+  const runtime = new AdminRuntime({ eventStore: store, logger, configProvider: () => ({ jobLogRetentionDays: 14, jobHistoryRetentionDays: 90, statsRetentionDays: 365, configAuditRetentionDays: 365, jobLogMaxBytes: 20_000, adminDataMaxBytes: 1 }) });
+  const result = await runtime.runRetention({ now: '2026-06-01T00:00:00.000Z' });
+
+  for (const jobId of jobIds) await assert.rejects(() => fs.access(logger.logPath(jobId)), /ENOENT/);
+  assert.equal(result.softCap.earlyDeletion.filter(item => item.kind === 'job-log').length, 2);
+  assert.equal(result.softCap.targetBytes, 1);
+  assert.equal(result.softCap.targetMet, false);
+  assert.equal(result.softCap.stillOverCap, true);
+  assert.equal(result.softCap.bytesAfter > result.softCap.targetBytes, true);
+  assert.equal(result.softCap.overageBytes, result.softCap.bytesAfter - result.softCap.targetBytes);
+  assert.equal(result.diagnostics.some(item => item.id === 'retention.softCap.stillOverCap'), true);
 });
 
 test('admin jobs route validates ids and renders escaped redacted detail logs', async () => {

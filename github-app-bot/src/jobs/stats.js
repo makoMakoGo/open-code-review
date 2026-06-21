@@ -9,7 +9,6 @@ const WINDOWS = [
   ['7d', 7 * DAY_MS],
   ['30d', 30 * DAY_MS],
 ];
-const SUCCESS_STATUSES = new Set(['succeeded', 'succeeded_with_warnings', 'skipped', 'stale']);
 const EXPENDABLE_ADMIN_FILES = new Set(['retention-state.json']);
 
 export function computeJobStats(jobs, options = {}) {

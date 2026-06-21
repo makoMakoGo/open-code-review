@@ -1,12 +1,14 @@
-import { createUuid, redactSensitiveString, sanitizeForAdminStorage } from './utils.js';
+import { createUuid, redactSensitiveString, sanitizeForAdminStorage, normalizeIsoTimestamp } from './utils.js';
 
 export class AdminJobQueue {
-  constructor({ handler, store = null, logger = null, configProvider = null } = {}) {
+  constructor({ handler, store = null, logger = null, configProvider = null, startSnapshotProvider = null } = {}) {
     if (typeof handler !== 'function') throw new Error('job handler is required');
+    if (startSnapshotProvider != null && typeof startSnapshotProvider !== 'function') throw new Error('startSnapshotProvider must be a function');
     this.handler = handler;
     this.store = store;
     this.logger = logger;
     this.configProvider = configProvider;
+    this.startSnapshotProvider = startSnapshotProvider;
     this.runningJob = null;
     this.queuedJobs = [];
     this.known = new Set();
@@ -32,12 +34,14 @@ export class AdminJobQueue {
       trigger: metadata.trigger ?? '',
       queuedAt: new Date().toISOString(),
       phase: 'queued',
+      startSnapshot: normalizeStartSnapshot(metadata.startSnapshot),
     };
     this.known.add(key);
     await this.#record('job.queued', job, {
       ...queueMetadata(job),
       queuedAt: job.queuedAt,
       progress: { phase: 'queued', message: 'Review job queued' },
+      startSnapshot: job.startSnapshot,
     });
     this.queuedJobs.push(job);
     this.drainPromise = this.drain();
@@ -71,7 +75,8 @@ export class AdminJobQueue {
     }
     if (typeof this.logger?.flush === 'function') {
       try {
-        await this.logger.flush();
+        const flushed = await withTimeout(this.logger.flush(), timeoutMs);
+        if (!flushed) this.#noteDiagnostic('job-log-flush', 'Timed out waiting for admin job log writes to flush', new Error(`timeout after ${timeoutMs}ms`));
       } catch (error) {
         this.#noteDiagnostic('job-log-flush', 'Admin job log flush failed', error);
       }
@@ -87,14 +92,16 @@ export class AdminJobQueue {
         this.abortController = new AbortController();
         this.runningJob = { ...job, phase: 'github_auth', startedAt: new Date().toISOString() };
         const jobLogger = this.#createJobLogger(this.runningJob);
-        await this.#record('job.started', this.runningJob, {
-          ...queueMetadata(this.runningJob),
-          startedAt: this.runningJob.startedAt,
-          progress: { phase: this.runningJob.phase, message: 'Authenticating GitHub App installation' },
-        });
         try {
-          const config = this.configProvider ? await this.configProvider() : undefined;
-          const result = await this.handler(job.payload, { job: this.runningJob, config, logger: jobLogger, signal: this.abortController.signal });
+          const startContext = await this.#startContext(job);
+          this.runningJob.startSnapshot = startContext.startSnapshot;
+          await this.#record('job.started', this.runningJob, {
+            ...queueMetadata(this.runningJob),
+            startedAt: this.runningJob.startedAt,
+            progress: { phase: this.runningJob.phase, message: 'Authenticating GitHub App installation' },
+            startSnapshot: this.runningJob.startSnapshot,
+          });
+          const result = await this.handler(job.payload, { job: this.runningJob, config: startContext.config, logger: jobLogger, signal: this.abortController.signal });
           if (this.stopping || this.abortController.signal.aborted) {
             await this.#recordInterrupted(this.runningJob, 'server shutting down');
             continue;
@@ -181,6 +188,15 @@ export class AdminJobQueue {
     };
   }
 
+  async #startContext(job) {
+    const config = this.configProvider ? await this.configProvider() : undefined;
+    const provided = this.startSnapshotProvider ? await this.startSnapshotProvider({ job: this.#publicJob(job), config }) : job.startSnapshot;
+    return {
+      config,
+      startSnapshot: normalizeStartSnapshot(provided ?? job.startSnapshot),
+    };
+  }
+
   #noteDiagnostic(id, message, error) {
     const diagnostic = {
       id,
@@ -205,8 +221,17 @@ export class AdminJobQueue {
       queuedAt: job.queuedAt,
       startedAt: job.startedAt ?? null,
       phase: job.phase,
+      startSnapshot: job.startSnapshot ?? null,
     };
   }
+}
+
+function normalizeStartSnapshot(value) {
+  if (value == null) return null;
+  const sanitized = sanitizeForAdminStorage(value);
+  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) return sanitized;
+  if (sanitized.capturedAt == null) return { ...sanitized, capturedAt: new Date().toISOString() };
+  return { ...sanitized, capturedAt: normalizeIsoTimestamp(sanitized.capturedAt, 'startSnapshot.capturedAt') };
 }
 
 function queueMetadata(job) {
@@ -216,16 +241,28 @@ function queueMetadata(job) {
     pullNumber: job.pullNumber,
     actor: job.actor,
     trigger: job.trigger,
+    startSnapshot: job.startSnapshot ?? null,
   };
 }
 
 async function withTimeout(promise, timeoutMs) {
   let timer;
+  let timedOut = false;
   try {
-    return await Promise.race([
-      promise.then(() => true, () => true),
-      new Promise(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+    const result = await Promise.race([
+      promise.then(
+        () => true,
+        error => {
+          if (timedOut) {
+            console.error('async operation failed after timeout', safeErrorMessage(error));
+            return false;
+          }
+          throw error;
+        },
+      ),
+      new Promise(resolve => { timer = setTimeout(() => { timedOut = true; resolve(false); }, timeoutMs); }),
     ]);
+    return result;
   } finally {
     clearTimeout(timer);
   }

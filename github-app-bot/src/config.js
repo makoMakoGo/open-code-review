@@ -123,7 +123,7 @@ const SECRET_ENV_KEYS = Object.freeze([
 ]);
 const SECRET_ENV_KEY_SET = new Set(SECRET_ENV_KEYS);
 
-const RESTART_REQUIRED_ENV_KEYS = Object.freeze(['PORT']);
+const RESTART_REQUIRED_ENV_KEYS = Object.freeze(['PORT', 'JOB_LOG_MAX_BYTES', 'RETENTION_INTERVAL_HOURS']);
 const RESTART_REQUIRED_ENV_KEY_SET = new Set(RESTART_REQUIRED_ENV_KEYS);
 const HIGH_RISK_ENV_KEYS = Object.freeze([
   'PORT',
@@ -140,6 +140,7 @@ const NON_SECRET_SUMMARY_FIELDS = Object.freeze([
   { name: 'port', envKey: 'PORT', read: config => config.port },
   { name: 'appId', envKey: 'GITHUB_APP_ID', read: config => config.appId },
   { name: 'privateKeyPath', envKey: 'GITHUB_APP_PRIVATE_KEY_PATH', read: config => config.privateKeyPath },
+  { name: 'triggerPhrase', envKey: 'BOT_TRIGGER_PHRASE', read: config => config.triggerPhrase },
   { name: 'triggerPhrases', envKey: 'BOT_TRIGGER_PHRASES', fallbackEnvKey: 'BOT_TRIGGER_PHRASE', read: config => config.triggerPhrases },
   { name: 'allowedUsers', envKey: 'ALLOWED_USERS', read: config => config.allowedUsers },
   { name: 'allowedUserIDs', envKey: 'ALLOWED_USER_IDS', read: config => config.allowedUserIDs },
@@ -320,7 +321,8 @@ function mergeConfigLayers(env = process.env, rawOverrides = {}) {
 
 function loadConfig(env = process.env, rawOverrides) {
   const effectiveEnv = rawOverrides == null ? env : mergeConfigLayers(env, rawOverrides).env;
-  const triggerPhrases = csvSet(optionalEnv('BOT_TRIGGER_PHRASES', requiredEnv('BOT_TRIGGER_PHRASE', effectiveEnv), effectiveEnv));
+  const triggerPhrase = requiredEnv('BOT_TRIGGER_PHRASE', effectiveEnv);
+  const triggerPhrases = csvSet(optionalEnv('BOT_TRIGGER_PHRASES', triggerPhrase, effectiveEnv));
   const allowedUsers = csvSet(requiredEnv('ALLOWED_USERS', effectiveEnv));
   const allowedUserIDs = csvSet(optionalEnv('ALLOWED_USER_IDS', '', effectiveEnv));
   const allowedRepoOwners = csvSet(requiredEnv('ALLOWED_REPO_OWNERS', effectiveEnv));
@@ -354,6 +356,7 @@ function loadConfig(env = process.env, rawOverrides) {
     appId: requiredEnv('GITHUB_APP_ID', effectiveEnv),
     privateKeyPath: optionalEnv('GITHUB_APP_PRIVATE_KEY_PATH', '/config/github-app-private-key.pem', effectiveEnv),
     webhookSecret: requiredEnv('GITHUB_WEBHOOK_SECRET', effectiveEnv),
+    triggerPhrase,
     triggerPhrases,
     allowedUsers,
     allowedUserIDs,
@@ -1001,6 +1004,20 @@ class ConfigManager {
     this.overrideFile = overrideFile || path.join(this.dataDir, OVERRIDES_FILE_NAME);
     this.pendingRestartFile = pendingRestartFile || path.join(this.dataDir, PENDING_RESTART_FILE_NAME);
     this.auditFile = auditFile || path.join(this.dataDir, CONFIG_AUDIT_DIR_NAME, CONFIG_AUDIT_FILE_NAME);
+    this.overrideWriteTail = Promise.resolve();
+  }
+
+  async withOverrideWriteLock(operation) {
+    if (typeof operation !== 'function') throw new Error('Config override operation must be a function');
+    const previous = this.overrideWriteTail;
+    let release;
+    this.overrideWriteTail = new Promise(resolve => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   async readOverrideState() {
@@ -1033,28 +1050,36 @@ class ConfigManager {
     };
   }
 
-  async writeOverrides(rawOverrides, { expectedRevision } = {}) {
-    const current = await this.readOverrideState();
-    if (expectedRevision != null && current.revision !== expectedRevision) {
-      throw new Error(`Config override revision ${current.revision} does not match expected revision ${expectedRevision}`);
-    }
+  async writeOverrides(rawOverrides, { expectedRevision, beforePersist } = {}) {
+    return this.withOverrideWriteLock(async () => {
+      const current = await this.readOverrideState();
+      if (expectedRevision != null && current.revision !== expectedRevision) {
+        const error = new Error(`Config override revision ${current.revision} does not match expected revision ${expectedRevision}`);
+        error.currentRevision = current.revision;
+        throw error;
+      }
 
-    const overrides = normalizeRawOverrides(rawOverrides);
-    this.buildConfig(overrides);
-    const changedKeys = diffOverrideKeys(current.overrides, overrides);
-    if (changedKeys.length === 0) return current;
+      const overrides = normalizeRawOverrides(rawOverrides);
+      this.buildConfig(overrides);
+      const changedKeys = diffOverrideKeys(current.overrides, overrides);
+      if (changedKeys.length === 0) {
+        if (beforePersist) await beforePersist({ current, next: current, changedKeys, restartRequired: false });
+        return current;
+      }
 
-    const revision = current.revision + 1;
-    const marker = buildPendingRestartMarker(changedKeys, revision);
-    const next = {
-      revision,
-      updatedAt: new Date().toISOString(),
-      overrides,
-      pendingRestart: marker ?? current.pendingRestart ?? null,
-    };
-    await atomicWriteJson(this.overrideFile, next);
-    await fs.rm(this.pendingRestartFile, { force: true });
-    return next;
+      const revision = current.revision + 1;
+      const marker = buildPendingRestartMarker(changedKeys, revision);
+      const next = {
+        revision,
+        updatedAt: new Date().toISOString(),
+        overrides,
+        pendingRestart: marker ?? current.pendingRestart ?? null,
+      };
+      if (beforePersist) await beforePersist({ current, next, changedKeys, restartRequired: changedKeysRequireRestart(changedKeys) });
+      await atomicWriteJson(this.overrideFile, next);
+      await fs.rm(this.pendingRestartFile, { force: true });
+      return next;
+    });
   }
 
   async applyEditorForm(form, { expectedRevision, clientAddress = '', currentHost = '' } = {}) {
@@ -1071,36 +1096,31 @@ class ConfigManager {
       const nextOverrides = buildOverridesFromEditorForm(form, current, currentConfig);
       changedKeys = diffOverrideKeys(current.overrides, nextOverrides);
       assertHighRiskConfirmations(form, changedKeys);
-      if (changedKeys.length === 0) {
-        await this.appendConfigAudit(auditEvent({
-          result: 'unchanged',
-          changedKeys,
-          beforeRevision: current.revision,
-          afterRevision: current.revision,
-          clientAddress,
-          restartRequired: false,
-        }));
-        return { state: current, changedKeys, restartRequired: false };
-      }
       if (changedKeys.includes('ADMIN_ALLOWED_HOSTS')) assertSubmittedAdminHostStillAllowed(currentHost, nextOverrides.ADMIN_ALLOWED_HOSTS ?? '');
       this.buildConfig(nextOverrides);
-      const next = await this.writeOverrides(nextOverrides, { expectedRevision: current.revision });
-      const restartRequired = changedKeysRequireRestart(changedKeys);
-      await this.appendConfigAudit(auditEvent({
-        result: 'success',
-        changedKeys,
-        beforeRevision: current.revision,
-        afterRevision: next.revision,
-        clientAddress,
-        restartRequired,
-      }));
-      return { state: next, changedKeys, restartRequired };
+      const next = await this.writeOverrides(nextOverrides, {
+        expectedRevision: normalizedExpectedRevision ?? current.revision,
+        beforePersist: async ({ current: latestCurrent, next: pendingNext, changedKeys: latestChangedKeys, restartRequired }) => {
+          current = latestCurrent;
+          changedKeys = latestChangedKeys;
+          await this.appendConfigAudit(auditEvent({
+            result: latestChangedKeys.length === 0 ? 'unchanged' : 'success',
+            changedKeys: latestChangedKeys,
+            beforeRevision: latestCurrent.revision,
+            afterRevision: pendingNext.revision,
+            clientAddress,
+            restartRequired,
+          }));
+        },
+      });
+      return { state: next, changedKeys, restartRequired: changedKeysRequireRestart(changedKeys) };
     } catch (error) {
+      const failureRevision = Number.isSafeInteger(error?.currentRevision) ? error.currentRevision : current?.revision ?? null;
       await this.appendConfigAudit(auditEvent({
         result: 'failure',
         changedKeys,
-        beforeRevision: current?.revision ?? null,
-        afterRevision: current?.revision ?? null,
+        beforeRevision: failureRevision,
+        afterRevision: failureRevision,
         clientAddress,
         restartRequired: changedKeysRequireRestart(changedKeys),
         error,

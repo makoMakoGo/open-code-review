@@ -55,6 +55,7 @@ export class AdminRouter {
     const host = hostGuard(normalized.headers);
     if (!host.allowed) return forbidden('Forbidden host');
     normalized.trustProxy = securityConfig.trustProxy;
+    normalized.cookieSecure = securityConfig.cookieSecure;
 
     if (!securityConfig.enabled) return notFound();
 
@@ -317,11 +318,23 @@ function requestOriginHost(headers) {
 }
 
 function expectedOriginProtocol(request) {
-  if (!request.trustProxy) return 'https:';
-  const forwardedProto = getHeader(request.headers, 'x-forwarded-proto');
-  const proto = typeof forwardedProto === 'string' ? forwardedProto.split(',')[0].trim().toLowerCase() : '';
-  if (proto === 'http' || proto === 'https') return `${proto}:`;
+  if (request.trustProxy) {
+    const forwardedProto = getHeader(request.headers, 'x-forwarded-proto');
+    const proto = typeof forwardedProto === 'string' ? forwardedProto.split(',')[0].trim().toLowerCase() : '';
+    if (proto === 'https') return 'https:';
+    if (proto === 'http' && request.cookieSecure === false) return 'http:';
+    return 'https:';
+  }
+  if (request.cookieSecure === false && isLoopbackOriginHost(requestOriginHost(request.headers))) return 'http:';
   return 'https:';
+}
+
+function isLoopbackOriginHost(host) {
+  const normalized = normalizeHostHeader(host);
+  if (!normalized) return false;
+  if (normalized === 'localhost' || normalized === '::1') return true;
+  const parts = normalized.split('.');
+  return parts.length === 4 && parts[0] === '127' && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
 function normalizeHeaders(headers) {

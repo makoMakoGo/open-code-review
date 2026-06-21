@@ -17,6 +17,7 @@ export class BoundedJobLogger {
     this.compactInterval = assertPositiveInteger(options.compactInterval ?? 25, 'compactInterval');
     this.writeChains = new Map();
     this.appendCounts = new Map();
+    this.sizes = new Map();
   }
 
   logPath(jobId) {
@@ -28,11 +29,14 @@ export class BoundedJobLogger {
     const normalized = normalizeLogEntry(entry, { maxMessageLength: this.maxMessageLength });
     return this.#serialize(jobId, async () => {
       const filePath = this.logPath(jobId);
+      const uuid = assertUuid(jobId, 'jobId');
+      const appendedBytes = Buffer.byteLength(`${JSON.stringify(normalized)}\n`, 'utf8');
+      const previousSize = this.sizes.has(uuid) ? this.sizes.get(uuid) : await fileSize(filePath);
       await appendJsonLines(filePath, [normalized]);
-      const appendCount = (this.appendCounts.get(assertUuid(jobId, 'jobId')) ?? 0) + 1;
-      this.appendCounts.set(assertUuid(jobId, 'jobId'), appendCount);
-      const stat = await fs.stat(filePath);
-      if (stat.size <= this.maxBytes && appendCount < this.maxEntries && appendCount % this.compactInterval !== 0) return normalized;
+      const appendCount = (this.appendCounts.get(uuid) ?? 0) + 1;
+      this.appendCounts.set(uuid, appendCount);
+      this.sizes.set(uuid, previousSize + appendedBytes);
+      if (previousSize + appendedBytes <= this.maxBytes && appendCount < this.maxEntries && appendCount % this.compactInterval !== 0) return normalized;
       const compaction = await this.compact(jobId, { alreadySerialized: true });
       return compaction.truncated ? compaction.truncationEntry : normalized;
     });
@@ -75,7 +79,9 @@ export class BoundedJobLogger {
       const capped = capEntriesByBytes(cappedByCount, this.maxBytes);
       if (entries.length !== capped.entries.length || capped.truncated || parsed.degraded || parsed.truncatedTail) {
         await atomicWriteFile(filePath, jsonlFromRecords(capped.entries));
-        this.appendCounts.set(assertUuid(jobId, 'jobId'), 0);
+        const uuid = assertUuid(jobId, 'jobId');
+        this.appendCounts.set(uuid, 0);
+        this.sizes.set(uuid, byteLengthOfEntries(capped.entries));
       }
       return {
         retained: capped.entries.length,
@@ -91,17 +97,39 @@ export class BoundedJobLogger {
   }
 
   async delete(jobId) {
-    await fs.rm(this.logPath(jobId), { force: true });
+    const uuid = assertUuid(jobId, 'jobId');
+    await fs.rm(this.logPath(uuid), { force: true });
+    this.appendCounts.delete(uuid);
+    this.sizes.delete(uuid);
+    this.writeChains.delete(uuid);
+  }
+
+  async flush() {
+    let firstError = null;
+    while (this.writeChains.size > 0) {
+      const pending = Array.from(this.writeChains.values());
+      const results = await Promise.allSettled(pending);
+      for (const result of results) {
+        if (result.status === 'rejected' && firstError == null) firstError = result.reason;
+      }
+    }
+    if (firstError) throw firstError;
+  }
+
+  async shutdown() {
+    await this.flush();
   }
 
   #serialize(jobId, operation) {
     const uuid = assertUuid(jobId, 'jobId');
     const previous = this.writeChains.get(uuid) ?? Promise.resolve();
     const run = previous.then(operation, operation);
-    this.writeChains.set(uuid, run.catch(() => {}));
-    return run.finally(() => {
-      if (this.writeChains.get(uuid) === run) this.writeChains.delete(uuid);
+    let tracked;
+    tracked = run.finally(() => {
+      if (this.writeChains.get(uuid) === tracked) this.writeChains.delete(uuid);
     });
+    this.writeChains.set(uuid, tracked);
+    return tracked;
   }
 }
 
@@ -173,47 +201,50 @@ function truncateMessage(message, maxLength) {
 }
 
 function capEntriesByBytes(entries, maxBytes) {
-  const existingTruncationIndex = entries.findIndex(isLogTruncatedEntry);
-  if (existingTruncationIndex !== -1) {
-    return capAlreadyTruncatedEntries(entries.slice(0, existingTruncationIndex + 1), maxBytes);
+  const previousDropped = countPreviouslyDropped(entries);
+  const visibleEntries = entries.filter(entry => !isLogTruncatedEntry(entry));
+  let kept = [];
+  for (let index = visibleEntries.length - 1; index >= 0; index -= 1) {
+    const candidate = [visibleEntries[index], ...kept];
+    const dropped = previousDropped + visibleEntries.length - candidate.length;
+    const marker = dropped > 0 ? createTruncationEntry(dropped, maxBytes) : null;
+    const candidateBytes = byteLengthOfEntries(marker ? [...candidate, marker] : candidate);
+    if (candidateBytes > maxBytes) break;
+    kept = candidate;
   }
 
-  const output = [];
-  let bytes = 0;
-  let droppedForBytes = 0;
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    const remainingAfterThis = entries.length - index - 1;
-    const lineBytes = jsonLineBytes(entry);
-    const marker = remainingAfterThis > 0 ? createTruncationEntry(remainingAfterThis, maxBytes) : null;
-    const markerBytes = marker ? jsonLineBytes(marker) : 0;
-    if (bytes + lineBytes + markerBytes > maxBytes) {
-      droppedForBytes = entries.length - index;
-      const truncationEntry = createTruncationEntry(droppedForBytes, maxBytes);
-      while (output.length > 0 && bytes + jsonLineBytes(truncationEntry) > maxBytes) {
-        bytes -= jsonLineBytes(output.pop());
-        droppedForBytes += 1;
-      }
-      if (jsonLineBytes(truncationEntry) <= maxBytes) output.push(truncationEntry);
-      return { entries: output, droppedForBytes, truncated: true, truncationEntry };
-    }
-    output.push(entry);
-    bytes += lineBytes;
+  let droppedForBytes = previousDropped + visibleEntries.length - kept.length;
+  if (droppedForBytes === 0) return { entries: kept, droppedForBytes: 0, truncated: false, truncationEntry: null };
+
+  let truncationEntry = createTruncationEntry(droppedForBytes, maxBytes);
+  while (kept.length > 0 && byteLengthOfEntries([...kept, truncationEntry]) > maxBytes) {
+    kept = kept.slice(1);
+    droppedForBytes += 1;
+    truncationEntry = createTruncationEntry(droppedForBytes, maxBytes);
   }
-  return { entries: output, droppedForBytes: 0, truncated: false, truncationEntry: null };
+  if (kept.length > 0) {
+    const last = kept[kept.length - 1];
+    if (last.level === 'error') {
+      kept = kept.slice(0, -1);
+      droppedForBytes += 1;
+      truncationEntry = createTruncationEntry(droppedForBytes, maxBytes);
+      while (kept.length > 0 && byteLengthOfEntries([...kept, truncationEntry]) > maxBytes) {
+        kept = kept.slice(1);
+        droppedForBytes += 1;
+        truncationEntry = createTruncationEntry(droppedForBytes, maxBytes);
+      }
+    }
+  }
+  if (jsonLineBytes(truncationEntry) > maxBytes) return { entries: [], droppedForBytes, truncated: true, truncationEntry };
+  return { entries: [...kept, truncationEntry], droppedForBytes, truncated: true, truncationEntry };
 }
 
-function capAlreadyTruncatedEntries(entries, maxBytes) {
-  const truncationEntry = entries[entries.length - 1];
-  let output = [...entries];
-  let bytes = byteLengthOfEntries(output);
-  let droppedForBytes = 0;
-  while (output.length > 1 && bytes > maxBytes) {
-    bytes -= jsonLineBytes(output.shift());
-    droppedForBytes += 1;
+function countPreviouslyDropped(entries) {
+  let dropped = 0;
+  for (const entry of entries) {
+    if (isLogTruncatedEntry(entry) && Number.isSafeInteger(entry.fields.droppedEntries)) dropped += entry.fields.droppedEntries;
   }
-  if (bytes > maxBytes) output = [];
-  return { entries: output, droppedForBytes, truncated: true, truncationEntry };
+  return dropped;
 }
 
 function createTruncationEntry(droppedEntries, maxBytes) {
@@ -232,6 +263,15 @@ function byteLengthOfEntries(entries) {
 
 function jsonLineBytes(entry) {
   return Buffer.byteLength(`${JSON.stringify(entry)}\n`, 'utf8');
+}
+
+async function fileSize(filePath) {
+  try {
+    return (await fs.stat(filePath)).size;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return 0;
+    throw error;
+  }
 }
 
 function assertOffset(value) {

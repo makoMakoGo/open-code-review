@@ -101,7 +101,7 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
   ].map(([label, value]) => `<section class="metric"><strong>${escapeHtml(numberOrDash(value))}</strong><span>${escapeHtml(label)}</span></section>`).join('');
   const body = `<section class="grid">${cards}</section>
 ${renderServiceStatus(serviceStatus, retention)}
-${renderMetricsTrends(metrics ?? stats)}
+${renderMetricsTrends(stats ?? metrics)}
 <section class="card"><h2>Recent jobs</h2>${renderJobsTable(recentJobs)}</section>
 <section class="card"><h2>Diagnostics</h2>${renderDiagnosticsList(diagnostics)}</section>`;
   return renderLayout({ title: 'Dashboard', active: 'dashboard', csrfToken, body });
@@ -131,6 +131,7 @@ export function renderJobDetailPage({ csrfToken, job }) {
   const reportingError = job?.reportingError ?? result.reportingError ?? null;
   const cleanupWarning = job?.cleanupWarning ?? result.cleanupWarning ?? '';
   const logs = job?.retainedLogs ?? job?.logs ?? null;
+  const configRevision = job?.configRevision ?? result.configRevision ?? result.config?.revision;
   const body = `<p><a href="/admin/jobs">← Jobs</a></p>
 <section class="card"><h2>Job detail</h2>
 ${renderDefinitionList([
@@ -146,10 +147,11 @@ ${renderDefinitionList([
     ['Phase / status', safeDisplay(`${job?.phase ?? progress.phase ?? job?.status ?? ''}${job?.status ? ` / ${job.status}` : ''}`)],
     ['Head SHA', `<code>${safeDisplay(job?.headSha ?? result.headSha)}</code>`],
     ['Base SHA', `<code>${safeDisplay(job?.baseSha ?? result.baseSha)}</code>`],
-    ['Config revision', safeDisplay(job?.configRevision ?? result.configRevision ?? result.config?.revision)],
+    ['Config revision', safeDisplay(configRevision)],
     ['OCR status', safeDisplay(job?.ocrStatus ?? result.ocrStatus)],
   ])}</section>
 <section class="card"><h2>Runtime settings</h2>${renderKeyValueTable(job?.runtimeSettings ?? result.runtimeSettings ?? {})}</section>
+<section class="card"><h2>Phase timeline</h2>${renderPhaseTimeline(job?.phaseTimeline ?? [])}</section>
 <section class="card"><h2>Review counts</h2>${renderDefinitionList([
     ['Generated', safeDisplay(numberOrDash(counts.generated))],
     ['Selected', safeDisplay(numberOrDash(counts.selected))],
@@ -364,7 +366,8 @@ ${renderDefinitionList([
     ['Started', safeDisplay(formatDate(status.startedAt))],
     ['Version', safeDisplay(status.version)],
     ['Config revision', safeDisplay(status.configRevision)],
-    ['Listening port', safeDisplay(status.listeningPort ?? status.port)],
+    ['Actual listening port', safeDisplay(status.actualListeningPort ?? status.listeningPort)],
+    ['Configured port', safeDisplay(status.configuredPort ?? status.port)],
     ['Desired pending port', safeDisplay(status.desiredPendingPort ?? status.pendingPort)],
     ['Storage writable/degraded', safeDisplay(`${storage.writable ? 'writable' : 'not writable'} / ${storage.degraded ? 'degraded' : 'healthy'}`)],
     ['Storage size / budget', safeDisplay(`${formatBytes(storage.sizeBytes ?? storage.dirSizeBytes)} / ${formatBytes(storage.budgetBytes)}`)],
@@ -387,13 +390,75 @@ function runningJobAsListItem(job) {
 }
 
 function renderMetricsTrends(metrics) {
-  const windows = metrics?.windows ?? metrics;
-  if (!windows || typeof windows !== 'object') return '';
-  const rows = ['24h', '7d', '30d'].map((name) => {
-    const bucket = windows[name] ?? {};
-    return `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(numberOrDash(bucket.jobs))}</td><td>${safeDisplay(numberOrDash(bucket.succeeded))}</td><td>${safeDisplay(numberOrDash(bucket.failed))}</td><td>${safeDisplay(formatPercent(bucket.successRate))}</td><td>${safeDisplay(formatDuration(bucket.averageDurationMs))}</td><td>${renderTrendBar(bucket)}</td></tr>`;
-  }).join('');
-  return `<section class="card"><h2>Metrics and trends</h2><table><thead><tr><th>Window</th><th>Jobs</th><th>Success</th><th>Failure</th><th>Success rate</th><th>Avg duration</th><th>Trend</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+  const stats = metrics?.total || metrics?.windows ? metrics : { windows: metrics };
+  const windows = stats.windows ?? {};
+  if (!stats.total && Object.keys(windows).length === 0) return '';
+  const rows = ['24h', '7d', '30d'].map((name) => renderMetricsWindowRow(name, windows[name] ?? {})).join('');
+  return `<section class="card"><h2>Metrics and trends</h2>${renderMetricsSummary(stats.total)}<table><thead><tr><th>Window</th><th>Jobs</th><th>Success rate</th><th>Duration p50</th><th>Duration p95</th><th>Queue wait p50</th><th>Queue wait p95</th><th>Comments generated</th><th>Comments posted</th><th>Failure classification</th><th>Repository success rate</th><th>Trend</th></tr></thead><tbody>${rows}</tbody></table>${renderDailyTrend(stats.dailyTrend ?? [])}</section>`;
+}
+
+function renderMetricsWindowRow(name, bucket) {
+  return `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(numberOrDash(bucket.jobs))}</td><td>${safeDisplay(formatPercent(bucket.successRate))}</td><td>${safeDisplay(formatDuration(bucket.durationP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.durationP95Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP95Ms))}</td><td>${safeDisplay(numberOrDash(commentTotal(bucket, 'generated')))}</td><td>${safeDisplay(numberOrDash(commentTotal(bucket, 'posted')))}</td><td>${renderFailureKinds(bucket.failureKinds)}</td><td>${renderRepositoryRates(bucket.repositories ?? bucket.repoSuccessRates ?? bucket.repos)}</td><td>${renderTrendBar(bucket)}</td></tr>`;
+}
+
+function renderMetricsSummary(bucket) {
+  if (!bucket) return '';
+  return renderDefinitionList([
+    ['Duration p50', safeDisplay(formatDuration(bucket.durationP50Ms))],
+    ['Duration p95', safeDisplay(formatDuration(bucket.durationP95Ms))],
+    ['Queue wait p50', safeDisplay(formatDuration(bucket.queueWaitP50Ms))],
+    ['Queue wait p95', safeDisplay(formatDuration(bucket.queueWaitP95Ms))],
+    ['Comments generated', safeDisplay(numberOrDash(commentTotal(bucket, 'generated')))],
+    ['Comments posted', safeDisplay(numberOrDash(commentTotal(bucket, 'posted')))],
+    ['Failure classification', renderFailureKinds(bucket.failureKinds)],
+    ['Repository success rate', renderRepositoryRates(bucket.repositories ?? bucket.repoSuccessRates ?? bucket.repos)],
+  ]);
+}
+
+function renderDailyTrend(dailyTrend) {
+  if (!Array.isArray(dailyTrend) || dailyTrend.length === 0) return '<h3>Daily trend</h3><p class="empty">No daily trend data.</p>';
+  const rows = dailyTrend.map(day => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(commentTotal(day, 'generated')))}</td><td>${safeDisplay(numberOrDash(commentTotal(day, 'posted')))}</td></tr>`).join('');
+  return `<h3>Daily trend</h3><table><thead><tr><th>Day</th><th>Jobs</th><th>Success rate</th><th>Comments generated</th><th>Comments posted</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function commentTotal(bucket, kind) {
+  const direct = kind === 'generated' ? bucket.commentsGeneratedTotal : bucket.commentsPostedTotal;
+  if (Number.isFinite(direct)) return direct;
+  const average = kind === 'generated' ? bucket.averageCommentsGenerated : bucket.averageCommentsPosted;
+  if (Number.isFinite(average) && Number.isFinite(bucket.commentSamples)) return Math.round(average * bucket.commentSamples);
+  return null;
+}
+
+function renderFailureKinds(failureKinds) {
+  const entries = Object.entries(objectValue(failureKinds));
+  if (entries.length === 0) return '<span class="empty">—</span>';
+  return entries.sort(([a], [b]) => a.localeCompare(b)).map(([kind, count]) => `${safeDisplay(kind)} (${safeDisplay(numberOrDash(count))})`).join(', ');
+}
+
+function renderRepositoryRates(repositories) {
+  const entries = Object.entries(objectValue(repositories));
+  if (entries.length === 0) return '<span class="empty">—</span>';
+  return entries.sort(([a], [b]) => a.localeCompare(b)).map(([name, value]) => {
+    const details = objectValue(value);
+    const successRate = details.successRate ?? repositorySuccessRateFromCount(details, value);
+    const count = Number.isFinite(details.jobs) ? ` (${details.jobs})` : Number.isFinite(value) ? ` (${value})` : '';
+    const rate = Number.isFinite(successRate) ? ` ${formatPercent(successRate)}` : '';
+    return `${safeDisplay(name)}${safeDisplay(count)}${safeDisplay(rate)}`;
+  }).join(', ');
+}
+
+function repositorySuccessRateFromCount(details, value) {
+  if (!details && !Number.isFinite(value)) return null;
+  const succeeded = Number(details?.succeeded ?? 0) + Number(details?.succeeded_with_warnings ?? 0);
+  const failed = Number(details?.failed ?? 0);
+  const denominator = succeeded + failed;
+  return denominator > 0 ? succeeded / denominator : null;
+}
+
+function renderPhaseTimeline(timeline) {
+  if (!Array.isArray(timeline) || timeline.length === 0) return '<p class="empty">No phase timeline.</p>';
+  const rows = timeline.map(item => `<tr><td>${safeDisplay(formatDate(item.timestamp))}</td><td>${safeDisplay(item.label ?? item.phase ?? '')}</td><td>${safeDisplay(item.phase ?? '')}</td><td>${safeDisplay(item.message ?? '')}</td><td>${safeDisplay(item.source ?? '')}</td></tr>`).join('');
+  return `<table><thead><tr><th>Time</th><th>Event</th><th>Phase</th><th>Message</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderTrendBar(bucket) {

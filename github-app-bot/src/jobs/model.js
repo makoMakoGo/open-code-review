@@ -10,7 +10,7 @@ export function createJobSnapshot(input = {}) {
   const status = normalizeStatus(input.status ?? 'queued');
   return {
     id,
-    diagnosticId: input.diagnosticId ? String(input.diagnosticId) : '',
+    diagnosticId: sanitizeTextField(input.diagnosticId, 'diagnosticId'),
     status,
     queuedAt: normalizeIsoTimestamp(input.queuedAt ?? now, 'queuedAt'),
     startedAt: input.startedAt ? normalizeIsoTimestamp(input.startedAt, 'startedAt') : null,
@@ -27,6 +27,7 @@ export function createJobSnapshot(input = {}) {
     conclusion: sanitizeTextField(input.conclusion, 'conclusion') || statusToConclusion(status),
     errorKind: sanitizeTextField(input.errorKind, 'errorKind'),
     errorMessage: sanitizeTextField(input.errorMessage, 'errorMessage'),
+    startSnapshot: sanitizeForAdminStorage(input.startSnapshot ?? null),
     result: sanitizeForAdminStorage(input.result ?? null),
     logCount: normalizeCount(input.logCount ?? 0, 'logCount'),
   };
@@ -207,6 +208,7 @@ export function normalizeJobForQueue(input) {
     title: job.title,
     actor: job.actor,
     progress: job.progress,
+    startSnapshot: job.startSnapshot,
   };
 }
 
@@ -233,6 +235,7 @@ export function toPublicJobSnapshot(input) {
     errorMessage: job.errorMessage,
     result: job.result,
     logCount: job.logCount,
+    startSnapshot: job.startSnapshot,
     durationMs: computeDurationMs(job),
   };
 }

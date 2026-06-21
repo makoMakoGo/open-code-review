@@ -34,8 +34,10 @@ export class JobEventStore {
     return this.#serializeWrite(async () => {
       if (!this.loaded || !(await signaturesMatch(this.filePath, this.fileSignature))) await this.#loadFromDisk();
       if (this.replayDiagnostics.truncatedTail) await this.#rewriteIndex();
+      const preview = createJobSnapshotStore(this.index.snapshot());
+      for (const event of normalized) applyJobEvent(preview, event);
       await appendJsonLines(this.filePath, normalized);
-      for (const event of normalized) applyJobEvent(this.index, event);
+      this.index = preview;
       this.replayDiagnostics = { ...this.replayDiagnostics, degraded: this.replayDiagnostics.corruptions.length > 0 || this.replayDiagnostics.invalidEvents.length > 0 };
       this.fileSignature = await statSignature(this.filePath);
       return normalized;
@@ -67,11 +69,12 @@ export class JobEventStore {
   async compact(options = {}) {
     const now = normalizeIsoTimestamp(options.now ?? new Date(), 'now');
     const terminalDetailsBefore = options.terminalDetailsBefore == null ? null : timestampMs(options.terminalDetailsBefore, 'terminalDetailsBefore');
+    const terminalJobsBefore = options.terminalJobsBefore == null ? null : timestampMs(options.terminalJobsBefore, 'terminalJobsBefore');
     return this.#serializeWrite(async () => {
       await this.#loadFromDisk();
       const before = await statSignature(this.filePath);
       const jobs = this.index.snapshot();
-      const { events, terminalDetailsCompacted } = compactJobsToEvents(jobs, { now, terminalDetailsBefore });
+      const { events, terminalDetailsCompacted, terminalJobsDropped } = compactJobsToEvents(jobs, { now, terminalDetailsBefore, terminalJobsBefore });
       await atomicWriteFile(this.filePath, jsonlFromRecords(events));
       await this.#loadFromDisk();
       const after = await statSignature(this.filePath);
@@ -79,6 +82,7 @@ export class JobEventStore {
         jobs: jobs.length,
         events: events.length,
         terminalDetailsCompacted,
+        terminalJobsDropped,
         beforeBytes: before.size,
         afterBytes: after.size,
         bytesReclaimed: Math.max(0, before.size - after.size),
@@ -136,7 +140,7 @@ export class JobEventStore {
 
   async #rewriteIndex() {
     const jobs = this.index.snapshot();
-    const { events } = compactJobsToEvents(jobs, { now: new Date().toISOString(), terminalDetailsBefore: null });
+    const { events } = compactJobsToEvents(jobs, { now: new Date().toISOString(), terminalDetailsBefore: null, terminalJobsBefore: null });
     await atomicWriteFile(this.filePath, jsonlFromRecords(events));
     await this.#loadFromDisk();
   }
@@ -146,18 +150,23 @@ export function createJobEvent(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('event must be an object');
   const type = assertKnownEventType(input.type);
   const jobId = assertUuid(input.jobId, 'event.jobId');
+  const id = input.id == null ? createUuid() : assertUuid(input.id, 'event.id');
   return {
-    id: input.id ?? createUuid(),
+    id,
     type,
     jobId,
     timestamp: normalizeIsoTimestamp(input.timestamp ?? new Date(), 'event.timestamp'),
-    data: sanitizeForAdminStorage(input.data ?? {}),
+    data: sanitizeJobEventData(type, input.data ?? {}),
   };
 }
 
 export function validateJobEvent(event) {
   if (!event || typeof event !== 'object' || Array.isArray(event)) return { ok: false, reason: 'event must be an object' };
-  if (typeof event.id !== 'string' || event.id.length === 0) return { ok: false, reason: 'event.id must be a non-empty string' };
+  try {
+    assertUuid(event.id, 'event.id');
+  } catch {
+    return { ok: false, reason: 'event.id must be a UUID' };
+  }
   if (!EVENT_TYPES.has(event.type)) return { ok: false, reason: 'event.type is not supported' };
   try {
     assertUuid(event.jobId, 'event.jobId');
@@ -198,11 +207,16 @@ function emptyReplayDiagnostics() {
   return { degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
 }
 
-function compactJobsToEvents(jobs, { now, terminalDetailsBefore }) {
+function compactJobsToEvents(jobs, { now, terminalDetailsBefore, terminalJobsBefore = null }) {
   const events = [];
   let terminalDetailsCompacted = 0;
+  let terminalJobsDropped = 0;
   const ordered = [...jobs].sort((left, right) => timestampMs(left.queuedAt, 'queuedAt') - timestampMs(right.queuedAt, 'queuedAt'));
   for (const job of ordered) {
+    if (shouldDropTerminalJob(job, terminalJobsBefore)) {
+      terminalJobsDropped += 1;
+      continue;
+    }
     const compactTerminalDetails = shouldCompactTerminalDetails(job, terminalDetailsBefore);
     if (compactTerminalDetails) terminalDetailsCompacted += 1;
     events.push(compactedEvent('job.queued', job.id, job.queuedAt, baseJobData(job)));
@@ -212,7 +226,12 @@ function compactJobsToEvents(jobs, { now, terminalDetailsBefore }) {
     if (isActiveStatus(job.status)) continue;
     events.push(compactedTerminalEvent(job, { now, compactTerminalDetails }));
   }
-  return { events, terminalDetailsCompacted };
+  return { events, terminalDetailsCompacted, terminalJobsDropped };
+}
+
+function shouldDropTerminalJob(job, terminalJobsBefore) {
+  if (terminalJobsBefore == null || !isTerminalStatus(job.status) || !job.finishedAt) return false;
+  return timestampMs(job.finishedAt, 'finishedAt') < terminalJobsBefore;
 }
 
 function shouldCompactTerminalDetails(job, terminalDetailsBefore) {
@@ -248,6 +267,7 @@ function baseJobData(job) {
     queuedAt: job.queuedAt,
     progress: job.progress,
     logCount: job.logCount,
+    startSnapshot: job.startSnapshot,
   };
 }
 
@@ -260,6 +280,7 @@ function terminalJobData(job, { compactTerminalDetails, status = job.status, rea
     errorKind: job.errorKind,
     errorMessage: compactTerminalDetails ? '' : job.errorMessage,
     result: compactTerminalDetails ? compactStructuredResult(job) : job.result,
+    startSnapshot: job.startSnapshot,
   };
   if (reason && !compactTerminalDetails) data.reason = reason;
   return data;
@@ -273,4 +294,10 @@ function compactStructuredResult(job) {
   if (Number.isFinite(result?.commentsGenerated)) compacted.commentsGenerated = result.commentsGenerated;
   if (Number.isFinite(result?.commentsPosted)) compacted.commentsPosted = result.commentsPosted;
   return compacted;
+}
+
+function sanitizeJobEventData(type, data) {
+  if (type !== 'job.log') return sanitizeForAdminStorage(data);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  return typeof data.level === 'string' ? { level: sanitizeForAdminStorage(data.level, { maxStringLength: 32 }) } : {};
 }

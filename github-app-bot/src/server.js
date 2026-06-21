@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { App } from 'octokit';
 import { createAdminRouter, AdminRuntime } from './admin/index.js';
-import { ConfigManager, loadConfig as loadManagedConfig, csvSet as managedCsvSet } from './config.js';
+import { ConfigManager, loadConfig as loadManagedConfig, csvSet as managedCsvSet, summarizeConfig } from './config.js';
 import { AdminJobQueue, BoundedJobLogger, JobEventStore, redactSensitiveString, sanitizeForAdminStorage } from './jobs/index.js';
 
 
@@ -865,6 +865,7 @@ function createServer(config, options = {}) {
     store: eventStore,
     logger: jobLogger,
     configProvider,
+    startSnapshotProvider: ({ config }) => options.startSnapshotProvider ? options.startSnapshotProvider({ config }) : captureRuntimeStartSnapshot(config),
   });
   const adminRuntime = options.adminRuntime || new AdminRuntime({ configManager: options.configManager, eventStore, queue, logger: jobLogger, configProvider, adminDir: currentConfig.adminDataDir });
   const adminRouter = options.adminRouter || createAdminRouter({
@@ -966,6 +967,7 @@ function createServer(config, options = {}) {
       json(res, 500, { error: 'internal error' });
     }
   });
+  if (typeof adminRuntime.setListener === 'function') adminRuntime.setListener(server);
   server.adminRuntime = adminRuntime;
   server.reviewQueue = queue;
   server.shutdown = async ({ timeoutMs = 30_000 } = {}) => {
@@ -993,6 +995,25 @@ function writeAdminResponse(res, response) {
 
 async function saveAdminConfigOverride({ configManager, form, expectedRevision, clientAddress, currentHost }) {
   return configManager.applyEditorForm(form, { expectedRevision, clientAddress, currentHost });
+}
+
+function captureRuntimeStartSnapshot(config) {
+  const summary = summarizeConfig(config);
+  return {
+    revision: null,
+    version: config.version ?? summary.values?.llmProxyUserAgent?.value ?? null,
+    port: config.port,
+    capturedAt: new Date().toISOString(),
+    settings: redactSnapshotSettings(summary.values),
+  };
+}
+
+function redactSnapshotSettings(values) {
+  const settings = {};
+  for (const [name, field] of Object.entries(values ?? {})) {
+    settings[name] = field?.value;
+  }
+  return sanitizeForAdminStorage(settings);
 }
 
 function minimalReviewPayload(payload) {
@@ -1108,6 +1129,7 @@ export {
   classifyReviewFailure,
   copyProxyHeaders,
   createServer,
+  captureRuntimeStartSnapshot,
   extractInternalTokenFromHeaders,
   minimalReviewPayload,
   runProcess,
