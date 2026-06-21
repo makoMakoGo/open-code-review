@@ -636,6 +636,20 @@ async function handleReviewJob(payload, config, context = {}) {
 
     await logger.phase('fetching_pr', 'Fetching pull request metadata', commonFields);
     const { data: pull } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+    const headSha = pull.head.sha;
+    const baseSha = pull.base.sha;
+    const baseRef = pull.base.ref;
+    if (context.job) {
+      context.job.headSha = headSha;
+      context.job.baseSha = baseSha;
+      context.job.baseRef = baseRef;
+      context.job.startSnapshot = {
+        ...(context.job.startSnapshot && typeof context.job.startSnapshot === 'object' ? context.job.startSnapshot : {}),
+        headSha,
+        baseSha,
+        baseRef,
+      };
+    }
     console.log('job started', redact({ ...commonFields, head: pull.head.sha }));
     await logger.info('Review job started', { ...commonFields, head: pull.head.sha });
     if (pull.base.repo.private) {
@@ -645,9 +659,6 @@ async function handleReviewJob(payload, config, context = {}) {
       return finalResult;
     }
 
-    const headSha = pull.head.sha;
-    const baseSha = pull.base.sha;
-    const baseRef = pull.base.ref;
     const baseSnapshot = { headSha, baseSha, baseRef };
     workdir = path.join(config.repoRoot, `${safeSlug(owner)}-${safeSlug(repo)}-${pullNumber}-${headSha.slice(0, 12)}`);
 
@@ -997,10 +1008,10 @@ async function saveAdminConfigOverride({ configManager, form, expectedRevision, 
   return configManager.applyEditorForm(form, { expectedRevision, clientAddress, currentHost });
 }
 
-function captureRuntimeStartSnapshot(config) {
-  const summary = summarizeConfig(config);
+function captureRuntimeStartSnapshot(config, loaded = null) {
+  const summary = loaded?.summary ?? summarizeConfig(config);
   return {
-    revision: null,
+    revision: Number.isSafeInteger(loaded?.revision) ? loaded.revision : null,
     version: config.version ?? summary.values?.llmProxyUserAgent?.value ?? null,
     port: config.port,
     capturedAt: new Date().toISOString(),
@@ -1069,17 +1080,18 @@ async function main() {
     eventStore,
     configProvider: async () => {
       try {
-        const next = await configManager.load();
-        config = next.config;
+        loaded = await configManager.load();
+        config = loaded.config;
       } catch (error) {
         console.error('admin config reload failed; keeping previous config', error.stack || error.message);
       }
       return config;
     },
+    startSnapshotProvider: () => captureRuntimeStartSnapshot(config, loaded),
     saveConfig: async ({ form, expectedRevision, clientAddress, currentHost }) => {
       const result = await saveAdminConfigOverride({ configManager, form, expectedRevision, clientAddress, currentHost });
-      const next = await configManager.load();
-      config = next.config;
+      loaded = await configManager.load();
+      config = loaded.config;
       return result;
     },
   });

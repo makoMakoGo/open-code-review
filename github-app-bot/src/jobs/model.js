@@ -21,6 +21,7 @@ export function createJobSnapshot(input = {}) {
     title: sanitizeTextField(input.title, 'title'),
     headSha: sanitizeTextField(input.headSha, 'headSha'),
     baseSha: sanitizeTextField(input.baseSha, 'baseSha'),
+    baseRef: sanitizeTextField(input.baseRef, 'baseRef'),
     actor: sanitizeTextField(input.actor, 'actor'),
     trigger: sanitizeTextField(input.trigger, 'trigger'),
     progress: normalizeProgress(input.progress),
@@ -161,6 +162,7 @@ export function applyJobEvent(store, event) {
   if (event.type === 'job.failed') {
     store.jobs.set(event.jobId, createJobSnapshot({
       ...current,
+      ...data,
       status: 'failed',
       finishedAt: data.finishedAt ?? timestamp,
       updatedAt: timestamp,
@@ -174,6 +176,7 @@ export function applyJobEvent(store, event) {
   if (event.type === 'job.interrupted') {
     store.jobs.set(event.jobId, createJobSnapshot({
       ...current,
+      ...data,
       status: 'interrupted',
       finishedAt: data.finishedAt ?? timestamp,
       updatedAt: timestamp,
@@ -227,6 +230,7 @@ export function toPublicJobSnapshot(input) {
     title: job.title,
     headSha: job.headSha,
     baseSha: job.baseSha,
+    baseRef: job.baseRef,
     actor: job.actor,
     trigger: job.trigger,
     progress: job.progress,

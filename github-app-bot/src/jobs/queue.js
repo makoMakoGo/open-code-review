@@ -242,6 +242,9 @@ function queueMetadata(job) {
     actor: job.actor,
     trigger: job.trigger,
     startSnapshot: job.startSnapshot ?? null,
+    headSha: job.headSha ?? '',
+    baseSha: job.baseSha ?? '',
+    baseRef: job.baseRef ?? '',
   };
 }
 

@@ -262,6 +262,7 @@ function baseJobData(job) {
     title: job.title,
     headSha: job.headSha,
     baseSha: job.baseSha,
+    baseRef: job.baseRef,
     actor: job.actor,
     trigger: job.trigger,
     queuedAt: job.queuedAt,

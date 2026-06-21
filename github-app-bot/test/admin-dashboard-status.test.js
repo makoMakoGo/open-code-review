@@ -180,7 +180,13 @@ test('queue persists sanitized config snapshot captured at job start', async () 
       return loadConfig({ ...env, ADMIN_DATA_DIR: dir, OCR_LLM_MODEL: currentModel });
     },
     startSnapshotProvider: ({ config }) => ({ revision: 12, settings: { ocrLlmModel: config.ocrEnv.OCR_LLM_MODEL, OCR_LLM_TOKEN: config.ocrEnv.OCR_LLM_TOKEN } }),
-    handler: async () => ({ outcome: 'succeeded' }),
+    handler: async (payload, { job }) => {
+      job.headSha = 'abc123head';
+      job.baseSha = 'def456base';
+      job.baseRef = 'main';
+      job.startSnapshot = { ...job.startSnapshot, headSha: job.headSha, baseSha: job.baseSha, baseRef: job.baseRef };
+      return { outcome: 'succeeded' };
+    },
   });
 
   await queue.enqueue({ key: 'alice/repo#9@10', payload: {}, metadata: { owner: 'alice', repo: 'repo', pullNumber: 9 } });
@@ -191,4 +197,8 @@ test('queue persists sanitized config snapshot captured at job start', async () 
   assert.equal(replayed.jobs[0].startSnapshot.revision, 12);
   assert.equal(replayed.jobs[0].startSnapshot.settings.ocrLlmModel, 'started-model');
   assert.equal(replayed.jobs[0].startSnapshot.settings.OCR_LLM_TOKEN, '[REDACTED]');
+  assert.equal(replayed.jobs[0].headSha, 'abc123head');
+  assert.equal(replayed.jobs[0].baseSha, 'def456base');
+  assert.equal(replayed.jobs[0].baseRef, 'main');
+  assert.equal(replayed.jobs[0].startSnapshot.headSha, 'abc123head');
 });
