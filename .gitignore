@@ -6,8 +6,7 @@
 
 dist/
 npm/*/bin/
-.claude/plans
-.claude/settings.local.json
+.claude/
 
 CLAUDE.md
 pages/package-lock.json
