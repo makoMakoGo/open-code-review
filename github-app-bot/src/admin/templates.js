@@ -50,8 +50,6 @@ export function renderLayout({ title, active = 'dashboard', csrfToken = '', body
   const tabs = NAV_ITEMS
     .map(([key, href, label]) => `<a class="${key === active ? 'active' : ''}" href="${href}">${escapeHtml(label)}</a>`)
     .join('');
-  const activeEntry = NAV_ITEMS.find(([key]) => key === active);
-  const crumb = activeEntry ? `<span class="crumb">${escapeHtml(activeEntry[2].toLowerCase())}</span>` : '';
   const logoutForm = csrfToken
     ? `<form class="signout" method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><button type="submit">sign out</button></form>`
     : '';
@@ -66,11 +64,11 @@ export function renderLayout({ title, active = 'dashboard', csrfToken = '', body
 </head>
 <body>
 <header class="topbar">
-  <span class="brand"><span class="mark">ocr</span>-admin<span class="cursor" aria-hidden="true">▍</span>${crumb}</span>
+  <span class="brand"><span class="mark">ocr</span>-admin<span class="cursor" aria-hidden="true">▍</span></span>
   <nav class="tabs" aria-label="Sections">${tabs}</nav>
   ${logoutForm}
 </header>
-<main>${body}</main>
+<main><h1 class="page-title">${escapeHtml(title)}</h1>${body}</main>
 </body>
 </html>`;
 }
@@ -97,7 +95,7 @@ export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '
 </head>
 <body>
 <main class="login">
-<div class="login-head"><span class="mark">ocr</span>-admin<span class="cursor" aria-hidden="true">▍</span></div>
+<h1 class="login-head"><span class="mark">ocr</span>-admin<span class="cursor" aria-hidden="true">▍</span></h1>
 <p class="login-sub">open code review · github app bot</p>
 ${message}${form}
 </main>
@@ -158,7 +156,7 @@ ${renderDefinitionList([
     ['Finished', safeDisplay(formatDate(job?.finishedAt))],
     ['Queue wait', safeDisplay(formatDuration(job?.queueWaitMs ?? durationBetween(job?.queuedAt ?? job?.createdAt, job?.startedAt)))],
     ['Duration', safeDisplay(formatDuration(job?.durationMs ?? durationBetween(job?.startedAt, job?.finishedAt)))],
-    ['Phase / status', `<span class="status">${statusDot(job?.phase ?? progress.phase ?? job?.status)}${safeDisplay(`${job?.phase ?? progress.phase ?? job?.status ?? ''}${job?.status ? ` / ${job.status}` : ''}`)}</span>`],
+    ['Phase / status', `<span class="status">${statusDot(job?.status ?? progress.phase ?? job?.phase)}${safeDisplay(`${job?.phase ?? progress.phase ?? job?.status ?? ''}${job?.status ? ` / ${job.status}` : ''}`)}</span>`],
     ['Head SHA', `<code>${safeDisplay(job?.headSha ?? result.headSha)}</code>`],
     ['Base SHA', `<code>${safeDisplay(job?.baseSha ?? result.baseSha)}</code>`],
     ['Config revision', safeDisplay(configRevision)],
@@ -258,7 +256,7 @@ export function renderErrorPage({ csrfToken = '', status = 500, title = 'Error',
   const body = `<section class="card"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><p class="muted">status ${escapeHtml(status)}</p></section>`;
   return csrfToken
     ? renderLayout({ title, active: '', csrfToken, body })
-    : `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${baseStyles()}</style></head><body><main class="centered">${body}</main></body></html>`;
+    : `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${baseStyles()}</style></head><body><main class="centered"><h1 class="page-title">${escapeHtml(title)}</h1>${body}</main></body></html>`;
 }
 
 export function renderJobsTable(jobs) {
@@ -643,8 +641,6 @@ header.topbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;g
 .brand{display:inline-flex;align-items:baseline;gap:.05rem;font-weight:600;font-size:14px;color:var(--text);letter-spacing:.01em}
 .brand .mark{color:var(--amber)}
 .brand .cursor{color:var(--amber);animation:blink 1.1s steps(1) infinite}
-.brand .crumb{margin-left:.55rem;color:var(--muted);font-weight:400;text-transform:uppercase;font-size:11px;letter-spacing:.08em}
-.brand .crumb::before{content:"\\25B8 ";color:var(--faint)}
 @keyframes blink{50%{opacity:0}}
 nav.tabs{display:flex;gap:.15rem;margin-left:auto}
 nav.tabs a{text-transform:uppercase;font-size:11px;letter-spacing:.08em;color:var(--muted);padding:.35rem .55rem;border-bottom:2px solid transparent;cursor:pointer}
@@ -658,15 +654,18 @@ main.centered{max-width:640px}
 .back{margin:.2rem 0 .8rem}
 .back a{color:var(--muted)}
 .back a:hover{color:var(--cyan)}
-.card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);margin-bottom:1rem}
-.card>h2,.card>h3{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0;padding:.55rem .8rem;background:var(--bg);font-weight:500}
-.card>h2{border-bottom:1px solid var(--border)}
+.card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);margin-bottom:1rem;padding:0 .8rem .7rem}
+.card>h2,.card>h3{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0 -.8rem;padding:.55rem .8rem;background:var(--bg);font-weight:500}
+.card>h2{border-bottom:1px solid var(--border);border-top-left-radius:var(--radius);border-top-right-radius:var(--radius)}
 .card>h2::before{content:"// ";color:var(--faint)}
 .card>h3{border-top:1px solid var(--border);background:var(--surface)}
 .card>h3::before{content:"\\203A ";color:var(--faint)}
 .card>*:last-child{margin-bottom:0}
-.card>p{margin:.6rem .8rem}
-.card>dl,.card>table,.card>ul,.card>ol,.card>form,.card>nav,.card>pre,.card>.inline,.card>.alert{margin:.6rem .8rem}
+.card>p,.card>dl,.card>table,.card>ul,.card>ol,.card>form,.card>nav,.card>pre,.card>.inline,.card>.alert{margin:.6rem 0}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:.3rem 1rem;align-items:baseline}
+dt{color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.07em}
+dd{margin:0}
+h1.page-title{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0 0 .9rem;font-weight:500}
 .strip{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:hidden;margin-bottom:1rem}
 .strip .cell{padding:.7rem .8rem;border-right:1px solid var(--border)}
 .strip .cell:last-child{border-right:0}
