@@ -280,7 +280,9 @@ export function renderDiagnosticsList(diagnostics) {
     const id = item?.displayId ?? item?.id ?? '';
     const level = String(item?.level ?? 'info').toLowerCase();
     const message = item?.message ?? '';
-    const levelTone = level === 'error' ? 'pill--err' : level === 'warn' ? 'pill--warn' : '';
+    let levelTone = '';
+    if (level === 'error') levelTone = 'pill--err';
+    else if (level === 'warn') levelTone = 'pill--warn';
     return `<li><strong>${escapeHtml(redactInlineSecrets(id))}</strong> <span class="pill ${levelTone}">${escapeHtml(redactInlineSecrets(level))}</span> <span class="diag-msg">${escapeHtml(redactInlineSecrets(message))}</span></li>`;
   }).join('');
   return `<ul class="diagnostics">${items}</ul>`;
@@ -675,7 +677,7 @@ h1.page-title{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color
 .strip .num.fail{color:var(--red)}
 .strip .lab{text-transform:uppercase;font-size:10px;letter-spacing:.09em;color:var(--muted);margin-top:.35rem}
 @media(max-width:720px){.strip{grid-template-columns:repeat(2,1fr)}.strip .cell{border-bottom:1px solid var(--border)}}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
+table{display:block;width:100%;overflow-x:auto;border-collapse:collapse;font-size:12.5px}
 th,td{padding:.4rem .5rem;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
 thead th{text-transform:uppercase;font-size:10px;letter-spacing:.07em;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border-bright)}
 tbody tr:hover{background:var(--surface-2)}
