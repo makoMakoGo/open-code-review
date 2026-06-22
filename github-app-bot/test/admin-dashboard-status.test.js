@@ -39,20 +39,23 @@ test('dashboard renders latency percentiles comments failure repository and dail
       durationP95Ms: 30 * 60 * 1000,
       queueWaitP50Ms: 5 * 60 * 1000,
       queueWaitP95Ms: 10 * 60 * 1000,
-      commentsGeneratedTotal: 9,
-      commentsPostedTotal: 4,
+      averageCommentsGenerated: 4.5,
+      averageCommentsPosted: 2,
+      stale: 1,
+      skipped: 1,
+      interrupted: 1,
       failureKinds: { provider_unavailable: 1 },
       repositories: {
         'alice/repo': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5 },
       },
     },
     windows: {
-      '24h': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, commentsGeneratedTotal: 9, commentsPostedTotal: 4, failureKinds: { provider_unavailable: 1 }, repositories: { 'alice/repo': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5 } } },
-      '7d': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, commentsGeneratedTotal: 9, commentsPostedTotal: 4 },
-      '30d': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, commentsGeneratedTotal: 9, commentsPostedTotal: 4 },
+      '24h': { jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 2, failureKinds: { provider_unavailable: 1 }, repositories: { 'alice/repo': { jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5 } } },
+      '7d': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 2 },
+      '30d': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 2 },
     },
     dailyTrend: [
-      { day: '2026-06-01', jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, commentsGeneratedTotal: 9, commentsPostedTotal: 4 },
+      { day: '2026-06-01', jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5, averageCommentsGenerated: 4.5, averageCommentsPosted: 2 },
     ],
   };
 
@@ -71,10 +74,13 @@ test('dashboard renders latency percentiles comments failure repository and dail
   assert.match(html, /Queue wait p50/);
   assert.match(html, /5m 0s/);
   assert.match(html, /Queue wait p95/);
-  assert.match(html, /Comments generated/);
-  assert.match(html, /<td>9<\/td>/);
-  assert.match(html, /Comments posted/);
-  assert.match(html, /<td>4<\/td>/);
+  assert.match(html, /Avg comments generated/);
+  assert.match(html, /<td>4.5<\/td>/);
+  assert.match(html, /Avg comments posted/);
+  assert.match(html, /<td>2<\/td>/);
+  assert.match(html, /Stale/);
+  assert.match(html, /Skipped/);
+  assert.match(html, /Interrupted/);
   assert.match(html, /Failure classification/);
   assert.match(html, /provider_unavailable/);
   assert.match(html, /Repository success rate/);

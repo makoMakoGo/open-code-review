@@ -276,7 +276,12 @@ export class AdminRuntime {
 
     result.bytesAfter = await safeDirectorySize(this.adminDir, result.diagnostics);
     result.bytesReclaimed = Math.max(0, result.bytesBefore - result.bytesAfter);
-    return this.finishRetentionResult(result);
+    const finished = await this.finishRetentionResult(result);
+    if (config.adminDataMaxBytes != null) {
+      await refreshSoftCapFinalStatus(finished, this.adminDir, config.adminDataMaxBytes);
+      await this.persistRetentionResult(finished);
+    }
+    return finished;
   }
 
   async dashboard() {
@@ -425,17 +430,20 @@ export class AdminRuntime {
     result.finishedAt = new Date().toISOString();
     result.ok = result.ok && result.diagnostics.length === 0;
     this.lastRetention = result;
-    if (this.adminDir) {
-      try {
-        await atomicWriteFile(path.join(this.adminDir, RETENTION_STATE_FILE), `${JSON.stringify({ lastRun: result }, null, 2)}\n`);
-      } catch (error) {
-        this.retentionWarning = `Could not persist retention state: ${error.message}`;
-        result.ok = false;
-        result.diagnostics.push({ level: 'warn', id: 'retention.persist', message: this.retentionWarning });
-        console.error('admin retention state write failed', error.stack || error.message);
-      }
-    }
+    await this.persistRetentionResult(result);
     return result;
+  }
+
+  async persistRetentionResult(result) {
+    if (!this.adminDir) return;
+    try {
+      await atomicWriteFile(path.join(this.adminDir, RETENTION_STATE_FILE), `${JSON.stringify({ lastRun: result }, null, 2)}\n`);
+    } catch (error) {
+      this.retentionWarning = `Could not persist retention state: ${error.message}`;
+      result.ok = false;
+      result.diagnostics.push({ level: 'warn', id: 'retention.persist', message: this.retentionWarning });
+      console.error('admin retention state write failed', error.stack || error.message);
+    }
   }
 
   async captureRetentionStep(result, key, operation) {
@@ -633,6 +641,20 @@ async function enforceSoftCap({ adminDir, maxBytes, activeJobIds, terminalJobIds
   result.targetMet = result.overageBytes === 0;
   result.stillOverCap = !result.targetMet;
   return result;
+}
+
+async function refreshSoftCapFinalStatus(result, adminDir, maxBytes) {
+  const finalBytes = await safeDirectorySize(adminDir, result.diagnostics);
+  result.bytesAfter = finalBytes;
+  result.bytesReclaimed = Math.max(0, result.bytesBefore - finalBytes);
+  result.softCap.bytesAfter = finalBytes;
+  result.softCap.overageBytes = Math.max(0, finalBytes - maxBytes);
+  result.softCap.targetMet = result.softCap.overageBytes === 0;
+  result.softCap.stillOverCap = !result.softCap.targetMet;
+  if (result.softCap.stillOverCap && !result.diagnostics.some(item => item.id === 'retention.softCap.stillOverCap')) {
+    result.diagnostics.push({ level: 'warn', id: 'retention.softCap.stillOverCap', message: `Admin data remains ${result.softCap.overageBytes} bytes over the ${result.softCap.targetBytes} byte soft cap after retention state persistence.` });
+  }
+  result.ok = result.diagnostics.length === 0;
 }
 
 async function logFileInfos(adminDir, activeJobIds, terminalJobIds = new Set()) {
@@ -937,11 +959,14 @@ function enrichStatsBucket(bucket, jobs) {
     commentsGeneratedTotal += comments.generated;
     commentsPostedTotal += comments.posted;
     const name = job.repository?.fullName || 'unknown';
-    const repo = repositories[name] ?? { jobs: 0, succeeded: 0, succeeded_with_warnings: 0, failed: 0, successRate: null };
+    const repo = repositories[name] ?? { jobs: 0, succeeded: 0, succeeded_with_warnings: 0, failed: 0, stale: 0, skipped: 0, interrupted: 0, successRate: null };
     repo.jobs += 1;
     if (job.status === 'succeeded') repo.succeeded += 1;
     if (job.status === 'succeeded_with_warnings') repo.succeeded_with_warnings += 1;
     if (job.status === 'failed') repo.failed += 1;
+    if (job.status === 'stale') repo.stale += 1;
+    if (job.status === 'skipped') repo.skipped += 1;
+    if (job.status === 'interrupted') repo.interrupted += 1;
     repositories[name] = repo;
   }
   for (const repo of Object.values(repositories)) {
@@ -950,6 +975,8 @@ function enrichStatsBucket(bucket, jobs) {
   }
   bucket.commentsGeneratedTotal = commentsGeneratedTotal;
   bucket.commentsPostedTotal = commentsPostedTotal;
+  bucket.averageCommentsGenerated = bucket.commentSamples > 0 ? commentsGeneratedTotal / bucket.commentSamples : bucket.averageCommentsGenerated ?? null;
+  bucket.averageCommentsPosted = bucket.commentSamples > 0 ? commentsPostedTotal / bucket.commentSamples : bucket.averageCommentsPosted ?? null;
   bucket.repositories = repositories;
   return bucket;
 }

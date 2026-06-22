@@ -98,6 +98,47 @@ test('admin config editor form validates whole candidate, confirms high-risk cha
   assert.equal(JSON.stringify(audit).includes('replacement-token'), false);
 });
 
+test('admin config success audit failure does not fail committed editor save', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-success-audit-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  const initial = await manager.load();
+  const originalAppend = manager.appendConfigAudit.bind(manager);
+  let calls = 0;
+  manager.appendConfigAudit = async event => {
+    calls += 1;
+    if (event.result === 'success') throw new Error('audit disk full after commit');
+    return originalAppend(event);
+  };
+  const originalError = console.error;
+  console.error = () => {};
+  let saved;
+  try {
+    saved = await manager.applyEditorForm(new Map([
+      ['revision', String(initial.revision)],
+      ['value_MAX_REVIEW_COMMENTS', '31'],
+    ]), { expectedRevision: initial.revision, clientAddress: '203.0.113.10' });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(calls, 2);
+  assert.equal(saved.state.revision, 1);
+  assert.equal(saved.state.config.maxComments, 31);
+  assert.equal((await manager.load()).config.maxComments, 31);
+});
+
+test('admin config summary exposes bot version', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-version-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir, BOT_VERSION: 'test-version' }, dataDir: dir });
+  await manager.ensureStorageDir();
+
+  const state = await manager.load();
+
+  assert.equal(state.config.version, 'test-version');
+  assert.equal(state.summary.values.version.value, 'test-version');
+});
+
 test('admin config rejects concurrent stale editor submissions without losing the first update', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
   const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
@@ -185,6 +226,19 @@ test('admin config pending restart writes share override lock without deadlock',
   const cleared = await manager.load();
   assert.equal(cleared.overrides.MAX_REVIEW_COMMENTS, '31');
   assert.equal(cleared.pendingRestart, null);
+});
+
+test('admin config accumulates restart markers across sequential restart-required edits', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-restart-merge-'));
+  const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
+  await manager.ensureStorageDir();
+  await manager.writeOverrides({ PORT: '3008' });
+  await manager.writeOverrides({ PORT: '3008', JOB_LOG_MAX_BYTES: '8192' });
+
+  const state = await manager.load();
+
+  assert.deepEqual(state.pendingRestart.keys, ['JOB_LOG_MAX_BYTES', 'PORT']);
+  assert.equal(state.pendingRestart.sinceRevision, 1);
 });
 
 test('admin config legacy pending restart migration does not deadlock under locked clear', async () => {
@@ -980,10 +1034,12 @@ test('job event compaction preserves progress phase timeline', async () => {
   await store.append(createJobEvent({ type: 'job.completed', jobId, timestamp: '2026-01-01T00:01:00.000Z', data: { status: 'succeeded', finishedAt: '2026-01-01T00:01:00.000Z', result: { outcome: 'succeeded' } } }));
 
   await store.compact({ now: '2026-06-01T00:00:00.000Z', terminalDetailsBefore: '2026-06-01T00:00:00.000Z' });
+  const eventsText = await fs.readFile(path.join(dir, 'jobs', 'events.jsonl'), 'utf8');
   const replayed = await store.replay({ force: true });
 
   assert.equal(replayed.jobs[0].phaseTimeline.some(item => item.progress.phase === 'checkout'), true);
   assert.equal(replayed.jobs[0].progress.phase, 'checkout');
+  assert.match(eventsText, /"phase":"queued"/);
 });
 
 
@@ -1033,6 +1089,9 @@ test('admin retention soft cap deletes every eligible log and reports unmet targ
   assert.equal(result.softCap.bytesAfter > result.softCap.targetBytes, true);
   assert.equal(result.softCap.overageBytes, result.softCap.bytesAfter - result.softCap.targetBytes);
   assert.equal(result.diagnostics.some(item => item.id === 'retention.softCap.stillOverCap'), true);
+  const status = await runtime.retentionStatus();
+  assert.equal(status.lastRun.softCap.stillOverCap, true);
+  assert.equal(status.lastRun.ok, false);
 });
 
 test('admin jobs route validates ids and renders escaped redacted detail logs', async () => {

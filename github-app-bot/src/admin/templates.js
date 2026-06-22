@@ -394,11 +394,11 @@ function renderMetricsTrends(metrics) {
   const windows = stats.windows ?? {};
   if (!stats.total && Object.keys(windows).length === 0) return '';
   const rows = ['24h', '7d', '30d'].map((name) => renderMetricsWindowRow(name, windows[name] ?? {})).join('');
-  return `<section class="card"><h2>Metrics and trends</h2>${renderMetricsSummary(stats.total)}<table><thead><tr><th>Window</th><th>Jobs</th><th>Success rate</th><th>Duration p50</th><th>Duration p95</th><th>Queue wait p50</th><th>Queue wait p95</th><th>Comments generated</th><th>Comments posted</th><th>Failure classification</th><th>Repository success rate</th><th>Trend</th></tr></thead><tbody>${rows}</tbody></table>${renderDailyTrend(stats.dailyTrend ?? [])}</section>`;
+  return `<section class="card"><h2>Metrics and trends</h2>${renderMetricsSummary(stats.total)}<table><thead><tr><th>Window</th><th>Jobs</th><th>Success rate</th><th>Duration p50</th><th>Duration p95</th><th>Queue wait p50</th><th>Queue wait p95</th><th>Avg comments generated</th><th>Avg comments posted</th><th>Stale</th><th>Skipped</th><th>Interrupted</th><th>Failure classification</th><th>Repository success rate</th><th>Trend</th></tr></thead><tbody>${rows}</tbody></table>${renderDailyTrend(stats.dailyTrend ?? [])}</section>`;
 }
 
 function renderMetricsWindowRow(name, bucket) {
-  return `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(numberOrDash(bucket.jobs))}</td><td>${safeDisplay(formatPercent(bucket.successRate))}</td><td>${safeDisplay(formatDuration(bucket.durationP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.durationP95Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP95Ms))}</td><td>${safeDisplay(numberOrDash(commentTotal(bucket, 'generated')))}</td><td>${safeDisplay(numberOrDash(commentTotal(bucket, 'posted')))}</td><td>${renderFailureKinds(bucket.failureKinds)}</td><td>${renderRepositoryRates(bucket.repositories ?? bucket.repoSuccessRates ?? bucket.repos)}</td><td>${renderTrendBar(bucket)}</td></tr>`;
+  return `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(numberOrDash(bucket.jobs))}</td><td>${safeDisplay(formatPercent(bucket.successRate))}</td><td>${safeDisplay(formatDuration(bucket.durationP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.durationP95Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP95Ms))}</td><td>${safeDisplay(numberOrDash(averageComment(bucket, 'generated')))}</td><td>${safeDisplay(numberOrDash(averageComment(bucket, 'posted')))}</td><td>${safeDisplay(numberOrDash(bucket.stale))}</td><td>${safeDisplay(numberOrDash(bucket.skipped))}</td><td>${safeDisplay(numberOrDash(bucket.interrupted))}</td><td>${renderFailureKinds(bucket.failureKinds)}</td><td>${renderRepositoryRates(bucket.repositories ?? bucket.repoSuccessRates ?? bucket.repos)}</td><td>${renderTrendBar(bucket)}</td></tr>`;
 }
 
 function renderMetricsSummary(bucket) {
@@ -408,8 +408,11 @@ function renderMetricsSummary(bucket) {
     ['Duration p95', safeDisplay(formatDuration(bucket.durationP95Ms))],
     ['Queue wait p50', safeDisplay(formatDuration(bucket.queueWaitP50Ms))],
     ['Queue wait p95', safeDisplay(formatDuration(bucket.queueWaitP95Ms))],
-    ['Comments generated', safeDisplay(numberOrDash(commentTotal(bucket, 'generated')))],
-    ['Comments posted', safeDisplay(numberOrDash(commentTotal(bucket, 'posted')))],
+    ['Avg comments generated', safeDisplay(numberOrDash(averageComment(bucket, 'generated')))],
+    ['Avg comments posted', safeDisplay(numberOrDash(averageComment(bucket, 'posted')))],
+    ['Stale', safeDisplay(numberOrDash(bucket.stale))],
+    ['Skipped', safeDisplay(numberOrDash(bucket.skipped))],
+    ['Interrupted', safeDisplay(numberOrDash(bucket.interrupted))],
     ['Failure classification', renderFailureKinds(bucket.failureKinds)],
     ['Repository success rate', renderRepositoryRates(bucket.repositories ?? bucket.repoSuccessRates ?? bucket.repos)],
   ]);
@@ -417,8 +420,15 @@ function renderMetricsSummary(bucket) {
 
 function renderDailyTrend(dailyTrend) {
   if (!Array.isArray(dailyTrend) || dailyTrend.length === 0) return '<h3>Daily trend</h3><p class="empty">No daily trend data.</p>';
-  const rows = dailyTrend.map(day => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(commentTotal(day, 'generated')))}</td><td>${safeDisplay(numberOrDash(commentTotal(day, 'posted')))}</td></tr>`).join('');
-  return `<h3>Daily trend</h3><table><thead><tr><th>Day</th><th>Jobs</th><th>Success rate</th><th>Comments generated</th><th>Comments posted</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const rows = dailyTrend.map(day => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(averageComment(day, 'generated')))}</td><td>${safeDisplay(numberOrDash(averageComment(day, 'posted')))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('');
+  return `<h3>Daily trend</h3><table><thead><tr><th>Day</th><th>Jobs</th><th>Success rate</th><th>Avg comments generated</th><th>Avg comments posted</th><th>Stale</th><th>Skipped</th><th>Interrupted</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function averageComment(bucket, kind) {
+  const average = kind === 'generated' ? bucket.averageCommentsGenerated : bucket.averageCommentsPosted;
+  if (Number.isFinite(average)) return average;
+  const total = commentTotal(bucket, kind);
+  return Number.isFinite(total) && Number.isFinite(bucket.commentSamples) && bucket.commentSamples > 0 ? total / bucket.commentSamples : null;
 }
 
 function commentTotal(bucket, kind) {

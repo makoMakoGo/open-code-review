@@ -4,6 +4,7 @@ import net from 'node:net';
 import path from 'node:path';
 
 const DEFAULT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
+const DEFAULT_BOT_VERSION = '0.1.0';
 const DEFAULT_LLM_PROXY_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_ADMIN_DATA_DIR = '/data/admin';
 const DEFAULT_ADMIN_STORAGE_DIR = DEFAULT_ADMIN_DATA_DIR;
@@ -26,6 +27,7 @@ const SOURCE_OVERRIDE = 'override';
 const SOURCE_MISSING = 'missing';
 
 const DEFAULT_ENV = Object.freeze({
+  BOT_VERSION: DEFAULT_BOT_VERSION,
   PORT: '3007',
   ALLOWED_USER_IDS: '',
   GITHUB_APP_PRIVATE_KEY_PATH: '/config/github-app-private-key.pem',
@@ -74,6 +76,7 @@ const REQUIRED_ENV_KEYS = Object.freeze([
 ]);
 
 const OPTIONAL_ENV_KEYS = Object.freeze([
+  'BOT_VERSION',
   'PORT',
   'BOT_TRIGGER_PHRASES',
   'ALLOWED_USER_IDS',
@@ -137,6 +140,7 @@ const HIGH_RISK_ENV_KEYS = Object.freeze([
 const HIGH_RISK_ENV_KEY_SET = new Set(HIGH_RISK_ENV_KEYS);
 
 const NON_SECRET_SUMMARY_FIELDS = Object.freeze([
+  { name: 'version', envKey: 'BOT_VERSION', read: config => config.version },
   { name: 'port', envKey: 'PORT', read: config => config.port },
   { name: 'appId', envKey: 'GITHUB_APP_ID', read: config => config.appId },
   { name: 'privateKeyPath', envKey: 'GITHUB_APP_PRIVATE_KEY_PATH', read: config => config.privateKeyPath },
@@ -352,6 +356,7 @@ function loadConfig(env = process.env, rawOverrides) {
   const adminSessionTtlHours = parseIntegerEnv('ADMIN_SESSION_TTL_HOURS', DEFAULT_ADMIN_SESSION_TTL_HOURS, { min: 1, env: effectiveEnv });
 
   return {
+    version: optionalEnv('BOT_VERSION', DEFAULT_BOT_VERSION, effectiveEnv),
     port: parseIntegerEnv('PORT', 3007, { min: 1, env: effectiveEnv }),
     appId: requiredEnv('GITHUB_APP_ID', effectiveEnv),
     privateKeyPath: optionalEnv('GITHUB_APP_PRIVATE_KEY_PATH', '/config/github-app-private-key.pem', effectiveEnv),
@@ -755,6 +760,23 @@ function createConfigManager(options = {}) {
 function buildPendingRestartMarker(changedKeys, revision, now = new Date()) {
   const keys = [...new Set(changedKeys)].filter(key => RESTART_REQUIRED_ENV_KEY_SET.has(key)).sort();
   if (keys.length === 0) return null;
+  return pendingRestartMarkerForKeys(keys, revision, now);
+}
+
+function mergePendingRestartMarkers(currentMarker, nextMarker) {
+  const current = normalizePendingRestartMarker(currentMarker, 'current pending restart marker');
+  const next = normalizePendingRestartMarker(nextMarker, 'next pending restart marker');
+  if (!current) return next;
+  if (!next) return current;
+  const keys = [...new Set([...current.keys, ...next.keys])].sort();
+  const currentRevision = Number.isSafeInteger(current.sinceRevision) ? current.sinceRevision : next.sinceRevision;
+  const nextRevision = Number.isSafeInteger(next.sinceRevision) ? next.sinceRevision : currentRevision;
+  const sinceRevision = Math.min(currentRevision, nextRevision);
+  const createdAt = current.createdAt && next.createdAt && current.createdAt <= next.createdAt ? current.createdAt : next.createdAt ?? current.createdAt;
+  return pendingRestartMarkerForKeys(keys, sinceRevision, new Date(createdAt));
+}
+
+function pendingRestartMarkerForKeys(keys, revision, now = new Date()) {
   return {
     required: true,
     keys,
@@ -1096,7 +1118,7 @@ class ConfigManager {
         revision,
         updatedAt: new Date().toISOString(),
         overrides,
-        pendingRestart: marker ?? current.pendingRestart ?? null,
+        pendingRestart: mergePendingRestartMarkers(current.pendingRestart, marker),
       };
       if (beforePersist) await beforePersist({ current, next, changedKeys, restartRequired: changedKeysRequireRestart(changedKeys) });
       await fs.rm(this.pendingRestartFile, { force: true });
@@ -1136,17 +1158,20 @@ class ConfigManager {
           }));
         },
       });
-      if (changedKeys.length === 0) return { state: next, changedKeys, restartRequired: false };
-      await this.appendConfigAudit(auditEvent({
-        result: 'success',
-        changedKeys,
-        beforeRevision: current.revision,
-        afterRevision: next.revision,
-        clientAddress,
-        restartRequired: changedKeysRequireRestart(changedKeys),
-      }));
-      const committed = await this.readOverrideState();
-      return { state: committed, changedKeys, restartRequired: changedKeysRequireRestart(changedKeys) };
+      if (changedKeys.length === 0) return { state: this.loadedStateFromOverrideState(next), changedKeys, restartRequired: false };
+      try {
+        await this.appendConfigAudit(auditEvent({
+          result: 'success',
+          changedKeys,
+          beforeRevision: current.revision,
+          afterRevision: next.revision,
+          clientAddress,
+          restartRequired: changedKeysRequireRestart(changedKeys),
+        }));
+      } catch (auditError) {
+        console.error('admin config success audit failed after commit', auditError.stack || auditError.message);
+      }
+      return { state: this.loadedStateFromOverrideState(next), changedKeys, restartRequired: changedKeysRequireRestart(changedKeys) };
     } catch (error) {
       const failureRevision = Number.isSafeInteger(error?.currentRevision) ? error.currentRevision : current?.revision ?? null;
       await this.appendConfigAudit(auditEvent({
@@ -1161,6 +1186,23 @@ class ConfigManager {
       throw error;
     }
   }
+  loadedStateFromOverrideState(state) {
+    const normalized = normalizeOverrideState(state, 'config override state');
+    const merged = mergeConfigLayers(this.env, normalized.overrides);
+    const config = this.buildConfig(normalized.overrides);
+    const pendingRestart = normalized.pendingRestart;
+    return {
+      config,
+      revision: normalized.revision,
+      updatedAt: normalized.updatedAt,
+      overrides: normalized.overrides,
+      redactedOverrides: redactRawOverrides(normalized.overrides),
+      sources: merged.sources,
+      pendingRestart,
+      summary: summarizeConfig(config, merged.sources, { revision: normalized.revision, pendingRestart, overrides: normalized.overrides }),
+    };
+  }
+
 
   async appendConfigAudit(event) {
     return this.withAuditWriteLock(() => appendJsonLine(this.auditFile, event));

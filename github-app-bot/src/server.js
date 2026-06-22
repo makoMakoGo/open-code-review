@@ -1090,8 +1090,14 @@ async function main() {
     startSnapshotProvider: () => captureRuntimeStartSnapshot(config, loaded),
     saveConfig: async ({ form, expectedRevision, clientAddress, currentHost }) => {
       const result = await saveAdminConfigOverride({ configManager, form, expectedRevision, clientAddress, currentHost });
-      loaded = await configManager.load();
-      config = loaded.config;
+      loaded = result.state;
+      config = result.state.config;
+      try {
+        loaded = await configManager.load();
+        config = loaded.config;
+      } catch (error) {
+        console.error('admin config post-save reload failed; using committed config state', error.stack || error.message);
+      }
       return result;
     },
   });

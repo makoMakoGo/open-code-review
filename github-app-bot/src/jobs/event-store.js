@@ -276,7 +276,7 @@ function baseJobData(job) {
     actor: job.actor,
     trigger: job.trigger,
     queuedAt: job.queuedAt,
-    progress: job.progress,
+    progress: { phase: 'queued', message: 'Review job queued', percent: null },
     logCount: job.logCount,
     startSnapshot: job.startSnapshot,
   };
@@ -292,6 +292,7 @@ function terminalJobData(job, { compactTerminalDetails, status = job.status, rea
     errorMessage: compactTerminalDetails ? '' : job.errorMessage,
     result: compactTerminalDetails ? compactStructuredResult(job) : job.result,
     startSnapshot: job.startSnapshot,
+    progress: job.progress,
   };
   if (reason && !compactTerminalDetails) data.reason = reason;
   return data;
