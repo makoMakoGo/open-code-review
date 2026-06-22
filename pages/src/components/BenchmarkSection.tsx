@@ -20,6 +20,7 @@ interface BenchmarkEntry {
 
 const OCR_VERSION = 'v1.3.1';
 const CC_VERSION = 'v2.1.169';
+const CODEX_VERSION = 'v0.140.0';
 
 const sourceColorMap: Record<string, string> = {
   ocr: 'text-brand-400',
@@ -198,7 +199,21 @@ const benchmarkData: BenchmarkEntry[] = [
     avgOutputToken: '39K',
     avgTotalToken: '4,038K',
   },
-  { model: 'GPT-5.5', company: 'OpenAI', sourceType: 'codex', version: '' },
+  {
+    model: 'GPT-5.5',
+    company: 'OpenAI',
+    sourceType: 'codex',
+    version: CODEX_VERSION,
+    precision: 27.82,
+    precisionDetail: '74/266',
+    recall: 4.92,
+    recallDetail: '74/1505',
+    f1: 8.36,
+    avgTime: '2m58s',
+    avgInputToken: '520K',
+    avgOutputToken: '5K',
+    avgTotalToken: '525K',
+  },
 ];
 
 const medalIcons: Record<string, string> = {
@@ -289,7 +304,7 @@ const BenchmarkSection: React.FC = () => {
             </div>
             <div className="flex items-center gap-1.5 text-xs">
               <OpenAIIcon className="w-4 h-4" />
-              <span className="text-[#10a37f] font-medium">Codex · /code-review</span>
+              <span className="text-[#10a37f] font-medium">Codex · {CODEX_VERSION} · /review</span>
             </div>
           </div>
 
