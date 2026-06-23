@@ -1,3 +1,5 @@
+import { scriptTag } from './security.js';
+
 const SECRET_KEY_PATTERN = /(SECRET|TOKEN|PASSWORD|PRIVATE|AUTH|KEY|WEBHOOK|LLM_PROXY|OCR_LLM)/i;
 
 export function escapeHtml(value) {
@@ -66,7 +68,7 @@ ${fontLinks()}${themeInitScript()}<style>${baseStyles()}</style>
 <body>
 <header class="topbar">
   <span class="brand"><span class="mark">ocr</span>-admin<span class="cursor" aria-hidden="true">▍</span></span>
-  <nav class="tabs" aria-label="Sections">${tabs}</nav>
+  <nav class="tabs" aria-label="Sections" data-i18n-aria-label="aria_sections">${tabs}</nav>
   ${togglesHtml()}
   ${logoutForm}
 </header>
@@ -116,7 +118,7 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
     ['Warnings', summary.succeeded_with_warnings, 'warn', 'strip_warnings'],
     ['Failed', summary.failed, 'fail', 'strip_failed'],
   ].map(([label, value, tone, key]) => `<div class="cell${tone ? ' cell--' + tone : ''}"><div class="num ${tone}">${escapeHtml(numberOrDash(value))}</div><div class="lab" data-i18n="${key}">${escapeHtml(label)}</div></div>`).join('');
-  const body = `<div class="strip" aria-label="Job summary">${cells}</div>
+  const body = `<div class="strip" aria-label="Job summary" data-i18n-aria-label="aria_job_summary">${cells}</div>
 ${renderServiceStatus(serviceStatus, retention)}
 ${renderMetricsTrends(stats ?? metrics)}
 <section class="card"><h2 data-i18n="h2_recent_jobs">Recent jobs</h2>${renderJobsTable(recentJobs)}</section>
@@ -178,8 +180,8 @@ ${renderDefinitionList([
   ])}</section>
 <section class="card"><h2 data-i18n="jd_warnings_section">Warnings</h2>${renderObjectList(collectJobWarnings(job, result))}</section>
 <section class="card"><h2 data-i18n="jd_failure">Failure</h2>${renderObjectBlock(failure)}</section>
-<details class="card"><summary><h2 data-i18n="jd_reporting_error">Reporting error</h2></summary>${renderObjectBlock(reportingError)}</details>
-<details class="card"><summary><h2 data-i18n="jd_cleanup_warning">Cleanup warning</h2></summary>${cleanupWarning ? `<p>${safeDisplay(cleanupWarning)}</p>` : '<p class="empty" data-i18n="empty_none">None.</p>'}</details>
+<details class="card"${reportingError ? ' open' : ''}><summary><h2 data-i18n="jd_reporting_error">Reporting error</h2></summary>${renderObjectBlock(reportingError)}</details>
+<details class="card"${cleanupWarning ? ' open' : ''}><summary><h2 data-i18n="jd_cleanup_warning">Cleanup warning</h2></summary>${cleanupWarning ? `<p>${safeDisplay(cleanupWarning)}</p>` : '<p class="empty" data-i18n="empty_none">None.</p>'}</details>
 <section class="card"><h2 data-i18n="jd_retained_logs">Retained logs</h2>${renderLogs(logs)}</section>
 ${job?.diagnostics ? `<section class="card"><h2 data-i18n="jd_job_diagnostics">Job diagnostics</h2>${renderDiagnosticsList(job.diagnostics)}</section>` : ''}`;
   return renderLayout({ title: `Job ${id}`, active: 'jobs', csrfToken, body });
@@ -355,7 +357,7 @@ function renderPagination(filters, pagination) {
   const totalPages = pagination.totalPages ?? 1;
   const prev = pagination.hasPrev ? `<a href="${escapeAttribute(jobsPageUrl(filters, pagination.prevPage, pagination.pageSize))}" data-i18n="btn_prev">prev</a>` : '<span class="empty" aria-disabled="true" data-i18n="btn_prev">prev</span>';
   const next = pagination.hasNext ? `<a href="${escapeAttribute(jobsPageUrl(filters, pagination.nextPage, pagination.pageSize))}" data-i18n="btn_next">next</a>` : '<span class="empty" aria-disabled="true" data-i18n="btn_next">next</span>';
-  return `<nav class="pagination" aria-label="Jobs pages">${prev}<span>page ${safeDisplay(page)} / ${safeDisplay(totalPages)} · ${safeDisplay(total)} jobs</span>${next}</nav>`;
+  return `<nav class="pagination" aria-label="Jobs pages" data-i18n-aria-label="aria_jobs_pages">${prev}<span>page ${safeDisplay(page)} / ${safeDisplay(totalPages)} · ${safeDisplay(total)} jobs</span>${next}</nav>`;
 }
 
 function jobsPageUrl(filters, page, size) {
@@ -664,6 +666,7 @@ const I18N = {
     th_field: 'Field', th_effective: 'Effective value', th_edit: 'Edit', th_state: 'State', btn_save_config: 'save configuration',
     keep_secret: 'Keep current secret', clear_secret: 'Clear secret', replace_with: 'Replace with', reset_override: 'Reset override', confirm_high_risk: 'Confirm high-risk change',
     not_editable: 'Not editable from dashboard.', secret_set: 'secret set', not_set: 'not set',
+    aria_sections: 'Sections', aria_job_summary: 'Job summary', aria_jobs_pages: 'Jobs pages',
   },
   zh: {
     nav_dashboard: '仪表盘', nav_jobs: '任务', nav_config: '配置', signout: '退出',
@@ -695,11 +698,12 @@ const I18N = {
     th_field: '字段', th_effective: '生效值', th_edit: '编辑', th_state: '状态', btn_save_config: '保存配置',
     keep_secret: '保留当前密钥', clear_secret: '清除密钥', replace_with: '替换为', reset_override: '重置覆盖', confirm_high_risk: '确认高风险变更',
     not_editable: '控制台不可编辑。', secret_set: '密钥已设', not_set: '未设置',
+    aria_sections: '区块导航', aria_job_summary: '任务概览', aria_jobs_pages: '任务分页',
   },
 };
 
 function themeInitScript() {
-  return `<script>(function(){try{var t=localStorage.getItem('ocr-theme');if(t!=='light'&&t!=='dark'){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';}document.documentElement.dataset.theme=t;var l=localStorage.getItem('ocr-lang');if(l!=='en'&&l!=='zh'){l=((navigator.language||'en').toLowerCase().indexOf('zh')===0)?'zh':'en';}document.documentElement.lang=l;}catch(e){document.documentElement.dataset.theme='dark';document.documentElement.lang='en';}})();</script>`;
+  return scriptTag(`(function(){try{var t=localStorage.getItem('ocr-theme');if(t!=='light'&&t!=='dark'){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';}document.documentElement.dataset.theme=t;var l=localStorage.getItem('ocr-lang');if(l!=='en'&&l!=='zh'){l=((navigator.language||'en').toLowerCase().indexOf('zh')===0)?'zh':'en';}document.documentElement.lang=l;}catch(e){document.documentElement.dataset.theme='dark';document.documentElement.lang='en';}})();`);
 }
 
 function togglesHtml() {
@@ -707,7 +711,7 @@ function togglesHtml() {
 }
 
 function bodyScript() {
-  return `<script>(function(){var I18N=${JSON.stringify(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-theme-target]').forEach(function(b){b.textContent=document.documentElement.dataset.theme==='light'?'☾':'☀';b.setAttribute('aria-label',d.toggle_theme||'Toggle theme');});document.querySelectorAll('[data-lang-target]').forEach(function(b){b.textContent=document.documentElement.lang==='zh'?'EN':'中文';b.setAttribute('aria-label',d.toggle_lang||'Switch language');});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();</script>`;
+  return scriptTag(`(function(){var I18N=${JSON.stringify(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-theme-target]').forEach(function(b){b.textContent=document.documentElement.dataset.theme==='light'?'☾':'☀';b.setAttribute('aria-label',d.toggle_theme||'Toggle theme');});document.querySelectorAll('[data-lang-target]').forEach(function(b){b.textContent=document.documentElement.lang==='zh'?'EN':'中文';b.setAttribute('aria-label',d.toggle_lang||'Switch language');});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`);
 }
 
 function fontLinks() {
@@ -912,7 +916,7 @@ main > .card:nth-child(2) { animation-delay: 0.1s; }
 main > .card:nth-child(3) { animation-delay: 0.2s; }
 main > .card:nth-child(4) { animation-delay: 0.3s; }
 
-details.card > summary { cursor: pointer; list-style: none; display: block; outline: none; }
+details.card > summary { cursor: pointer; list-style: none; display: block; }
 details.card > summary::-webkit-details-marker { display: none; }
 details.card > summary > h2 { transition: background 0.2s; }
 details.card > summary:hover > h2 { background: rgba(255,255,255,0.05); }
@@ -967,6 +971,8 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 :root[data-theme="light"] code { color: #0f172a; }
 :root[data-theme="light"] pre { color: #0f172a; background: rgba(0,0,0,0.04); }
 :root[data-theme="light"] nav.tabs a.active { color: #0f172a; }
+:root[data-theme="light"] a { color: #0369a1; }
+:root[data-theme="light"] a:hover { color: #075985; text-shadow: none; }
 :root[data-theme="light"] .login-box { background: rgba(255,255,255,0.7); border-color: rgba(0,0,0,0.1); box-shadow: 0 20px 40px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.5); }
 :root[data-theme="light"] .login-box input { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.1); }
 :root[data-theme="light"] .login-box input:focus { background: rgba(0,0,0,0.05); }

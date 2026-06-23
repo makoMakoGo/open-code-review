@@ -1,5 +1,11 @@
 import crypto from 'node:crypto';
 
+const SCRIPT_NONCE_PLACEHOLDER = '__ocr_csp_nonce__';
+
+export function scriptTag(js) {
+  return `<script nonce="${SCRIPT_NONCE_PLACEHOLDER}">${js}</script>`;
+}
+
 const DEFAULT_SECURITY_HEADERS = Object.freeze({
   'content-security-policy': "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com",
   'cross-origin-opener-policy': 'same-origin',
@@ -45,7 +51,7 @@ export function redirect(location, { status = 303, headers = {} } = {}) {
 export function htmlResponse(body, { status = 200, headers = {} } = {}) {
   if (typeof body !== 'string') throw new Error('HTML response body must be a string');
   const scriptNonce = crypto.randomBytes(18).toString('base64url');
-  const safeBody = body.replaceAll('<script>', `<script nonce="${scriptNonce}">`);
+  const safeBody = body.split(SCRIPT_NONCE_PLACEHOLDER).join(scriptNonce);
   return {
     status,
     headers: mergeHeaders(securityHeaders({ scriptNonce }), headers),
