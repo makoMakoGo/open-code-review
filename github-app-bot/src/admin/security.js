@@ -1,5 +1,11 @@
+import crypto from 'node:crypto';
+
+export function scriptTag(js, nonce) {
+  return `<script nonce="${nonce}">${js}</script>`;
+}
+
 const DEFAULT_SECURITY_HEADERS = Object.freeze({
-  'content-security-policy': "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'",
+  'content-security-policy': "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com",
   'cross-origin-opener-policy': 'same-origin',
   'cross-origin-resource-policy': 'same-origin',
   'referrer-policy': 'same-origin',
@@ -9,8 +15,9 @@ const DEFAULT_SECURITY_HEADERS = Object.freeze({
   'x-robots-tag': 'noindex, nofollow',
 });
 
-export function securityHeaders({ contentType = 'text/html; charset=utf-8', cache = 'no-store' } = {}) {
+export function securityHeaders({ contentType = 'text/html; charset=utf-8', cache = 'no-store', scriptNonce = '' } = {}) {
   const headers = { ...DEFAULT_SECURITY_HEADERS };
+  if (scriptNonce) headers['content-security-policy'] = `${headers['content-security-policy']}; script-src 'nonce-${scriptNonce}'`;
   if (contentType) headers['content-type'] = contentType;
   if (cache) headers['cache-control'] = cache;
   return headers;
@@ -39,11 +46,20 @@ export function redirect(location, { status = 303, headers = {} } = {}) {
   };
 }
 
-export function htmlResponse(body, { status = 200, headers = {} } = {}) {
-  if (typeof body !== 'string') throw new Error('HTML response body must be a string');
+export function htmlResponse(bodyOrRender, { status = 200, headers = {} } = {}) {
+  let body;
+  let scriptNonce = '';
+  if (typeof bodyOrRender === 'function') {
+    scriptNonce = crypto.randomBytes(18).toString('base64url');
+    body = bodyOrRender(scriptNonce);
+    if (typeof body !== 'string') throw new Error('HTML render callback must return a string');
+  } else {
+    if (typeof bodyOrRender !== 'string') throw new Error('HTML response body must be a string');
+    body = bodyOrRender;
+  }
   return {
     status,
-    headers: mergeHeaders(securityHeaders(), headers),
+    headers: mergeHeaders(securityHeaders({ scriptNonce }), headers),
     body,
   };
 }

@@ -208,3 +208,12 @@ test('queue persists sanitized config snapshot captured at job start', async () 
   assert.equal(replayed.jobs[0].baseRef, 'main');
   assert.equal(replayed.jobs[0].startSnapshot.headSha, 'abc123head');
 });
+
+test('job detail expands reporting error and cleanup warning only when non-empty', () => {
+  const filled = renderJobDetailPage({ csrfToken: 'csrf', job: { id: 'abc', repository: { fullName: 'alice/repo' }, result: { reportingError: { kind: 'github_api_error', reason: 'boom' }, cleanupWarning: 'workdir removal failed' } } });
+  assert.match(filled, /<details class="card" open><summary><h2 data-i18n="jd_reporting_error"/);
+  assert.match(filled, /<details class="card" open><summary><h2 data-i18n="jd_cleanup_warning"/);
+
+  const empty = renderJobDetailPage({ csrfToken: 'csrf', job: { id: 'abc', repository: { fullName: 'alice/repo' }, result: {} } });
+  assert.doesNotMatch(empty, /<details class="card" open>/);
+});
