@@ -710,9 +710,11 @@ function togglesHtml() {
   return `<div class="toggles"><button type="button" class="toggle-btn" data-act="toggle-theme" data-theme-target aria-label="Toggle theme"></button><button type="button" class="toggle-btn" data-act="toggle-lang" data-lang-target>中文</button></div>`;
 }
 
-function safeScriptJson(value) {
+export function safeScriptJson(value) {
   return JSON.stringify(value)
     .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
 }

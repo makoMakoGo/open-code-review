@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { htmlResponse, scriptTag } from '../src/admin/security.js';
+import { safeScriptJson } from '../src/admin/templates.js';
 
 test('htmlResponse stamps CSP script-src nonce matching scriptTag output', () => {
   const { headers, body } = htmlResponse(`<main>${scriptTag('var x=1;')}</main>`);
@@ -17,7 +18,17 @@ test('htmlResponse does not grant a nonce to a bare injected <script>', () => {
   const { headers, body } = htmlResponse(`${scriptTag('ok();')}<script>evil();</script>`);
   const nonce = headers['content-security-policy'].match(/script-src 'nonce-([^']+)'/)[1];
   assert.match(body, new RegExp(`<script nonce="${nonce}">ok\\(\\);</script>`));
-  // the bare injected script is untouched (no nonce attribute added) -> would be CSP-blocked
   assert.match(body, /<script>evil\(\);<\/script>/);
   assert.doesNotMatch(body, new RegExp(`<script nonce="${nonce}">evil`));
+});
+
+test('safeScriptJson escapes breakout sequences for inline <script> embedding', () => {
+  const out = safeScriptJson({ a: 'x</script>y-->z&u' });
+  // nothing that can break out of a <script> block remains in the output
+  assert.equal(out.includes('</script>'), false, 'closing script tag escaped');
+  assert.equal(out.includes('<'), false, '< escaped');
+  assert.equal(out.includes('>'), false, '> escaped');
+  assert.equal(out.includes('&'), false, '& escaped');
+  // the escaped output is still valid JSON that round-trips to the original
+  assert.deepEqual(JSON.parse(out), { a: 'x</script>y-->z&u' });
 });
