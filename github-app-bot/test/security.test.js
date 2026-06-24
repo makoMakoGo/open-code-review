@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { htmlResponse, scriptTag } from '../src/admin/security.js';
-import { safeScriptJson } from '../src/admin/templates.js';
+import { safeScriptJson, renderErrorPage } from '../src/admin/templates.js';
 
 test('htmlResponse stamps CSP script-src nonce matching scriptTag output', () => {
   const { headers, body } = htmlResponse((nonce) => `<main>${scriptTag('var x=1;', nonce)}</main>`);
@@ -39,4 +39,9 @@ test('safeScriptJson escapes breakout sequences for inline <script> embedding', 
   assert.equal(out.includes('>'), false, '> escaped');
   assert.equal(out.includes('&'), false, '& escaped');
   assert.deepEqual(JSON.parse(out), { a: 'x</script>y-->z&u' });
+});
+
+test('renderErrorPage authenticated branch threads cspNonce into its scripts', () => {
+  const html = renderErrorPage({ csrfToken: 'x', cspNonce: 'ABC123', title: 'Error', message: 'boom' });
+  assert.match(html, /<script nonce="ABC123">/);
 });
