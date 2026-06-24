@@ -357,7 +357,7 @@ function renderPagination(filters, pagination) {
   const totalPages = pagination.totalPages ?? 1;
   const prev = pagination.hasPrev ? `<a href="${escapeAttribute(jobsPageUrl(filters, pagination.prevPage, pagination.pageSize))}" data-i18n="btn_prev">prev</a>` : '<span class="empty" aria-disabled="true" data-i18n="btn_prev">prev</span>';
   const next = pagination.hasNext ? `<a href="${escapeAttribute(jobsPageUrl(filters, pagination.nextPage, pagination.pageSize))}" data-i18n="btn_next">next</a>` : '<span class="empty" aria-disabled="true" data-i18n="btn_next">next</span>';
-  return `<nav class="pagination" aria-label="Jobs pages" data-i18n-aria-label="aria_jobs_pages">${prev}<span>page ${safeDisplay(page)} / ${safeDisplay(totalPages)} · ${safeDisplay(total)} jobs</span>${next}</nav>`;
+  return `<nav class="pagination" aria-label="Jobs pages" data-i18n-aria-label="aria_jobs_pages">${prev}<span><span data-i18n="page_word">page</span> ${safeDisplay(page)} / ${safeDisplay(totalPages)} · ${safeDisplay(total)} <span data-i18n="jobs_word">jobs</span></span>${next}</nav>`;
 }
 
 function jobsPageUrl(filters, page, size) {
@@ -535,7 +535,7 @@ function renderObjectBlock(value) {
 function renderLogs(logs) {
   if (!logs || !Array.isArray(logs.entries) || logs.entries.length === 0) return '<p class="empty" data-i18n="empty_logs">No retained logs.</p>';
   const rows = logs.entries.map(entry => `<tr><td>${safeDisplay(formatDate(entry.timestamp))}</td><td>${safeDisplay(entry.level)}</td><td>${safeDisplay(entry.message)}</td><td>${safeDisplay(formatDisplayValue(entry.fields ?? {}))}</td></tr>`).join('');
-  const note = logs.degraded ? '<p class="alert">Log history is degraded.</p>' : '';
+  const note = logs.degraded ? '<p class="alert" data-i18n="logs_degraded">Log history is degraded.</p>' : '';
   return `${note}<table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_level">Level</th><th data-i18n="th_message">Message</th><th data-i18n="th_fields">Fields</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
@@ -667,6 +667,7 @@ const I18N = {
     keep_secret: 'Keep current secret', clear_secret: 'Clear secret', replace_with: 'Replace with', reset_override: 'Reset override', confirm_high_risk: 'Confirm high-risk change',
     not_editable: 'Not editable from dashboard.', secret_set: 'secret set', not_set: 'not set',
     aria_sections: 'Sections', aria_job_summary: 'Job summary', aria_jobs_pages: 'Jobs pages',
+    logs_degraded: 'Log history is degraded.', page_word: 'page', jobs_word: 'jobs',
   },
   zh: {
     nav_dashboard: '仪表盘', nav_jobs: '任务', nav_config: '配置', signout: '退出',
@@ -699,6 +700,7 @@ const I18N = {
     keep_secret: '保留当前密钥', clear_secret: '清除密钥', replace_with: '替换为', reset_override: '重置覆盖', confirm_high_risk: '确认高风险变更',
     not_editable: '控制台不可编辑。', secret_set: '密钥已设', not_set: '未设置',
     aria_sections: '区块导航', aria_job_summary: '任务概览', aria_jobs_pages: '任务分页',
+    logs_degraded: '日志历史已降级。', page_word: '页', jobs_word: '个任务',
   },
 };
 
