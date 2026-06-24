@@ -80,13 +80,13 @@ export class AdminRouter {
     if (normalized.pathname === '/admin/' || normalized.pathname === '/admin') {
       if (normalized.method !== 'GET') return methodNotAllowed(['GET']);
       const dashboard = await this.loadDashboard({ request: normalized, session });
-      return htmlResponse(renderDashboardPage({ csrfToken: session.csrfToken, ...dashboard }));
+      return htmlResponse((nonce) => renderDashboardPage({ csrfToken: session.csrfToken, cspNonce: nonce, ...dashboard }));
     }
 
     if (normalized.pathname === '/admin/jobs') {
       if (normalized.method !== 'GET') return methodNotAllowed(['GET']);
       const jobsPage = await this.loadJobs({ request: normalized, session });
-      return htmlResponse(renderJobsPage({ csrfToken: session.csrfToken, ...normalizeJobsPage(jobsPage, normalized) }));
+      return htmlResponse((nonce) => renderJobsPage({ csrfToken: session.csrfToken, cspNonce: nonce, ...normalizeJobsPage(jobsPage, normalized) }));
     }
 
     const jobMatch = normalized.pathname.match(/^\/admin\/jobs\/([^/]+)$/);
@@ -96,14 +96,14 @@ export class AdminRouter {
       if (!UUID_PATTERN.test(jobId)) return notFound();
       const job = await this.loadJob({ jobId, request: normalized, session });
       if (!job) return notFound();
-      return htmlResponse(renderJobDetailPage({ csrfToken: session.csrfToken, job }));
+      return htmlResponse((nonce) => renderJobDetailPage({ csrfToken: session.csrfToken, cspNonce: nonce, job }));
     }
 
     if (normalized.pathname === '/admin/config') {
       if (normalized.method === 'GET') {
         const config = await this.loadConfig({ request: normalized, session });
         const flash = this.#consumeFlash(session);
-        return htmlResponse(renderConfigPage({ csrfToken: session.csrfToken, config, adminRoot: this.adminRoot, flash }));
+        return htmlResponse((nonce) => renderConfigPage({ csrfToken: session.csrfToken, cspNonce: nonce, config, adminRoot: this.adminRoot, flash }));
       }
       if (normalized.method === 'POST') return this.#saveConfig(normalized, session);
       return methodNotAllowed(['GET', 'POST']);
@@ -115,7 +115,7 @@ export class AdminRouter {
   #loginPage(request, error) {
     const existingSession = this.#requireSession(request);
     const csrfToken = existingSession?.csrfToken ?? '';
-    return htmlResponse(renderLoginPage({ csrfToken, error }));
+    return htmlResponse((nonce) => renderLoginPage({ csrfToken, cspNonce: nonce, error }));
   }
 
   async #login(request) {

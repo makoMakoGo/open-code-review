@@ -46,7 +46,7 @@ const NAV_ITEMS = [
   ['config', '/admin/config', 'Config'],
 ];
 
-export function renderLayout({ title, active = 'dashboard', csrfToken = '', body, titleKey = '' }) {
+export function renderLayout({ title, active = 'dashboard', csrfToken = '', body, titleKey = '', cspNonce = '' }) {
   if (typeof title !== 'string' || title.trim() === '') throw new Error('title is required');
   if (typeof body !== 'string') throw new Error('body must be a string');
   const tabs = NAV_ITEMS
@@ -63,7 +63,7 @@ export function renderLayout({ title, active = 'dashboard', csrfToken = '', body
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} · Open Code Review Admin</title>
-${fontLinks()}${themeInitScript()}<style>${baseStyles()}</style>
+${fontLinks()}${themeInitScript(cspNonce)}<style>${baseStyles()}</style>
 </head>
 <body>
 <header class="topbar">
@@ -73,12 +73,12 @@ ${fontLinks()}${themeInitScript()}<style>${baseStyles()}</style>
   ${logoutForm}
 </header>
 <main><h1 class="page-title"${titleAttr}>${escapeHtml(title)}</h1>${body}</main>
-${bodyScript()}
+${bodyScript(cspNonce)}
 </body>
 </html>`;
 }
 
-export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '' } = {}) {
+export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '', cspNonce = '' } = {}) {
   const disabled = disabledReason !== '';
   const message = disabled
     ? `<p class="alert">${escapeHtml(disabledReason)}</p>`
@@ -96,7 +96,7 @@ export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Open Code Review Admin</title>
-${fontLinks()}${themeInitScript()}<style>${baseStyles()}</style>
+${fontLinks()}${themeInitScript(cspNonce)}<style>${baseStyles()}</style>
 </head>
 <body>
 <main class="login">
@@ -105,12 +105,12 @@ ${togglesHtml()}
 <p class="login-sub" data-i18n="login_sub">open code review · github app bot</p>
 ${message}${form}
 </main>
-${bodyScript()}
+${bodyScript(cspNonce)}
 </body>
 </html>`;
 }
 
-export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], diagnostics = [], serviceStatus = null, metrics = null, stats = null, retention = null } = {}) {
+export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], diagnostics = [], serviceStatus = null, metrics = null, stats = null, retention = null, cspNonce = '' } = {}) {
   const cells = [
     ['Queued', summary.queued, '', 'strip_queued'],
     ['Running', summary.running, 'warn', 'strip_running'],
@@ -123,10 +123,10 @@ ${renderServiceStatus(serviceStatus, retention)}
 ${renderMetricsTrends(stats ?? metrics)}
 <section class="card"><h2 data-i18n="h2_recent_jobs">Recent jobs</h2>${renderJobsTable(recentJobs)}</section>
 <section class="card"><h2 data-i18n="h2_diagnostics">Diagnostics</h2>${renderDiagnosticsList(diagnostics)}</section>`;
-  return renderLayout({ title: 'Dashboard', active: 'dashboard', csrfToken, body, titleKey: 'page_dashboard' });
+  return renderLayout({ title: 'Dashboard', active: 'dashboard', csrfToken, body, titleKey: 'page_dashboard', cspNonce });
 }
 
-export function renderJobsPage({ csrfToken, jobs = [], filters = {}, pagination = null, validationMessages = [], filter = '' } = {}) {
+export function renderJobsPage({ csrfToken, jobs = [], filters = {}, pagination = null, validationMessages = [], filter = '', cspNonce = '' } = {}) {
   const normalizedFilters = { ...filters };
   if (filter && !normalizedFilters.diagnosticId) normalizedFilters.diagnosticId = filter;
   const alerts = validationMessages.length > 0
@@ -137,10 +137,10 @@ ${alerts}
 ${renderJobsFilterForm(normalizedFilters, pagination)}
 ${renderJobsTable(jobs)}
 ${renderPagination(normalizedFilters, pagination)}</section>`;
-  return renderLayout({ title: 'Jobs', active: 'jobs', csrfToken, body, titleKey: 'page_jobs' });
+  return renderLayout({ title: 'Jobs', active: 'jobs', csrfToken, body, titleKey: 'page_jobs', cspNonce });
 }
 
-export function renderJobDetailPage({ csrfToken, job }) {
+export function renderJobDetailPage({ csrfToken, job, cspNonce = '' }) {
   const id = job?.id ?? job?.jobId ?? '';
   const repository = formatRepository(job?.repo ?? job?.repository);
   const result = objectValue(job?.result ?? job?.rawResult);
@@ -184,10 +184,10 @@ ${renderDefinitionList([
 <details class="card"${cleanupWarning ? ' open' : ''}><summary><h2 data-i18n="jd_cleanup_warning">Cleanup warning</h2></summary>${cleanupWarning ? `<p>${safeDisplay(cleanupWarning)}</p>` : '<p class="empty" data-i18n="empty_none">None.</p>'}</details>
 <section class="card"><h2 data-i18n="jd_retained_logs">Retained logs</h2>${renderLogs(logs)}</section>
 ${job?.diagnostics ? `<section class="card"><h2 data-i18n="jd_job_diagnostics">Job diagnostics</h2>${renderDiagnosticsList(job.diagnostics)}</section>` : ''}`;
-  return renderLayout({ title: `Job ${id}`, active: 'jobs', csrfToken, body });
+  return renderLayout({ title: `Job ${id}`, active: 'jobs', csrfToken, body, cspNonce });
 }
 
-export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/admin', flash = null } = {}) {
+export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/admin', flash = null, cspNonce = '' } = {}) {
   const fields = Array.isArray(config.fields) ? config.fields : legacyConfigFields(config);
   const revision = config.revision ?? '';
   const flashHtml = flash ? `<p class="alert ${flash.type === 'success' ? 'success' : ''}">${escapeHtml(flash.message)}</p>` : '';
@@ -198,7 +198,7 @@ export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/ad
   const rows = fields.map(renderConfigEditorRow).join('');
   const body = `<section class="card"><h2 data-i18n="h2_configuration">Configuration</h2><p><span data-i18n="admin_storage_root">Admin storage root:</span> <code>${escapeHtml(adminRoot)}</code></p>${flashHtml}${pendingHtml}<p class="muted"><span data-i18n="revision">Revision:</span> <code>${escapeHtml(revision)}</code></p></section>
 <section class="card"><h2 data-i18n="h2_edit_config">Edit configuration</h2><form method="post" action="/admin/config"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><input type="hidden" name="revision" value="${escapeAttribute(revision)}"><table class="config-table"><thead><tr><th data-i18n="th_field">Field</th><th data-i18n="th_effective">Effective value</th><th data-i18n="th_edit">Edit</th><th data-i18n="th_state">State</th></tr></thead><tbody>${rows}</tbody></table><p><button type="submit" class="primary" data-i18n="btn_save_config">save configuration</button></p></form></section>`;
-  return renderLayout({ title: 'Config', active: 'config', csrfToken, body, titleKey: 'page_config' });
+  return renderLayout({ title: 'Config', active: 'config', csrfToken, body, titleKey: 'page_config', cspNonce });
 }
 
 function renderConfigEditorRow(field) {
@@ -259,11 +259,11 @@ function formatEditorValue(value) {
   return String(value);
 }
 
-export function renderErrorPage({ csrfToken = '', status = 500, title = 'Error', message = 'Something went wrong' } = {}) {
+export function renderErrorPage({ csrfToken = '', status = 500, title = 'Error', message = 'Something went wrong', cspNonce = '' } = {}) {
   const body = `<section class="card"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><p class="muted">status ${escapeHtml(status)}</p></section>`;
   return csrfToken
     ? renderLayout({ title, active: '', csrfToken, body })
-    : `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${fontLinks()}${themeInitScript()}<style>${baseStyles()}</style></head><body><main class="centered"><h1 class="page-title">${escapeHtml(title)}</h1>${body}</main>${bodyScript()}</body></html>`;
+    : `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${fontLinks()}${themeInitScript(cspNonce)}<style>${baseStyles()}</style></head><body><main class="centered"><h1 class="page-title">${escapeHtml(title)}</h1>${body}</main>${bodyScript(cspNonce)}</body></html>`;
 }
 
 export function renderJobsTable(jobs) {
@@ -702,8 +702,8 @@ const I18N = {
   },
 };
 
-function themeInitScript() {
-  return scriptTag(`(function(){try{var t=localStorage.getItem('ocr-theme');if(t!=='light'&&t!=='dark'){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';}document.documentElement.dataset.theme=t;var l=localStorage.getItem('ocr-lang');if(l!=='en'&&l!=='zh'){l=((navigator.language||'en').toLowerCase().indexOf('zh')===0)?'zh':'en';}document.documentElement.lang=l;}catch(e){document.documentElement.dataset.theme='dark';document.documentElement.lang='en';}})();`);
+function themeInitScript(nonce) {
+  return scriptTag(`(function(){try{var t=localStorage.getItem('ocr-theme');if(t!=='light'&&t!=='dark'){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';}document.documentElement.dataset.theme=t;var l=localStorage.getItem('ocr-lang');if(l!=='en'&&l!=='zh'){l=((navigator.language||'en').toLowerCase().indexOf('zh')===0)?'zh':'en';}document.documentElement.lang=l;}catch(e){document.documentElement.dataset.theme='dark';document.documentElement.lang='en';}})();`, nonce);
 }
 
 function togglesHtml() {
@@ -719,8 +719,8 @@ export function safeScriptJson(value) {
     .replace(/\u2029/g, '\\u2029');
 }
 
-function bodyScript() {
-  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-theme-target]').forEach(function(b){b.textContent=document.documentElement.dataset.theme==='light'?'☾':'☀';b.setAttribute('aria-label',d.toggle_theme||'Toggle theme');});document.querySelectorAll('[data-lang-target]').forEach(function(b){b.textContent=document.documentElement.lang==='zh'?'EN':'中文';b.setAttribute('aria-label',d.toggle_lang||'Switch language');});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`);
+function bodyScript(nonce) {
+  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-theme-target]').forEach(function(b){b.textContent=document.documentElement.dataset.theme==='light'?'☾':'☀';b.setAttribute('aria-label',d.toggle_theme||'Toggle theme');});document.querySelectorAll('[data-lang-target]').forEach(function(b){b.textContent=document.documentElement.lang==='zh'?'EN':'中文';b.setAttribute('aria-label',d.toggle_lang||'Switch language');});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
 }
 
 function fontLinks() {
