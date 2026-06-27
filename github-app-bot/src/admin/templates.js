@@ -112,8 +112,8 @@ ${bodyScript(cspNonce)}
 
 export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], diagnostics = [], serviceStatus = null, metrics = null, stats = null, retention = null, cspNonce = '' } = {}) {
   const cells = [
-    ['Queued', summary.queued, '', 'strip_queued'],
-    ['Running', summary.running, 'warn', 'strip_running'],
+    ['Queued', summary.queued, 'queued', 'strip_queued'],
+    ['Running', summary.running, 'run', 'strip_running'],
     ['Succeeded', summary.succeeded, 'ok', 'strip_succeeded'],
     ['Warnings', summary.succeeded_with_warnings, 'warn', 'strip_warnings'],
     ['Failed', summary.failed, 'fail', 'strip_failed'],
@@ -197,7 +197,7 @@ export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/ad
     : '';
   const rows = fields.map(renderConfigEditorRow).join('');
   const body = `<section class="card"><h2 data-i18n="h2_configuration">Configuration</h2><p><span data-i18n="admin_storage_root">Admin storage root:</span> <code>${escapeHtml(adminRoot)}</code></p>${flashHtml}${pendingHtml}<p class="muted"><span data-i18n="revision">Revision:</span> <code>${escapeHtml(revision)}</code></p></section>
-<section class="card"><h2 data-i18n="h2_edit_config">Edit configuration</h2><form method="post" action="/admin/config"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><input type="hidden" name="revision" value="${escapeAttribute(revision)}"><table class="config-table"><thead><tr><th data-i18n="th_field">Field</th><th data-i18n="th_effective">Effective value</th><th data-i18n="th_edit">Edit</th><th data-i18n="th_state">State</th></tr></thead><tbody>${rows}</tbody></table><p><button type="submit" class="primary" data-i18n="btn_save_config">save configuration</button></p></form></section>`;
+<section class="card"><h2 data-i18n="h2_edit_config">Edit configuration</h2><form method="post" action="/admin/config"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><input type="hidden" name="revision" value="${escapeAttribute(revision)}"><div class="table-scroll"><table class="config-table"><thead><tr><th data-i18n="th_field">Field</th><th data-i18n="th_effective">Effective value</th><th data-i18n="th_edit">Edit</th><th data-i18n="th_state">State</th></tr></thead><tbody>${rows}</tbody></table></div><p><button type="submit" class="primary" data-i18n="btn_save_config">save configuration</button></p></form></section>`;
   return renderLayout({ title: 'Config', active: 'config', csrfToken, body, titleKey: 'page_config', cspNonce });
 }
 
@@ -278,7 +278,7 @@ export function renderJobsTable(jobs) {
     const idCell = id ? `<a href="/admin/jobs/${escapeAttribute(id)}"><code>${safeDisplay(id)}</code></a>` : '';
     return `<tr><td>${idCell}</td><td><span class="status">${statusDot(status)}${safeDisplay(status)}</span></td><td>${safeDisplay(repo)}</td><td>${safeDisplay(job?.pullNumber)}</td><td>${safeDisplay(actor)}</td><td><code>${safeDisplay(diagnosticId)}</code></td><td>${safeDisplay(formatDate(queuedAt))}</td></tr>`;
   }).join('');
-  return `<table><thead><tr><th data-i18n="th_job_id">Job ID</th><th data-i18n="th_status">Status</th><th data-i18n="th_repository">Repository</th><th data-i18n="th_pr">PR</th><th data-i18n="th_actor">Actor</th><th data-i18n="th_diag_id">Diagnostic ID</th><th data-i18n="th_queued">Queued</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<div class="table-scroll"><table><thead><tr><th data-i18n="th_job_id">Job ID</th><th data-i18n="th_status">Status</th><th data-i18n="th_repository">Repository</th><th data-i18n="th_pr">PR</th><th data-i18n="th_actor">Actor</th><th data-i18n="th_diag_id">Diagnostic ID</th><th data-i18n="th_queued">Queued</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function renderDiagnosticsList(diagnostics) {
@@ -418,7 +418,7 @@ function renderMetricsTrends(metrics) {
   const windows = stats.windows ?? {};
   if (!stats.total && Object.keys(windows).length === 0) return '';
   const rows = ['24h', '7d', '30d'].map((name) => renderMetricsWindowRow(name, windows[name] ?? {})).join('');
-  return `<section class="card"><h2 data-i18n="h2_metrics">Metrics and trends</h2>${renderMetricsSummary(stats.total)}<table><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="m_repo_rate">Repository success rate</th><th data-i18n="th_trend">Trend</th></tr></thead><tbody>${rows}</tbody></table>${renderDailyTrend(stats.dailyTrend ?? [])}</section>`;
+  return `<section class="card"><h2 data-i18n="h2_metrics">Metrics and trends</h2>${renderMetricsSummary(stats.total)}<div class="table-scroll"><table><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="m_repo_rate">Repository success rate</th><th data-i18n="th_trend">Trend</th></tr></thead><tbody>${rows}</tbody></table></div>${renderDailyTrend(stats.dailyTrend ?? [])}</section>`;
 }
 
 function renderMetricsWindowRow(name, bucket) {
@@ -445,7 +445,7 @@ function renderMetricsSummary(bucket) {
 function renderDailyTrend(dailyTrend) {
   if (!Array.isArray(dailyTrend) || dailyTrend.length === 0) return '<h3 data-i18n="m_daily_trend">Daily trend</h3><p class="empty" data-i18n="empty_daily">No daily trend data.</p>';
   const rows = dailyTrend.map(day => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(averageComment(day, 'generated')))}</td><td>${safeDisplay(numberOrDash(averageComment(day, 'posted')))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('');
-  return `<h3 data-i18n="m_daily_trend">Daily trend</h3><table><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<h3 data-i18n="m_daily_trend">Daily trend</h3><div class="table-scroll"><table><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function averageComment(bucket, kind) {
@@ -492,7 +492,7 @@ function repositorySuccessRateFromCount(details, value) {
 function renderPhaseTimeline(timeline) {
   if (!Array.isArray(timeline) || timeline.length === 0) return '<p class="empty" data-i18n="empty_phase_timeline">No phase timeline.</p>';
   const rows = timeline.map(item => `<tr><td>${safeDisplay(formatDate(item.timestamp))}</td><td>${safeDisplay(item.label ?? item.phase ?? '')}</td><td>${safeDisplay(item.phase ?? '')}</td><td>${safeDisplay(item.message ?? '')}</td><td>${safeDisplay(item.source ?? '')}</td></tr>`).join('');
-  return `<table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_event">Event</th><th data-i18n="th_phase">Phase</th><th data-i18n="th_message">Message</th><th data-i18n="th_source">Source</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<div class="table-scroll"><table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_event">Event</th><th data-i18n="th_phase">Phase</th><th data-i18n="th_message">Message</th><th data-i18n="th_source">Source</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderTrendBar(bucket) {
@@ -519,7 +519,7 @@ function renderKeyValueTable(values) {
   const entries = Object.entries(objectValue(values)).filter(([key]) => !isSecretKey(key));
   if (entries.length === 0) return '<p class="empty" data-i18n="empty_runtime">No runtime settings.</p>';
   const rows = entries.sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `<tr><th scope="row">${safeDisplay(key)}</th><td>${safeDisplay(formatDisplayValue(redactConfigValue(key, value)))}</td></tr>`).join('');
-  return `<table><tbody>${rows}</tbody></table>`;
+  return `<div class="table-scroll"><table><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderObjectList(items) {
@@ -536,7 +536,7 @@ function renderLogs(logs) {
   if (!logs || !Array.isArray(logs.entries) || logs.entries.length === 0) return '<p class="empty" data-i18n="empty_logs">No retained logs.</p>';
   const rows = logs.entries.map(entry => `<tr><td>${safeDisplay(formatDate(entry.timestamp))}</td><td>${safeDisplay(entry.level)}</td><td>${safeDisplay(entry.message)}</td><td>${safeDisplay(formatDisplayValue(entry.fields ?? {}))}</td></tr>`).join('');
   const note = logs.degraded ? '<p class="alert" data-i18n="logs_degraded">Log history is degraded.</p>' : '';
-  return `${note}<table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_level">Level</th><th data-i18n="th_message">Message</th><th data-i18n="th_fields">Fields</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `${note}<div class="table-scroll"><table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_level">Level</th><th data-i18n="th_message">Message</th><th data-i18n="th_fields">Fields</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function collectJobWarnings(job, result) {
@@ -845,9 +845,14 @@ h1.page-title { font-size: 28px; color: var(--text); margin: 0 0 2rem; font-weig
 .strip .cell--warn::before { background: var(--amber); }
 .strip .num.fail { color: var(--red); text-shadow: 0 0 20px rgba(248, 113, 113, 0.4); }
 .strip .cell--fail::before { background: var(--red); }
+.strip .num.run { color: var(--cyan); text-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
+.strip .cell--run::before { background: var(--cyan); }
+.strip .num.queued { color: var(--muted); }
+.strip .cell--queued::before { background: var(--muted); }
 .strip .lab { text-transform: uppercase; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); margin-top: 0.75rem; }
 
-table { width: 100%; display: block; overflow-x: auto; border-collapse: separate; border-spacing: 0; font-size: 13.5px; margin: 0.5rem 0; }
+.table-scroll { overflow-x: auto; margin: 0.5rem 0; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
 th, td { padding: 0.8rem 1rem; border-bottom: 1px solid var(--border); text-align: left; }
 thead th { text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; background: rgba(0,0,0,0.2); border-top: 1px solid var(--border); }
 thead th:first-child { border-top-left-radius: 8px; border-left: 1px solid var(--border); }
