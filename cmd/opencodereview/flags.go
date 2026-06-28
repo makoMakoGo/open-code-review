@@ -101,6 +101,7 @@ type reviewOptions struct {
 	from           string
 	to             string
 	commit         string
+	excludes       string // --exclude: comma-separated gitignore-style patterns
 	outputFormat   string
 	audience       string // --audience: "human" (default) or "agent"
 	background     string // --background: optional requirement context
@@ -124,6 +125,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.StringVar(&opts.from, "from", "", "source ref to start diff from (e.g., 'main')")
 	a.StringVar(&opts.to, "to", "", "target ref to end diff at (e.g., 'feature-branch')")
 	a.StringVarP(&opts.commit, "commit", "c", "", "single commit hash or tag to review (vs its parent)")
+	a.StringVar(&opts.excludes, "exclude", "", "comma-separated gitignore-style patterns to exclude; merged with rule.json excludes")
 	a.StringVarP(&opts.outputFormat, "format", "f", "text", "output format: text or json")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "concurrent task timeout in minutes")
@@ -233,7 +235,7 @@ Flags:
 // --- config subcommand ---
 
 type configAction struct {
-	subCmd string // "set"
+	subCmd string // "set", "unset"
 	key    string
 	value  string
 }
@@ -254,8 +256,16 @@ func parseConfigArgs(args []string) (configAction, error) {
 			key:    args[1],
 			value:  args[2],
 		}, nil
+	case "unset":
+		if len(args) < 2 {
+			return configAction{}, fmt.Errorf("usage: ocr config unset custom_providers.<name>\ne.g., ocr config unset custom_providers.my-gateway")
+		}
+		return configAction{
+			subCmd: "unset",
+			key:    args[1],
+		}, nil
 	default:
-		return configAction{}, fmt.Errorf("unknown config sub-command: %s\nAvailable: set, provider, model", subCmd)
+		return configAction{}, fmt.Errorf("unknown config sub-command: %s\nAvailable: set, unset, provider, model", subCmd)
 	}
 }
 
@@ -264,8 +274,9 @@ func printConfigUsage() {
 
 Usage:
   ocr config set <key> <value>
-  ocr config provider              Interactive provider setup
-  ocr config model                 Interactive model selection
+  ocr config unset custom_providers.<name>  Delete a custom provider
+  ocr config provider                       Interactive provider setup
+  ocr config model                          Interactive model selection
 
 Examples:
   # Provider setup (interactive)
@@ -286,6 +297,9 @@ Examples:
   ocr config set custom_providers.my-gateway.model llama-3-70b
   ocr config set custom_providers.my-gateway.models '["llama-3-70b","llama-3-8b"]'
   ocr config set custom_providers.my-gateway.api_key "$MY_API_KEY"
+
+  # Delete a custom provider
+  ocr config unset custom_providers.my-gateway
 
   # Legacy endpoint configuration
   ocr config set llm.url https://xx/v1/openai/chat/completions

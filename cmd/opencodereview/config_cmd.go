@@ -20,6 +20,16 @@ func defaultConfigPath() (string, error) {
 	return filepath.Join(home, ".opencodereview", "config.json"), nil
 }
 
+// resolveConfigPath returns OCR_CONFIG_PATH when set, otherwise the default user config path.
+// Intentionally used only by read-only commands (e.g. ocr llm test). Write paths such as
+// config set and review keep defaultConfigPath() so a leaked OCR_CONFIG_PATH cannot redirect writes.
+func resolveConfigPath() (string, error) {
+	if p := strings.TrimSpace(os.Getenv("OCR_CONFIG_PATH")); p != "" {
+		return p, nil
+	}
+	return defaultConfigPath()
+}
+
 func runConfig(args []string) error {
 	if len(args) == 0 {
 		printConfigUsage()
@@ -47,6 +57,8 @@ func runConfig(args []string) error {
 	switch action.subCmd {
 	case "set":
 		return runConfigSet(action.key, action.value)
+	case "unset":
+		return runConfigUnset(action.key)
 	default:
 		return fmt.Errorf("unknown config sub-command: %s", action.subCmd)
 	}
@@ -80,15 +92,78 @@ func runConfigSet(key, value string) error {
 	return nil
 }
 
+func runConfigUnset(key string) error {
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) != 2 || parts[0] != "custom_providers" || parts[1] == "" {
+		return fmt.Errorf("unset only supports custom_providers.<name>")
+	}
+	name := parts[1]
+
+	configPath, err := defaultConfigPath()
+	if err != nil {
+		return err
+	}
+
+	return unsetCustomProvider(configPath, name)
+}
+
+func unsetCustomProvider(configPath, name string) error {
+	cfg, err := loadOrCreateConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	wasActive, err := deleteCustomProvider(cfg, name)
+	if err != nil {
+		return err
+	}
+
+	if err := saveConfig(configPath, cfg); err != nil {
+		return err
+	}
+
+	fmt.Printf("Deleted custom provider %q.\n", name)
+	if wasActive {
+		fmt.Fprintf(os.Stderr, "[ocr] WARNING: active provider was deleted; 'provider' and 'model' have been cleared.\n")
+		fmt.Fprintf(os.Stderr, "[ocr] Run 'ocr config provider' to select a new provider.\n")
+	}
+	return nil
+}
+
+// deleteCustomProvider removes a custom provider from cfg in memory.
+// Returns true if the deleted provider was the active one.
+func deleteCustomProvider(cfg *Config, name string) (bool, error) {
+	if cfg.CustomProviders == nil {
+		return false, fmt.Errorf("custom provider %q not found", name)
+	}
+	if _, exists := cfg.CustomProviders[name]; !exists {
+		return false, fmt.Errorf("custom provider %q not found", name)
+	}
+
+	wasActive := cfg.Provider == name
+	delete(cfg.CustomProviders, name)
+	if len(cfg.CustomProviders) == 0 {
+		cfg.CustomProviders = nil
+	}
+
+	if wasActive {
+		cfg.Provider = ""
+		cfg.Model = ""
+	}
+
+	return wasActive, nil
+}
+
 // ProviderEntry holds per-provider configuration in the providers map.
 type ProviderEntry struct {
-	APIKey     string         `json:"api_key,omitempty"`
-	URL        string         `json:"url,omitempty"`
-	Protocol   string         `json:"protocol,omitempty"`
-	Model      string         `json:"model,omitempty"`
-	Models     []string       `json:"models,omitempty"`
-	AuthHeader string         `json:"auth_header,omitempty"`
-	ExtraBody  map[string]any `json:"extra_body,omitempty"`
+	APIKey       string            `json:"api_key,omitempty"`
+	URL          string            `json:"url,omitempty"`
+	Protocol     string            `json:"protocol,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	Models       []string          `json:"models,omitempty"`
+	AuthHeader   string            `json:"auth_header,omitempty"`
+	ExtraBody    map[string]any    `json:"extra_body,omitempty"`
+	ExtraHeaders map[string]string `json:"extra_headers,omitempty"`
 }
 
 // Config represents the user-level configuration file (~/.opencodereview/config.json).
@@ -103,12 +178,13 @@ type Config struct {
 }
 
 type LlmConfig struct {
-	URL          string         `json:"url,omitempty"`
-	AuthToken    string         `json:"auth_token,omitempty"`
-	AuthHeader   string         `json:"auth_header,omitempty"`
-	Model        string         `json:"model,omitempty"`
-	UseAnthropic *bool          `json:"use_anthropic,omitempty"` // nil = default true; false = OpenAI protocol
-	ExtraBody    map[string]any `json:"extra_body,omitempty"`
+	URL          string            `json:"url,omitempty"`
+	AuthToken    string            `json:"auth_token,omitempty"`
+	AuthHeader   string            `json:"auth_header,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	UseAnthropic *bool             `json:"use_anthropic,omitempty"` // nil = default true; false = OpenAI protocol
+	ExtraBody    map[string]any    `json:"extra_body,omitempty"`
+	ExtraHeaders map[string]string `json:"extra_headers,omitempty"`
 }
 
 // TelemetryConfig holds telemetry-specific settings.
@@ -210,6 +286,12 @@ func setConfigValue(cfg *Config, key, value string) error {
 			return err
 		}
 		cfg.Llm.AuthHeader = normalized
+	case "llm.extra_headers", "llm.ExtraHeaders":
+		parsed, err := llm.ParseExtraHeaders(value)
+		if err != nil {
+			return err
+		}
+		cfg.Llm.ExtraHeaders = parsed
 	case "llm.model", "llm.Model":
 		cfg.Llm.Model = value
 	case "llm.use_anthropic", "llm.UseAnthropic":
@@ -247,7 +329,7 @@ func setConfigValue(cfg *Config, key, value string) error {
 		}
 		cfg.Llm.ExtraBody = m
 	default:
-		return fmt.Errorf("unknown config key: %s\nSupported keys: provider, model, providers.<name>.<field>, custom_providers.<name>.<field>, llm.url, llm.auth_token, llm.auth_header, llm.model, llm.use_anthropic, llm.extra_body, language, telemetry.enabled, telemetry.exporter, telemetry.otlp_endpoint, telemetry.content_logging\nProvider fields: api_key, url, protocol, model, models, auth_header, extra_body", key)
+		return fmt.Errorf("unknown config key: %s\nSupported keys: provider, model, providers.<name>.<field>, custom_providers.<name>.<field>, llm.url, llm.auth_token, llm.auth_header, llm.model, llm.use_anthropic, llm.extra_body, llm.extra_headers, language, telemetry.enabled, telemetry.exporter, telemetry.otlp_endpoint, telemetry.content_logging\nProvider fields: api_key, url, protocol, model, models, auth_header, extra_body, extra_headers", key)
 	}
 	return nil
 }
@@ -283,8 +365,14 @@ func applyProviderField(entry *ProviderEntry, field, key, value string) error {
 			return fmt.Errorf("invalid JSON for %s: %w", key, err)
 		}
 		entry.ExtraBody = m
+	case "extra_headers":
+		parsed, err := llm.ParseExtraHeaders(value)
+		if err != nil {
+			return fmt.Errorf("invalid extra headers for %s: %w", key, err)
+		}
+		entry.ExtraHeaders = parsed
 	default:
-		return fmt.Errorf("unknown provider field %q: supported fields are api_key, url, protocol, model, models, auth_header, extra_body", field)
+		return fmt.Errorf("unknown provider field %q: supported fields are api_key, url, protocol, model, models, auth_header, extra_body, extra_headers", field)
 	}
 	return nil
 }
@@ -304,6 +392,16 @@ func parseModelListValue(value string) ([]string, error) {
 	}
 
 	return normalizeModelList(strings.Split(value, ",")), nil
+}
+
+func activeModelForProvider(cfg *Config, providerName string, entry ProviderEntry) string {
+	if entry.Model != "" {
+		return entry.Model
+	}
+	if cfg != nil && cfg.Provider == providerName && cfg.Model != "" {
+		return cfg.Model
+	}
+	return ""
 }
 
 func normalizeModelList(models []string) []string {
@@ -329,6 +427,19 @@ func mergeModelLists(lists ...[]string) []string {
 		merged = append(merged, list...)
 	}
 	return normalizeModelList(merged)
+}
+
+// ensureModelInList appends model to the end when missing; never reorders existing entries.
+func ensureModelInList(models []string, model string) []string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return models
+	}
+	if modelListContains(models, model) {
+		return models
+	}
+	out := append([]string(nil), models...)
+	return append(out, model)
 }
 
 func modelListContains(models []string, target string) bool {

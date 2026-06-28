@@ -9,13 +9,6 @@ import (
 	"time"
 
 	"github.com/open-code-review/open-code-review/internal/agent"
-	"github.com/open-code-review/open-code-review/internal/config/rules"
-	"github.com/open-code-review/open-code-review/internal/config/template"
-	"github.com/open-code-review/open-code-review/internal/config/toolsconfig"
-	"github.com/open-code-review/open-code-review/internal/diff"
-	"github.com/open-code-review/open-code-review/internal/gitcmd"
-	"github.com/open-code-review/open-code-review/internal/llm"
-	"github.com/open-code-review/open-code-review/internal/stdout"
 	"github.com/open-code-review/open-code-review/internal/telemetry"
 	"github.com/open-code-review/open-code-review/internal/tool"
 )
@@ -23,125 +16,76 @@ import (
 func runReview(args []string) error {
 	opts, err := parseReviewFlags(args)
 	if err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+		// parseReviewFlags already wraps with "parse flags: %w" — return as-is.
+		return err
 	}
 	if opts.showHelp {
 		printReviewUsage()
 		return nil
 	}
 
-	if err := requireGitRepo(opts.repoDir); err != nil {
+	// review path: git repo is required (diff concepts depend on it).
+	cc, err := loadCommonContext(opts.repoDir, opts.rulePath, opts.maxTools, opts.maxGitProcs, true)
+	if err != nil {
 		return err
 	}
+	applyCLIExcludes(cc, splitPaths(opts.excludes))
 
-	tpl, err := template.LoadDefault()
-	if err != nil {
-		return fmt.Errorf("load default template: %w", err)
-	}
-	if opts.maxTools > 0 {
-		tpl.MaxToolRequestTimes = opts.maxTools
-	}
-	if err := tpl.Validate(); err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
-
-	repoDir, err := resolveRepoDir(opts.repoDir)
-	if err != nil {
-		return fmt.Errorf("resolve repo: %w", err)
-	}
-	if err := validateReviewRefs(repoDir, opts); err != nil {
+	// Security (#112): reject ref-option injection before any git invocation.
+	if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
 		return err
 	}
 
 	if opts.commit != "" && opts.background == "" {
-		if msg, err := getCommitMessage(repoDir, opts.commit); err == nil && msg != "" {
+		if msg, err := getCommitMessage(cc.RepoDir, opts.commit); err == nil && msg != "" {
 			opts.background = msg
 		}
 	}
 
-	resolver, fileFilter, err := rules.NewResolver(repoDir, opts.rulePath)
-	if err != nil {
-		return fmt.Errorf("load rules: %w", err)
-	}
-
 	if opts.preview {
-		return runPreview(repoDir, opts, fileFilter)
+		return runPreview(cc, opts)
 	}
 
-	toolEntries, err := toolsconfig.Load(opts.toolConfigPath)
-	if err != nil {
-		return fmt.Errorf("load tools: %w", err)
-	}
-	planToolDefs := agent.BuildToolDefs(toolEntries, true)
-	mainToolDefs := agent.BuildToolDefs(toolEntries, false)
-
-	cfgPath, err := defaultConfigPath()
+	rt, err := loadLLMRuntime(cc.Template, opts.toolConfigPath, opts.model)
 	if err != nil {
 		return err
 	}
 
-	appCfg, err := LoadAppConfig(cfgPath)
-	if err != nil {
-		return fmt.Errorf("load app config: %w", err)
-	}
-	var lang string
-	if appCfg != nil {
-		lang = appCfg.Language
-	}
-	tpl.ApplyLanguage(lang)
-
-	ep, err := llm.ResolveEndpointWithModelOverride(cfgPath, opts.model)
-	if err != nil {
-		return fmt.Errorf("resolve LLM endpoint: %w", err)
-	}
-
-	llmClient := llm.NewLLMClient(ep)
-	model := ep.Model
-
-	gitRunner := gitcmd.New(opts.maxGitProcs)
-
-	collector := tool.NewCommentCollector()
 	mode := tool.ParseReviewMode(opts.from, opts.to, opts.commit)
 	ref, _ := mode.RefValue(opts.to, opts.commit)
 	fileReader := &tool.FileReader{
-		RepoDir: repoDir,
+		RepoDir: cc.RepoDir,
 		Mode:    mode,
 		Ref:     ref,
-		Runner:  gitRunner,
+		Runner:  cc.GitRunner,
 	}
-	tools := buildToolRegistry(collector, fileReader)
+	tools := buildToolRegistry(rt.Collector, fileReader)
 
 	ag := agent.New(agent.Args{
-		RepoDir:               repoDir,
+		RepoDir:               cc.RepoDir,
 		From:                  opts.from,
 		To:                    opts.to,
 		Commit:                opts.commit,
-		Template:              *tpl,
-		SystemRule:            resolver,
-		FileFilter:            fileFilter,
-		LLMClient:             llmClient,
+		Template:              *cc.Template,
+		SystemRule:            cc.Resolver,
+		FileFilter:            cc.FileFilter,
+		LLMClient:             rt.Client,
 		Tools:                 tools,
-		PlanToolDefs:          planToolDefs,
-		MainToolDefs:          mainToolDefs,
-		CommentCollector:      collector,
+		PlanToolDefs:          rt.PlanToolDefs,
+		MainToolDefs:          rt.MainToolDefs,
+		CommentCollector:      rt.Collector,
 		CommentWorkerPool:     agent.NewCommentWorkerPool(opts.concurrency),
 		MaxConcurrency:        opts.concurrency,
 		ConcurrentTaskTimeout: opts.perFileTimeout,
-		Model:                 model,
+		Model:                 rt.Model,
 		Background:            opts.background,
-		GitRunner:             gitRunner,
+		GitRunner:             cc.GitRunner,
 	})
 
-	// Silence progress output during execution; restore before Summary in agent mode.
-	var unsilence func()
-	if opts.outputFormat == "json" || opts.audience == "agent" {
-		unsilence = stdout.Quiet()
-		defer func() {
-			if unsilence != nil {
-				unsilence()
-			}
-		}()
-	}
+	// Silence progress output during execution; restored before the trace
+	// summary in agent-text mode (and on function exit otherwise).
+	q := newQuietHandle(opts.outputFormat, opts.audience)
+	defer q.Restore()
 
 	ctx, span := telemetry.StartSpan(context.Background(), "review.run")
 	defer span.End()
@@ -153,41 +97,7 @@ func runReview(args []string) error {
 		return fmt.Errorf("review failed: %w", err)
 	}
 
-	// Resolve line numbers by matching existing_code against diff hunks.
-	comments = diff.ResolveLineNumbers(comments, ag.Diffs())
-
-	// Record summary metrics (files_reviewed is refined by agent.Run).
-	duration := time.Since(startTime)
-	telemetry.RecordReviewDuration(ctx, duration)
-	if len(comments) > 0 {
-		telemetry.RecordCommentsGenerated(ctx, int64(len(comments)))
-	}
-
-	// If no files were reviewed (e.g. workspace has no changes), inform the caller in JSON mode.
-	if opts.outputFormat == "json" && len(comments) == 0 && ag.FilesReviewed() == 0 {
-		return outputJSONNoFiles()
-	}
-
-	// In agent mode (text output), restore stdout so Summary reaches the terminal.
-	if opts.audience == "agent" && opts.outputFormat != "json" && unsilence != nil {
-		unsilence()
-		unsilence = nil
-	}
-
-	if opts.outputFormat != "json" {
-		telemetry.PrintTraceSummary(ag.FilesReviewed(), int64(len(comments)), ag.TotalInputTokens(), ag.TotalOutputTokens(), ag.TotalTokensUsed(), ag.TotalCacheReadTokens(), ag.TotalCacheWriteTokens(), duration)
-	}
-
-	if opts.outputFormat == "json" {
-		return outputJSONWithWarnings(comments, ag.Warnings(), ag.FilesReviewed(), ag.TotalInputTokens(), ag.TotalOutputTokens(), ag.TotalTokensUsed(), ag.TotalCacheReadTokens(), ag.TotalCacheWriteTokens(), duration)
-	}
-	if opts.audience == "agent" {
-		outputTextWithWarnings(comments, ag.Warnings())
-		return nil
-	}
-	outputTextWithWarnings(comments, ag.Warnings())
-
-	return nil
+	return emitRunResult(ctx, ag, comments, startTime, opts.outputFormat, opts.audience, q)
 }
 
 func resolveRepoDir(input string) (string, error) {
@@ -222,6 +132,8 @@ func requireGitRepo(dir string) error {
 	return nil
 }
 
+// validateReviewRefs rejects ref-option injection (#112): any --from/--to/
+// --commit value must be a real commit ref and must not start with '-'.
 func validateReviewRefs(repoDir string, opts reviewOptions) error {
 	refs := []struct {
 		flag string
@@ -249,15 +161,14 @@ func validateReviewRefs(repoDir string, opts reviewOptions) error {
 	return nil
 }
 
-func runPreview(repoDir string, opts reviewOptions, fileFilter *rules.FileFilter) error {
-	gitRunner := gitcmd.New(opts.maxGitProcs)
+func runPreview(cc *commonContext, opts reviewOptions) error {
 	ag := agent.New(agent.Args{
-		RepoDir:    repoDir,
+		RepoDir:    cc.RepoDir,
 		From:       opts.from,
 		To:         opts.to,
 		Commit:     opts.commit,
-		FileFilter: fileFilter,
-		GitRunner:  gitRunner,
+		FileFilter: cc.FileFilter,
+		GitRunner:  cc.GitRunner,
 	})
 
 	preview, err := ag.Preview(context.Background())

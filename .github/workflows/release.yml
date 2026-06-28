@@ -58,9 +58,16 @@ jobs:
   release:
     needs: build
     runs-on: self-hosted
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     container:
       image: ubuntu:24.04
     steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y git
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -70,6 +77,7 @@ jobs:
 
       - name: Generate release notes from commits
         id: notes
+        shell: bash
         run: |
           CURRENT_TAG="${GITHUB_REF_NAME}"
           PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || echo "")
@@ -138,6 +146,13 @@ jobs:
         with:
           body: ${{ steps.notes.outputs.body }}
           files: |
+            opencodereview-*
+            sha256sum.txt
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
             opencodereview-*
             sha256sum.txt
 

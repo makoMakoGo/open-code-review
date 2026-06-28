@@ -16,6 +16,15 @@
   <a href="https://goreportcard.com/report/github.com/alibaba/open-code-review"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/alibaba/open-code-review?style=flat-square" /></a>
   <a href="https://github.com/alibaba/open-code-review/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/alibaba/open-code-review?style=flat-square" /></a>
   <a href="https://deepwiki.com/alibaba/open-code-review"><img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg" /></a>
+  <a href="https://www.bestpractices.dev/projects/13328"><img alt="OpenSSF Best Practices" src="https://img.shields.io/badge/OpenSSF-Silver-4C566A?style=flat-square" /></a>
+</p>
+<p align="center">
+  <a href="#supported-platforms"><img alt="Windows" src="https://img.shields.io/badge/Windows-supported-blue.svg" /></a>
+  <a href="#supported-platforms"><img alt="macOS" src="https://img.shields.io/badge/macOS-supported-blue.svg" /></a>
+  <a href="#supported-platforms"><img alt="Linux" src="https://img.shields.io/badge/Linux-supported-blue.svg" /></a>
+  <a href="#supported-agents"><img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-supported-blueviolet.svg" /></a>
+  <a href="#supported-agents"><img alt="Codex" src="https://img.shields.io/badge/Codex-supported-blueviolet.svg" /></a>
+  <a href="#supported-agents"><img alt="Cursor" src="https://img.shields.io/badge/Cursor-supported-blueviolet.svg" /></a>
 </p>
 <p align="center">
   <a href="README.md">English</a> | 简体中文 | <a href="README.ja-JP.md">日本語</a> | <a href="README.ko-KR.md">한국어</a> | <a href="README.ru-RU.md">Русский</a>
@@ -31,7 +40,7 @@
 
 Open Code Review 是一款 AI 驱动的代码审查 CLI 工具。它的前身是阿里集团内部官方 AI 代码审查助手，过去两年在内部服务了数万开发者，识别了数百万个代码缺陷。经过大规模充分验证后，我们将其孵化为开源项目，对社区开放。只需配置一个模型端点即可使用。
 
-它读取 Git diff，通过具备工具调用能力的 Agent 将变更文件发送至可配置的 LLM，生成具有行级精度的结构化审查意见。Agent 可以读取完整文件内容、搜索代码库、检查其他变更文件以获取上下文，从而进行深度审查——而非仅停留在表面的 diff 反馈。
+它读取 Git diff，通过具备工具调用能力的 Agent 将变更文件发送至可配置的 LLM，生成具有行级精度的结构化审查意见。Agent 可以读取完整文件内容、搜索代码库、检查其他变更文件以获取上下文，从而进行深度审查——而非仅停留在表面的 diff 反馈。除了 diff 审查，`ocr scan` 可以审查整个文件，适用于审计不熟悉的代码库或没有有意义 diff 的目录。
 
 ![Highlights](imgs/highlights-zh.png)
 
@@ -99,7 +108,23 @@ npm install -g @alibaba-group/open-code-review
 
 **从 GitHub Release 下载**
 
-从 [GitHub Releases](https://github.com/alibaba/open-code-review/releases) 下载最新二进制文件：
+使用一条命令为你的操作系统/架构安装最新二进制文件（macOS / Linux）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alibaba/open-code-review/main/install.sh | sh
+```
+
+该脚本会自动选择匹配的发布二进制文件，校验其 SHA-256 校验和，并将其作为 `ocr` 安装到 `/usr/local/bin`。可通过 `OCR_INSTALL_DIR` 覆盖安装目录，或通过 `OCR_VERSION` 指定发布版本：
+
+```bash
+OCR_INSTALL_DIR="$HOME/.local/bin" OCR_VERSION=v1.3.13 \
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/alibaba/open-code-review/main/install.sh)"
+```
+
+<details>
+<summary>手动下载（所有平台，包括 Windows）</summary>
+
+从 [GitHub Releases](https://github.com/alibaba/open-code-review/releases) 下载适用于你平台的二进制文件：
 
 ```bash
 # macOS (Apple Silicon)
@@ -125,6 +150,8 @@ curl -Lo ocr.exe https://github.com/alibaba/open-code-review/releases/latest/dow
 curl -Lo ocr.exe https://github.com/alibaba/open-code-review/releases/latest/download/opencodereview-windows-arm64.exe
 ```
 
+</details>
+
 **从源码构建**
 
 ```bash
@@ -140,6 +167,8 @@ sudo cp dist/opencodereview /usr/local/bin/ocr
 
 **在审查代码之前，必须先配置 LLM。**
 
+OCR 通过**供应商（Provider）**模式统一管理 LLM 配置，内置了多种主流供应商，也支持添加自定义供应商以对接私有部署或其他兼容端点。配置存储于 `~/.opencodereview/config.json`。
+
 **方式 A：交互式设置（推荐）**
 
 ```bash
@@ -149,26 +178,60 @@ ocr config model             # 为当前供应商选择模型
 
 ![Provider setup](imgs/providers.jpg)
 
-**方式 B：手动配置**
+交互式界面会引导你完成供应商选择、API Key 输入和模型配置，完成后自动测试连通性。
+
+运行 `ocr llm providers` 可查看所有内置供应商。内置供应商预设了 API 地址和协议，只需提供 API Key 即可使用。如果对应的环境变量已设置（如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`），API Key 会自动读取，无需手动输入。
+
+添加**自定义供应商**同样通过交互式界面完成 —— 需提供供应商名称、API 地址、协议类型（`anthropic` 或 `openai`）和 API Key。
+
+**方式 B：命令行设置（适用于 CI/CD 等无交互环境）**
+
+通过 `ocr config set` 命令直接写入供应商配置，适用于脚本和自动化场景。
+
+使用内置供应商：
 
 ```bash
-ocr config set llm.url https://api.anthropic.com/v1/messages
-ocr config set llm.auth_token your-api-key-here
-ocr config set llm.model claude-opus-4-6
-ocr config set llm.use_anthropic true
+ocr config set provider anthropic
+ocr config set providers.anthropic.api_key your-api-key-here
+ocr config set providers.anthropic.model claude-sonnet-4-6
 ```
 
-配置存储于 `~/.opencodereview/config.json`。
-
-**`auth_header`（可选）：** 控制使用 Anthropic 时通过哪个 HTTP header 传递 API key。省略时默认为 `authorization`（Bearer token）。如果你使用标准 `sk-ant-*` API key，需要将其设为 `x-api-key`：
+使用自定义供应商（对接私有网关或其他兼容端点）：
 
 ```bash
-ocr config set llm.auth_header x-api-key
+ocr config set provider my-gateway
+ocr config set custom_providers.my-gateway.url https://my-llm-gateway.internal/v1
+ocr config set custom_providers.my-gateway.protocol openai
+ocr config set custom_providers.my-gateway.api_key your-api-key-here
+ocr config set custom_providers.my-gateway.model gpt-4o
 ```
 
-支持的值：`x-api-key`、`authorization`（别名：`bearer`）。其他值会直接报错。
+> 自定义供应商的 `url` 和 `protocol` 为必填项。`protocol` 支持 `anthropic` 和 `openai` 两种。
 
-**方式 C：环境变量（优先级最高）**
+可选配置项：
+
+| 键 | 描述 |
+|----|------|
+| `providers.<name>.auth_header` | 认证头：`x-api-key` 或 `authorization`（默认 `authorization`） |
+| `providers.<name>.extra_body` | 合并到请求体的自定义 JSON 字段 |
+| `providers.<name>.extra_headers` | 逗号分隔的 `key=value` 键值对，为每个请求添加自定义 HTTP 头 |
+| `providers.<name>.models` | 用于交互式选择的模型列表 |
+
+**`extra_headers`（可选）：** 为每个 LLM API 请求添加自定义 HTTP 头。适用于代理、网关或需要额外头的企业端点（例如组织 ID、链路追踪 ID）。格式为逗号分隔的 `key=value` 键值对。包含逗号的值请用双引号包裹：
+
+```bash
+ocr config set llm.extra_headers "X-Org-ID=org-123,X-Forwarded-For=\"1.2.3.4,5.6.7.8\""
+```
+
+也可以按供应商单独设置额外头：
+
+```bash
+ocr config set providers.anthropic.extra_headers "X-Org-ID=org-123"
+```
+
+**环境变量（优先级最高）**
+
+环境变量会覆盖配置文件中的设置，适用于 CI/CD 场景中不便写入配置文件的情况：
 
 ```bash
 export OCR_LLM_URL=https://api.anthropic.com/v1/messages
@@ -177,14 +240,12 @@ export OCR_LLM_MODEL=claude-opus-4-6
 export OCR_USE_ANTHROPIC=true
 ```
 
-同时兼容了 Claude Code 环境变量（`ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`），并解析 `~/.zshrc` / `~/.bashrc` 中的相关导出。
+同时兼容 Claude Code 环境变量（`ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`），并解析 `~/.zshrc` / `~/.bashrc` 中的相关导出。
 
-> **CC-Switch 用户特别提醒**：如果你使用 [CC-Switch](https://github.com/farion1231/cc-switch) 并开启了[路由服务](https://www.ccswitch.io/zh/docs?section=proxy&item=service)，可以将 `llm.url` 配置成 CC-Switch 启动的代理地址，无需额外配置：
-> - 如果路由的是 **Claude** 供应商：设置 `llm.url` 为 `http://127.0.0.1:15721`
-> - 如果路由的是 **Codex** 供应商：设置 `llm.url` 为 `http://127.0.0.1:15721/v1`
-> - `llm.model` 根据你的供应商设置进行配置
-> - `llm.auth_token` 可以设置成任意值
-> - `extra_body` 设置依然生效
+> **CC-Switch 用户特别提醒**：如果你使用 [CC-Switch](https://github.com/farion1231/cc-switch) 并开启了[路由服务](https://www.ccswitch.io/zh/docs?section=proxy&item=service)，可以将供应商的 `url` 配置成 CC-Switch 启动的代理地址，无需额外配置：
+> - 路由 **Claude** 供应商：`providers.anthropic.url` 设为 `http://127.0.0.1:15721`
+> - 路由 **Codex** 供应商：对应供应商的 `url` 设为 `http://127.0.0.1:15721/v1`
+> - `api_key` 可设置为任意值，`extra_body` 设置依然生效
 
 **2. 测试连通性**
 
@@ -205,6 +266,10 @@ ocr review --from main --to feature-branch
 
 # 单个提交
 ocr review --commit abc123
+
+# 全量文件扫描 —— 审查整个文件而非 diff（无需 git 历史）
+ocr scan                          # 扫描整个仓库
+ocr scan --path internal/agent    # 扫描指定目录或文件
 ```
 
 ### 集成到编程 Agent
@@ -268,7 +333,39 @@ ocr review --audience agent
 
 韩文指南：[`plugins/open-code-review/CODEX.ko-KR.md`](plugins/open-code-review/CODEX.ko-KR.md)
 
-#### 方式四：直接复制命令文件
+#### 方式四：作为 Cursor Plugin 安装
+
+对于 [Cursor](https://www.cursor.com/)，可以从此仓库安装 Open Code Review plugin：
+
+```
+cursor-plugin marketplace add alibaba/open-code-review
+```
+
+也可以手动添加 marketplace。在 Cursor 中打开 `/plugins`，搜索 `Open Code Review` 并安装。
+
+对于本地 checkout 或 fork：
+
+```
+cursor-plugin marketplace add .
+```
+
+安装后，在 Cursor 中调用：
+
+```text
+@Open Code Review review my current changes
+@Open Code Review review this branch against main
+@Open Code Review review and fix high-confidence issues
+```
+
+这会注册一个 Cursor skill，用于运行本地 OCR CLI：
+
+```bash
+ocr review --audience agent
+```
+
+此集成不会改变 OCR 的内部 LLM backend。OCR 本身仍需要按照 CLI setup 部分安装并配置 `ocr` CLI。
+
+#### 方式五：直接复制命令文件
 
 如果不想使用任何包管理器，可以直接复制命令文件，在 Claude Code 中使用 `/open-code-review` 斜杠命令。
 
@@ -314,11 +411,13 @@ ocr review \
 
 | 命令 | 别名 | 描述 |
 |------|------|------|
-| `ocr review` | `ocr r` | 开始代码审查 |
+| `ocr review` | `ocr r` | 开始基于 diff 的代码审查 |
+| `ocr scan` | `ocr s` | 审查整个文件（无需 diff） |
 | `ocr rules check <file>` | — | 预览某个文件路径生效的审查规则 |
 | `ocr config provider` | — | 交互式供应商设置（内置、自定义或手动） |
 | `ocr config model` | — | 为当前供应商交互式选择模型 |
 | `ocr config set <key> <value>` | — | 设置配置项 |
+| `ocr config unset custom_providers.<name>` | — | 删除自定义供应商 |
 | `ocr llm test` | — | 测试 LLM 连通性 |
 | `ocr llm providers` | — | 列出内置 LLM 供应商 |
 | `ocr viewer` | `ocr v` | 启动 WebUI 会话查看器，地址 `localhost:5483` |
@@ -332,6 +431,7 @@ ocr review \
 | `--from` | — | — | 源引用（如 `main`） |
 | `--to` | — | — | 目标引用（如 `feature-branch`） |
 | `--commit` | `-c` | — | 审查单个提交 |
+| `--exclude` | — | — | 以逗号分隔的 gitignore 风格模式，用于跳过匹配文件；与 rule.json 中的 excludes 合并 |
 | `--preview` | `-p` | `false` | 预览将被审查的文件列表，不调用 LLM |
 | `--format` | `-f` | `text` | 输出格式：`text` 或 `json` |
 | `--concurrency` | — | `8` | 最大并发文件审查数 |
@@ -344,6 +444,27 @@ ocr review \
 | `--max-git-procs` | — | 内置默认 | 最大并发 git 子进程数 |
 | `--tools` | — | — | 自定义 JSON 工具配置路径 |
 
+### `ocr scan` 参数
+
+`ocr scan` 审查整个文件而非 diff —— 适用于审计不熟悉的代码库、迁移前扫描，或任何没有有意义 diff 的目录。它也可以在非 git 目录中工作（会回退到遵循 `.gitignore` 的文件系统遍历）。
+
+| 参数 | 缩写 | 默认值 | 描述 |
+|------|------|--------|------|
+| `--path` | — | 整个仓库 | 以逗号分隔的待扫描目录/文件 |
+| `--exclude` | — | — | 以逗号分隔的 gitignore 风格模式，用于跳过匹配文件；与 rule.json 中的 excludes 合并 |
+| `--preview` | `-p` | `false` | 列出将被扫描的文件，不运行 LLM |
+| `--max-tokens-budget` | — | `0`（无限制） | 限制总 token 使用量；超出后停止分发 |
+| `--no-plan` | — | `false` | 跳过按文件的规划预处理 |
+| `--no-dedup` | — | `false` | 跳过按批次的相似评论去重 |
+| `--no-summary` | — | `false` | 跳过项目级别的总结 |
+| `--batch` | — | `by-language` | 批处理策略：`none`、`by-language` 或 `by-directory` |
+| `--format` | `-f` | `text` | 输出格式：`text` 或 `json`（JSON 包含 `project_summary` 字段） |
+| `--concurrency` | — | `8` | 最大并发文件扫描数 |
+| `--rule` | — | — | 自定义 JSON 审查规则路径 |
+| `--repo` | — | 当前目录 | 要扫描的仓库或目录根路径 |
+
+每次运行前，`ocr scan` 会打印粗略的 token 费用估算。使用 `--preview` 先查看文件列表，使用 `--max-tokens-budget` 限制大型仓库的开销。
+
 ## 示例
 
 ```bash
@@ -351,6 +472,9 @@ ocr review \
 ocr config provider
 ocr config model
 ocr llm providers
+
+# 删除自定义供应商
+ocr config unset custom_providers.my-gateway
 
 # 预览将被审查的文件（不调用 LLM）
 ocr review --preview
@@ -379,6 +503,21 @@ ocr review --rule /path/to/my-rules.json
 ocr rules check src/main/java/com/example/Foo.java
 ocr rules check --rule custom.json src/main/resources/mapper/UserMapper.xml
 
+# 全量文件扫描：先预览文件列表（不调用 LLM）
+ocr scan --preview
+
+# 扫描整个仓库，限制消耗约 500k token
+ocr scan --max-tokens-budget 500000
+
+# 扫描子目录，跳过生成的/测试文件
+ocr scan --path internal --exclude '**/*_test.go,**/generated/**'
+
+# 扫描非 git 目录，使用 JSON 输出（包含 project_summary）
+ocr scan --repo /path/to/plain/dir --format json
+
+# 最快扫描：跳过规划、去重和项目总结
+ocr scan --no-plan --no-dedup --no-summary
+
 # 在浏览器中查看审查会话历史
 ocr viewer
 ocr viewer --addr :3000
@@ -404,7 +543,8 @@ OCR 通过四层优先级链解析评审规则。每层采用首次匹配原则�
   "rules": [
     {
       "path": "force-api/**/*.java",
-      "rule": "所有新方法必须对必填参数进行空值校验"
+      "rule": "所有新方法必须对必填参数进行空值校验",
+      "merge_system_rule": true
     },
     {
       "path": "**/*mapper*.xml",
@@ -415,8 +555,48 @@ OCR 通过四层优先级链解析评审规则。每层采用首次匹配原则�
 ```
 
 - `path` 支持 `**` 递归匹配和 `{java,kt}` 大括号展开。
+- `merge_system_rule` 为可选字段。设为 `true` 时，命中的内置系统规则会与该用户规则合并；否则用户规则会替换系统规则。
 - 在每一层内，规则按声明顺序评估 —— 首次匹配生效。
 - 如果规则文件不存在，将被静默跳过。
+
+**`rule` 字段同时支持内联内容和文件路径。**系统按以下顺序自动判断：
+
+1. 如果值包含换行 → **内联内容**（多行规则永远不会被当作文件路径）。
+2. 如果值是单行、不含空格、且以 `.md` / `.txt` / `.markdown` 结尾 → **文件路径**。
+   - 绝对路径（以 `/` 开头）直接使用。
+   - 相对路径在项目根目录下查找，路径穿越（如 `../../etc/passwd.md`）会被拦截。找不到则 `[WARN]` 并清空该规则（不会回退为内联）。
+   - 文件需通过安全校验：白名单扩展名、≤ 512 KB、symlink 解析后目标也必须是白名单扩展名。校验失败则清空该规则。
+3. 否则 → **内联内容**。
+
+```json
+{
+  "rules": [
+    {
+      "path": "**/*mapper*.xml",
+      "rule": "docs/sql-rules.md"
+    },
+    {
+      "path": "**/*.java",
+      "rule": "始终检查空值安全和资源泄漏"
+    },
+    {
+      "path": "**/*.go",
+      "rule": "shared/go-concurrency.md"
+    },
+    {
+      "path": "**/*.py",
+      "rule": "/Users/me/team-rules/python.md"
+    }
+  ]
+}
+```
+
+- `docs/sql-rules.md` — 相对路径，从 `<project>/docs/sql-rules.md` 加载。
+- `始终检查空值安全…` — 内联字符串，直接使用。
+- `shared/go-concurrency.md` — 相对路径，同上。
+- `/Users/me/team-rules/python.md` — 绝对路径，直接使用。
+
+> 绝对路径可以访问项目目录之外的文件，这是有意为之的设计——`rule.json` 由项目维护者编写，属于受信输入。团队可将共享规则放在统一路径下（如 `/opt/company-rules/`），无需在各项目中复制。
 
 ### 路径过滤
 
@@ -473,10 +653,14 @@ OCR 通过四层优先级链解析评审规则。每层采用首次匹配原则�
 | `providers.<name>.model` | string | 供应商模型名称 |
 | `providers.<name>.models` | array | 用于交互式选择的可选供应商模型列表 |
 | `providers.<name>.auth_header` | string | `x-api-key` \| `authorization` |
+| `providers.<name>.extra_body` | object | 合并到每个请求体的 JSON 对象 |
+| `providers.<name>.extra_headers` | string | 逗号分隔的 `key=value` HTTP 头 |
 | `custom_providers.<name>.*` | — | 与 `providers.<name>.*` 相同的字段，包括可选的 `models` |
 | `llm.url` | string | `https://api.openai.com/v1/chat/completions` |
 | `llm.auth_token` | string | `sk-xxxxxxx` |
 | `llm.auth_header` | string | 仅 Anthropic：`x-api-key` \| `authorization` |
+| `llm.extra_body` | object | 合并到每个请求体的 JSON 对象 |
+| `llm.extra_headers` | string | 逗号分隔的 `key=value` HTTP 头 |
 | `llm.model` | string | `claude-opus-4-6` |
 | `llm.use_anthropic` | boolean | `true` \| `false` |
 | `language` | string | 任意语言名称，例如 `English`、`Chinese`（默认：`English`） |
@@ -494,6 +678,7 @@ OCR 通过四层优先级链解析评审规则。每层采用首次匹配原则�
 | `OCR_LLM_URL` | LLM API 端点 URL |
 | `OCR_LLM_TOKEN` | API 密钥 / 认证令牌 |
 | `OCR_LLM_AUTH_HEADER` | Anthropic 认证头（`x-api-key` 或 `authorization`） |
+| `OCR_LLM_EXTRA_HEADERS` | 逗号分隔的 `key=value` HTTP 头 |
 | `OCR_LLM_MODEL` | 模型名称 |
 | `OCR_USE_ANTHROPIC` | `true` = Anthropic，`false` = OpenAI |
 
