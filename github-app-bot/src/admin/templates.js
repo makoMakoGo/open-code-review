@@ -909,7 +909,7 @@ button:hover { border-color: var(--cyan); background: rgba(56, 189, 248, 0.1); t
 button.primary { background: var(--brand-gradient); color: #fff; border: none; font-weight: 600; padding: 0.6rem 1.2rem; box-shadow: 0 4px 15px rgba(129, 140, 248, 0.3); }
 button.primary:hover { opacity: 0.9; box-shadow: 0 6px 20px rgba(129, 140, 248, 0.5); transform: translateY(-2px); }
 button.primary:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(129, 140, 248, 0.3); }
-.filter-reset { font-family: var(--font-sans); font-size: 11px; font-weight: 600; line-height: normal; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 0.6rem 1.2rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; align-self: flex-end; transition: all 0.2s ease; }
+.filter-reset { font-family: var(--font-sans); font-size: 11px; font-weight: 600; line-height: normal; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 0.6rem 1.2rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; transition: all 0.2s ease; }
 .filter-reset:hover { color: var(--text); border-color: var(--cyan); background: rgba(56, 189, 248, 0.1); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
 .filter-reset:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
 
