@@ -7,7 +7,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev \
-  && npm install -g @alibaba-group/open-code-review@1.3.19
+  && npm install -g @alibaba-group/open-code-review@1.6.5
 RUN useradd --create-home --uid 10001 appuser
 
 
