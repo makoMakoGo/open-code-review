@@ -112,8 +112,8 @@ ${bodyScript(cspNonce)}
 
 export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], diagnostics = [], serviceStatus = null, metrics = null, stats = null, retention = null, cspNonce = '' } = {}) {
   const cells = [
-    ['Queued', summary.queued, '', 'strip_queued'],
-    ['Running', summary.running, 'warn', 'strip_running'],
+    ['Queued', summary.queued, 'queued', 'strip_queued'],
+    ['Running', summary.running, 'run', 'strip_running'],
     ['Succeeded', summary.succeeded, 'ok', 'strip_succeeded'],
     ['Warnings', summary.succeeded_with_warnings, 'warn', 'strip_warnings'],
     ['Failed', summary.failed, 'fail', 'strip_failed'],
@@ -197,7 +197,7 @@ export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/ad
     : '';
   const rows = fields.map(renderConfigEditorRow).join('');
   const body = `<section class="card"><h2 data-i18n="h2_configuration">Configuration</h2><p><span data-i18n="admin_storage_root">Admin storage root:</span> <code>${escapeHtml(adminRoot)}</code></p>${flashHtml}${pendingHtml}<p class="muted"><span data-i18n="revision">Revision:</span> <code>${escapeHtml(revision)}</code></p></section>
-<section class="card"><h2 data-i18n="h2_edit_config">Edit configuration</h2><form method="post" action="/admin/config"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><input type="hidden" name="revision" value="${escapeAttribute(revision)}"><table class="config-table"><thead><tr><th data-i18n="th_field">Field</th><th data-i18n="th_effective">Effective value</th><th data-i18n="th_edit">Edit</th><th data-i18n="th_state">State</th></tr></thead><tbody>${rows}</tbody></table><p><button type="submit" class="primary" data-i18n="btn_save_config">save configuration</button></p></form></section>`;
+<section class="card"><h2 data-i18n="h2_edit_config">Edit configuration</h2><form method="post" action="/admin/config"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><input type="hidden" name="revision" value="${escapeAttribute(revision)}"><div class="table-scroll"><table class="config-table"><thead><tr><th data-i18n="th_field">Field</th><th data-i18n="th_effective">Effective value</th><th data-i18n="th_edit">Edit</th><th data-i18n="th_state">State</th></tr></thead><tbody>${rows}</tbody></table></div><p><button type="submit" class="primary" data-i18n="btn_save_config">save configuration</button></p></form></section>`;
   return renderLayout({ title: 'Config', active: 'config', csrfToken, body, titleKey: 'page_config', cspNonce });
 }
 
@@ -278,7 +278,7 @@ export function renderJobsTable(jobs) {
     const idCell = id ? `<a href="/admin/jobs/${escapeAttribute(id)}"><code>${safeDisplay(id)}</code></a>` : '';
     return `<tr><td>${idCell}</td><td><span class="status">${statusDot(status)}${safeDisplay(status)}</span></td><td>${safeDisplay(repo)}</td><td>${safeDisplay(job?.pullNumber)}</td><td>${safeDisplay(actor)}</td><td><code>${safeDisplay(diagnosticId)}</code></td><td>${safeDisplay(formatDate(queuedAt))}</td></tr>`;
   }).join('');
-  return `<table><thead><tr><th data-i18n="th_job_id">Job ID</th><th data-i18n="th_status">Status</th><th data-i18n="th_repository">Repository</th><th data-i18n="th_pr">PR</th><th data-i18n="th_actor">Actor</th><th data-i18n="th_diag_id">Diagnostic ID</th><th data-i18n="th_queued">Queued</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<div class="table-scroll"><table><thead><tr><th data-i18n="th_job_id">Job ID</th><th data-i18n="th_status">Status</th><th data-i18n="th_repository">Repository</th><th data-i18n="th_pr">PR</th><th data-i18n="th_actor">Actor</th><th data-i18n="th_diag_id">Diagnostic ID</th><th data-i18n="th_queued">Queued</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function renderDiagnosticsList(diagnostics) {
@@ -336,18 +336,48 @@ function formatScalarValue(value) {
   return String(value);
 }
 
+const STATE_OPTIONS = [
+  ['succeeded', 'st_succeeded'],
+  ['succeeded_with_warnings', 'st_succeeded_with_warnings'],
+  ['failed', 'st_failed'],
+  ['running', 'st_running'],
+  ['queued', 'st_queued'],
+  ['interrupted', 'st_interrupted'],
+  ['stale', 'st_stale'],
+  ['skipped', 'st_skipped'],
+];
+const FAILURE_KIND_OPTIONS = [
+  ['job_timeout', 'fk_job_timeout'],
+  ['ocr_config_error', 'fk_ocr_config_error'],
+  ['provider_rate_limited', 'fk_provider_rate_limited'],
+  ['provider_auth_failed', 'fk_provider_auth_failed'],
+  ['provider_unavailable', 'fk_provider_unavailable'],
+  ['ocr_runtime_error', 'fk_ocr_runtime_error'],
+  ['git_error', 'fk_git_error'],
+  ['github_rate_limited', 'fk_github_rate_limited'],
+  ['github_api_error', 'fk_github_api_error'],
+  ['bot_runtime_error', 'fk_bot_runtime_error'],
+  ['invalid_ocr_output', 'fk_invalid_ocr_output'],
+];
+
+function renderFilterSelect(name, value, options, allKey) {
+  const current = String(value ?? '').trim().toLowerCase();
+  const all = `<option value="" data-i18n="${allKey}">${escapeHtml(I18N.en[allKey] ?? 'all')}</option>`;
+  const rest = options.map(([v, key]) => `<option value="${escapeAttribute(v)}" data-i18n="${key}"${v.toLowerCase() === current ? ' selected' : ''}>${escapeHtml(I18N.en[key] ?? v)}</option>`).join('');
+  return `<select name="${name}">${all}${rest}</select>`;
+}
+
 function renderJobsFilterForm(filters, pagination) {
   const size = pagination?.pageSize ?? filters.pageSize ?? 50;
   return `<form method="get" action="/admin/jobs" class="inline">
 <label><span data-i18n="f_owner">Owner</span> <input name="owner" value="${escapeAttribute(filters.owner ?? '')}"></label>
 <label><span data-i18n="f_repository">Repository</span> <input name="repository" value="${escapeAttribute(filters.repository ?? filters.repo ?? '')}"></label>
-<label><span data-i18n="f_state">State/outcome</span> <input name="state" value="${escapeAttribute(filters.state ?? filters.status ?? filters.outcome ?? '')}"></label>
-<label><span data-i18n="f_failure_kind">Failure kind</span> <input name="failureKind" value="${escapeAttribute(filters.failureKind ?? '')}"></label>
+<label><span data-i18n="f_state">State/outcome</span> ${renderFilterSelect('state', filters.state ?? filters.status ?? filters.outcome, STATE_OPTIONS, 'f_all')}</label>
+<label><span data-i18n="f_failure_kind">Failure kind</span> ${renderFilterSelect('failureKind', filters.failureKind, FAILURE_KIND_OPTIONS, 'f_all')}</label>
 <label><span data-i18n="f_diag_id">Diagnostic ID</span> <input name="diagnosticId" value="${escapeAttribute(filters.diagnosticId ?? '')}"></label>
-<label><span data-i18n="f_from">From</span> <input name="from" type="date" value="${escapeAttribute(filters.from ?? '')}"></label>
-<label><span data-i18n="f_to">To</span> <input name="to" type="date" value="${escapeAttribute(filters.to ?? '')}"></label>
+<div class="field-group"><label><span data-i18n="f_from">From</span> <input name="from" type="date" value="${escapeAttribute(filters.from ?? '')}"></label><label><span data-i18n="f_to">To</span> <input name="to" type="date" value="${escapeAttribute(filters.to ?? '')}"></label></div>
 <input type="hidden" name="size" value="${escapeAttribute(size)}">
-<button type="submit" class="primary" data-i18n="btn_apply">apply</button></form>`;
+<button type="submit" class="primary" data-i18n="btn_apply">apply</button><a class="filter-reset" href="/admin/jobs" data-i18n="btn_reset">reset</a></form>`;
 }
 
 function renderPagination(filters, pagination) {
@@ -418,7 +448,7 @@ function renderMetricsTrends(metrics) {
   const windows = stats.windows ?? {};
   if (!stats.total && Object.keys(windows).length === 0) return '';
   const rows = ['24h', '7d', '30d'].map((name) => renderMetricsWindowRow(name, windows[name] ?? {})).join('');
-  return `<section class="card"><h2 data-i18n="h2_metrics">Metrics and trends</h2>${renderMetricsSummary(stats.total)}<table><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="m_repo_rate">Repository success rate</th><th data-i18n="th_trend">Trend</th></tr></thead><tbody>${rows}</tbody></table>${renderDailyTrend(stats.dailyTrend ?? [])}</section>`;
+  return `<section class="card"><h2 data-i18n="h2_metrics">Metrics and trends</h2>${renderMetricsSummary(stats.total)}<div class="table-scroll"><table><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="m_repo_rate">Repository success rate</th><th data-i18n="th_trend">Trend</th></tr></thead><tbody>${rows}</tbody></table></div>${renderDailyTrend(stats.dailyTrend ?? [])}</section>`;
 }
 
 function renderMetricsWindowRow(name, bucket) {
@@ -445,7 +475,7 @@ function renderMetricsSummary(bucket) {
 function renderDailyTrend(dailyTrend) {
   if (!Array.isArray(dailyTrend) || dailyTrend.length === 0) return '<h3 data-i18n="m_daily_trend">Daily trend</h3><p class="empty" data-i18n="empty_daily">No daily trend data.</p>';
   const rows = dailyTrend.map(day => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(averageComment(day, 'generated')))}</td><td>${safeDisplay(numberOrDash(averageComment(day, 'posted')))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('');
-  return `<h3 data-i18n="m_daily_trend">Daily trend</h3><table><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<h3 data-i18n="m_daily_trend">Daily trend</h3><div class="table-scroll"><table><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function averageComment(bucket, kind) {
@@ -492,7 +522,7 @@ function repositorySuccessRateFromCount(details, value) {
 function renderPhaseTimeline(timeline) {
   if (!Array.isArray(timeline) || timeline.length === 0) return '<p class="empty" data-i18n="empty_phase_timeline">No phase timeline.</p>';
   const rows = timeline.map(item => `<tr><td>${safeDisplay(formatDate(item.timestamp))}</td><td>${safeDisplay(item.label ?? item.phase ?? '')}</td><td>${safeDisplay(item.phase ?? '')}</td><td>${safeDisplay(item.message ?? '')}</td><td>${safeDisplay(item.source ?? '')}</td></tr>`).join('');
-  return `<table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_event">Event</th><th data-i18n="th_phase">Phase</th><th data-i18n="th_message">Message</th><th data-i18n="th_source">Source</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<div class="table-scroll"><table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_event">Event</th><th data-i18n="th_phase">Phase</th><th data-i18n="th_message">Message</th><th data-i18n="th_source">Source</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderTrendBar(bucket) {
@@ -519,7 +549,7 @@ function renderKeyValueTable(values) {
   const entries = Object.entries(objectValue(values)).filter(([key]) => !isSecretKey(key));
   if (entries.length === 0) return '<p class="empty" data-i18n="empty_runtime">No runtime settings.</p>';
   const rows = entries.sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `<tr><th scope="row">${safeDisplay(key)}</th><td>${safeDisplay(formatDisplayValue(redactConfigValue(key, value)))}</td></tr>`).join('');
-  return `<table><tbody>${rows}</tbody></table>`;
+  return `<div class="table-scroll"><table><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderObjectList(items) {
@@ -536,7 +566,7 @@ function renderLogs(logs) {
   if (!logs || !Array.isArray(logs.entries) || logs.entries.length === 0) return '<p class="empty" data-i18n="empty_logs">No retained logs.</p>';
   const rows = logs.entries.map(entry => `<tr><td>${safeDisplay(formatDate(entry.timestamp))}</td><td>${safeDisplay(entry.level)}</td><td>${safeDisplay(entry.message)}</td><td>${safeDisplay(formatDisplayValue(entry.fields ?? {}))}</td></tr>`).join('');
   const note = logs.degraded ? '<p class="alert" data-i18n="logs_degraded">Log history is degraded.</p>' : '';
-  return `${note}<table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_level">Level</th><th data-i18n="th_message">Message</th><th data-i18n="th_fields">Fields</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `${note}<div class="table-scroll"><table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_level">Level</th><th data-i18n="th_message">Message</th><th data-i18n="th_fields">Fields</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function collectJobWarnings(job, result) {
@@ -652,7 +682,7 @@ const I18N = {
     m_avg_gen: 'Avg comments generated', m_avg_post: 'Avg comments posted', m_stale: 'Stale', m_skipped: 'Skipped', m_interrupted: 'Interrupted',
     m_fail_class: 'Failure classification', m_repo_rate: 'Repository success rate', m_daily_trend: 'Daily trend', empty_daily: 'No daily trend data.',
     th_window: 'Window', th_jobs: 'Jobs', th_success_rate: 'Success rate', th_trend: 'Trend', th_day: 'Day',
-    h2_jobs: 'Jobs', f_owner: 'Owner', f_repository: 'Repository', f_state: 'State/outcome', f_failure_kind: 'Failure kind', f_diag_id: 'Diagnostic ID', f_from: 'From', f_to: 'To', btn_apply: 'apply',
+    h2_jobs: 'Jobs', f_owner: 'Owner', f_repository: 'Repository', f_state: 'State/outcome', f_failure_kind: 'Failure kind', f_diag_id: 'Diagnostic ID', f_from: 'From', f_to: 'To', btn_apply: 'apply', f_all: 'all', btn_reset: 'reset', st_succeeded: 'Succeeded', st_succeeded_with_warnings: 'Succeeded with warnings', st_failed: 'Failed', st_running: 'Running', st_queued: 'Queued', st_interrupted: 'Interrupted', st_stale: 'Stale', st_skipped: 'Skipped', fk_job_timeout: 'Job timeout', fk_ocr_config_error: 'OCR config error', fk_provider_rate_limited: 'Provider rate limited', fk_provider_auth_failed: 'Provider auth failed', fk_provider_unavailable: 'Provider unavailable', fk_ocr_runtime_error: 'OCR runtime error', fk_git_error: 'Git error', fk_github_rate_limited: 'GitHub rate limited', fk_github_api_error: 'GitHub API error', fk_bot_runtime_error: 'Bot runtime error', fk_invalid_ocr_output: 'Invalid OCR output',
     th_job_id: 'Job ID', th_status: 'Status', th_repository: 'Repository', th_pr: 'PR', th_actor: 'Actor', th_diag_id: 'Diagnostic ID', th_queued: 'Queued', btn_prev: 'prev', btn_next: 'next',
     back_jobs: '← jobs', h2_job_detail: 'Job detail', jd_repo_pr: 'Repository / PR', jd_actor: 'Actor', jd_job_id: 'Job ID', jd_diag_id: 'Diagnostic ID',
     jd_queued: 'Queued', jd_started: 'Started', jd_finished: 'Finished', jd_queue_wait: 'Queue wait', jd_duration: 'Duration', jd_phase_status: 'Phase / status',
@@ -685,7 +715,7 @@ const I18N = {
     m_avg_gen: '平均生成评论', m_avg_post: '平均发表评论', m_stale: '过期', m_skipped: '跳过', m_interrupted: '中断',
     m_fail_class: '失败分类', m_repo_rate: '仓库成功率', m_daily_trend: '每日趋势', empty_daily: '暂无每日趋势数据。',
     th_window: '时间窗', th_jobs: '任务数', th_success_rate: '成功率', th_trend: '趋势', th_day: '日期',
-    h2_jobs: '任务', f_owner: '所有者', f_repository: '仓库', f_state: '状态/结果', f_failure_kind: '失败类型', f_diag_id: '诊断 ID', f_from: '起', f_to: '止', btn_apply: '应用',
+    h2_jobs: '任务', f_owner: '所有者', f_repository: '仓库', f_state: '状态/结果', f_failure_kind: '失败类型', f_diag_id: '诊断 ID', f_from: '起', f_to: '止', btn_apply: '应用', f_all: '全部', btn_reset: '重置', st_succeeded: '成功', st_succeeded_with_warnings: '带警告成功', st_failed: '失败', st_running: '运行中', st_queued: '排队', st_interrupted: '中断', st_stale: '过期', st_skipped: '跳过', fk_job_timeout: '任务超时', fk_ocr_config_error: 'OCR 配置错误', fk_provider_rate_limited: '服务商限流', fk_provider_auth_failed: '服务商鉴权失败', fk_provider_unavailable: '服务商不可用', fk_ocr_runtime_error: 'OCR 运行错误', fk_git_error: 'Git 错误', fk_github_rate_limited: 'GitHub 限流', fk_github_api_error: 'GitHub API 错误', fk_bot_runtime_error: 'Bot 运行错误', fk_invalid_ocr_output: 'OCR 输出无效',
     th_job_id: '任务 ID', th_status: '状态', th_repository: '仓库', th_pr: 'PR', th_actor: '触发者', th_diag_id: '诊断 ID', th_queued: '入队时间', btn_prev: '上一页', btn_next: '下一页',
     back_jobs: '← 任务', h2_job_detail: '任务详情', jd_repo_pr: '仓库 / PR', jd_actor: '触发者', jd_job_id: '任务 ID', jd_diag_id: '诊断 ID',
     jd_queued: '入队时间', jd_started: '开始时间', jd_finished: '结束时间', jd_queue_wait: '排队等待', jd_duration: '耗时', jd_phase_status: '阶段 / 状态',
@@ -845,9 +875,14 @@ h1.page-title { font-size: 28px; color: var(--text); margin: 0 0 2rem; font-weig
 .strip .cell--warn::before { background: var(--amber); }
 .strip .num.fail { color: var(--red); text-shadow: 0 0 20px rgba(248, 113, 113, 0.4); }
 .strip .cell--fail::before { background: var(--red); }
+.strip .num.run { color: var(--cyan); text-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
+.strip .cell--run::before { background: var(--cyan); }
+.strip .num.queued { color: var(--muted); }
+.strip .cell--queued::before { background: var(--muted); }
 .strip .lab { text-transform: uppercase; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); margin-top: 0.75rem; }
 
-table { width: 100%; display: block; overflow-x: auto; border-collapse: separate; border-spacing: 0; font-size: 13.5px; margin: 0.5rem 0; }
+.table-scroll { overflow-x: auto; margin: 0.5rem 0; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
 th, td { padding: 0.8rem 1rem; border-bottom: 1px solid var(--border); text-align: left; }
 thead th { text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; background: rgba(0,0,0,0.2); border-top: 1px solid var(--border); }
 thead th:first-child { border-top-left-radius: 8px; border-left: 1px solid var(--border); }
@@ -868,19 +903,23 @@ tbody tr:last-child td:last-child { border-bottom-right-radius: 8px; }
 
 @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }
 
-button, input { font-family: var(--font-sans); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 13.5px; transition: all 0.2s ease; }
+button, input, select { font-family: var(--font-sans); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 13.5px; transition: all 0.2s ease; }
 button { cursor: pointer; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; }
 button:hover { border-color: var(--cyan); background: rgba(56, 189, 248, 0.1); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
 button.primary { background: var(--brand-gradient); color: #fff; border: none; font-weight: 600; padding: 0.6rem 1.2rem; box-shadow: 0 4px 15px rgba(129, 140, 248, 0.3); }
 button.primary:hover { opacity: 0.9; box-shadow: 0 6px 20px rgba(129, 140, 248, 0.5); transform: translateY(-2px); }
 button.primary:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(129, 140, 248, 0.3); }
+.filter-reset { font-family: var(--font-sans); font-size: 11px; font-weight: 600; line-height: normal; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 0.6rem 1.2rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; transition: all 0.2s ease; }
+.filter-reset:hover { color: var(--text); border-color: var(--cyan); background: rgba(56, 189, 248, 0.1); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
+.filter-reset:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
 
-input:focus { border-color: var(--cyan); outline: none; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2); }
+input:focus, select:focus { border-color: var(--cyan); outline: none; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2); }
 input[type=radio], input[type=checkbox] { accent-color: var(--cyan); width: 1.2em; height: 1.2em; cursor: pointer; }
 
 .inline { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1.5rem; }
 .inline label { display: grid; gap: 0.4rem; font-size: 11px; text-transform: uppercase; font-weight: 600; color: var(--muted); }
-.inline input { min-width: 140px; }
+.inline input, .inline select { min-width: 140px; }
+.inline .field-group { display: flex; gap: 1rem; }
 
 .alert { display: flex; gap: 0.75rem; background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.2); border-left: 4px solid var(--red); color: var(--text); padding: 1rem; border-radius: var(--radius); margin-bottom: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
 .alert::before { content: "!"; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: var(--red); color: #000; font-weight: bold; border-radius: 50%; font-size: 12px; }
@@ -946,7 +985,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   dl dt { margin-top: 0.8rem; border-bottom: none; padding-bottom: 0; }
   dl dd { padding-top: 0; }
   .inline { flex-direction: column; align-items: stretch; }
-  .inline input { width: 100%; }
+  .inline input, .inline select { width: 100%; }
 }
 
 .toggles { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
