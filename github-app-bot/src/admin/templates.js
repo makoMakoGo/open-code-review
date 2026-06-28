@@ -913,12 +913,12 @@ button.primary:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(129
 .filter-reset:hover { color: var(--text); border-color: var(--cyan); background: rgba(56, 189, 248, 0.1); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
 .filter-reset:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
 
-input:focus { border-color: var(--cyan); outline: none; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2); }
+input:focus, select:focus { border-color: var(--cyan); outline: none; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2); }
 input[type=radio], input[type=checkbox] { accent-color: var(--cyan); width: 1.2em; height: 1.2em; cursor: pointer; }
 
 .inline { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1.5rem; }
 .inline label { display: grid; gap: 0.4rem; font-size: 11px; text-transform: uppercase; font-weight: 600; color: var(--muted); }
-.inline input { min-width: 140px; }
+.inline input, .inline select { min-width: 140px; }
 .inline .field-group { display: flex; gap: 1rem; }
 
 .alert { display: flex; gap: 0.75rem; background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.2); border-left: 4px solid var(--red); color: var(--text); padding: 1rem; border-radius: var(--radius); margin-bottom: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
@@ -985,7 +985,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   dl dt { margin-top: 0.8rem; border-bottom: none; padding-bottom: 0; }
   dl dd { padding-top: 0; }
   .inline { flex-direction: column; align-items: stretch; }
-  .inline input { width: 100%; }
+  .inline input, .inline select { width: 100%; }
 }
 
 .toggles { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
