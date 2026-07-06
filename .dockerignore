@@ -1,0 +1,19 @@
+# Never send local secrets or runtime state into Docker builds.
+.git
+.claude
+.omo
+
+**/node_modules
+**/.DS_Store
+**/*.log
+
+# Bot-local runtime files. These stay mounted at runtime.
+github-app-bot/config
+github-app-bot/data
+github-app-bot/node_modules
+
+# Build/test outputs.
+dist
+coverage.out
+.github
+pages/node_modules

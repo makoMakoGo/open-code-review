@@ -1,7 +1,15 @@
 services:
   open-code-review-github-app-bot:
     build:
-      context: .
+      context: ..
+      dockerfile: github-app-bot/Dockerfile
+      args:
+        GO_IMAGE: ${GO_IMAGE:-golang:1.25.5-bookworm}
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-bookworm-slim}
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+        OCR_VERSION: ${OCR_VERSION:-source}
+        OCR_GIT_COMMIT: ${OCR_GIT_COMMIT:-unknown}
+        OCR_BUILD_DATE: ${OCR_BUILD_DATE:-unknown}
     image: local/open-code-review-github-app-bot:0.1.0
     container_name: open-code-review-github-app-bot
     restart: unless-stopped
