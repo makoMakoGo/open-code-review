@@ -42,6 +42,8 @@ Open Code Review is an AI-powered code review CLI tool. It originated as Alibaba
 
 It reads Git diffs, sends changed files to a configurable LLM via an agent with tool-use capabilities, and generates structured review comments with line-level precision. The agent can read full file contents, search the codebase, inspect other changed files for context, and produce deep reviews — not just surface-level diff feedback. Beyond diff review, `ocr scan` reviews entire files for auditing unfamiliar codebases or directories that have no meaningful diff.
 
+Visit the [official website](https://alibaba.github.io/open-code-review/) for more details.
+
 ![Highlights](imgs/highlights-en.png)
 
 ## Benchmark
@@ -93,6 +95,10 @@ The agent's strengths are concentrated where they matter most — dynamic decisi
 - **Scenario-tuned toolset** — Distilled from deep analysis of tool-call traces in large-scale production data — including call frequency distributions, per-tool repetition rates, and the impact of new tools on the overall call chain — resulting in a purpose-built toolset that is more stable and predictable for code review than a generic agent toolkit.
 
 ## How to Use
+
+### Prerequisites
+
+- **Git >= 2.41** — Open Code Review relies on Git for diff generation, code search, and repository operations.
 
 ### CLI
 
@@ -408,6 +414,7 @@ See the [`examples/`](./examples/) directory for integration examples:
 
 - [`github_actions/`](./examples/github_actions/) — GitHub Actions integration example
 - [`gitlab_ci/`](./examples/gitlab_ci/) — GitLab CI integration example
+- [`gitflic_ci/`](./examples/gitflic_ci/) — GitFlic CI integration example
 
 ## Commands
 
@@ -669,15 +676,22 @@ Config file: `~/.opencodereview/config.json`
 | `providers.<name>.models` | array | Optional provider model list for interactive selection |
 | `providers.<name>.auth_header` | string | `x-api-key` \| `authorization` |
 | `providers.<name>.extra_body` | object | JSON object merged into every request body |
+| `providers.<name>.timeout_sec` | integer | Per-request HTTP timeout in seconds (default: `300`) |
 | `providers.<name>.extra_headers` | string | Comma-separated `key=value` HTTP headers |
 | `custom_providers.<name>.*` | — | Same fields as `providers.<name>.*`, including optional `models` |
 | `llm.url` | string | `https://api.openai.com/v1/chat/completions` |
 | `llm.auth_token` | string | `sk-xxxxxxx` |
 | `llm.auth_header` | string | Anthropic only: `x-api-key` \| `authorization` |
 | `llm.extra_body` | object | JSON object merged into every request body |
+| `llm.timeout_sec` | integer | Per-request HTTP timeout in seconds (default: `300`) |
 | `llm.extra_headers` | string | Comma-separated `key=value` HTTP headers |
 | `llm.model` | string | `claude-opus-4-6` |
 | `llm.use_anthropic` | boolean | `true` \| `false` |
+| `mcp_servers.<name>.command` | string | Command to start the MCP server |
+| `mcp_servers.<name>.args` | array | Command-line arguments for the MCP server |
+| `mcp_servers.<name>.env` | array | Environment variables in `KEY=VALUE` format |
+| `mcp_servers.<name>.tools` | array | Allowed tool names (empty = all tools) |
+| `mcp_servers.<name>.setup` | string | Setup command to run before starting the server |
 | `language` | string | Any language name, e.g. `English`, `Chinese` (default: `English`) |
 | `telemetry.enabled` | boolean | `true` \| `false` |
 | `telemetry.exporter` | string | `console` \| `otlp` |
@@ -685,6 +699,43 @@ Config file: `~/.opencodereview/config.json`
 | `telemetry.content_logging` | boolean | Include prompts in telemetry |
 
 Environment variables take precedence over the config file.
+
+### MCP Server
+
+Open Code Review supports [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers, allowing the review agent to use external tools during code review via the stdio transport.
+
+Configure MCP servers via the CLI:
+
+```bash
+# Add an MCP server
+ocr config set mcp_servers.<name>.command <command>
+ocr config set mcp_servers.<name>.args '["arg1","arg2"]'
+ocr config set mcp_servers.<name>.env '["KEY=VALUE"]'
+ocr config set mcp_servers.<name>.tools '["tool_name"]'
+ocr config set mcp_servers.<name>.setup '<setup command>'
+
+# Delete an MCP server
+ocr config unset mcp_servers.<name>
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `command` | Yes | The executable command to start the MCP server |
+| `args` | No | Command-line arguments passed to the server |
+| `env` | No | Environment variables in `KEY=VALUE` format |
+| `tools` | No | Allowed tool names; if empty, all tools from the server are available |
+| `setup` | No | A shell command to run before starting the server (e.g. build an index) |
+
+> **Note:** If an MCP tool's name conflicts with a built-in tool, it will be skipped with a warning. The `setup` command has a 5-minute timeout.
+
+**Example: Add [CodeGraph](https://github.com/nicholasgasior/codegraph) for code structure analysis**
+
+```bash
+ocr config set mcp_servers.codegraph.command codegraph
+ocr config set mcp_servers.codegraph.args '["serve","--mcp"]'
+ocr config set mcp_servers.codegraph.tools '["codegraph_explore"]'
+ocr config set mcp_servers.codegraph.setup 'codegraph init && codegraph index'
+```
 
 ### Environment Variables
 
@@ -695,6 +746,7 @@ Environment variables take precedence over the config file.
 | `OCR_LLM_AUTH_HEADER` | Anthropic auth header (`x-api-key` or `authorization`) |
 | `OCR_LLM_EXTRA_HEADERS` | Comma-separated `key=value` HTTP headers |
 | `OCR_LLM_MODEL` | Model name |
+| `OCR_LLM_TIMEOUT` | Per-request HTTP timeout in seconds (overrides config file `timeout_sec`) |
 | `OCR_USE_ANTHROPIC` | `true` = Anthropic, `false` = OpenAI |
 
 

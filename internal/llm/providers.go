@@ -169,6 +169,19 @@ var registry = []Provider{
 		},
 	},
 	{
+		Name:        "z-ai-coding",
+		DisplayName: "Z.AI Coding Plan API",
+		Protocol:    "openai",
+		BaseURL:     "https://open.bigmodel.cn/api/coding/paas/v4",
+		EnvVar:      "Z_AI_CODING_API_KEY",
+		Models: []string{
+			"glm-5.2",
+			"glm-5.1",
+			"glm-5-turbo",
+			"glm-4.7",
+		},
+	},
+	{
 		Name:        "mimo",
 		DisplayName: "Xiaomi MiMo API",
 		Protocol:    "openai",

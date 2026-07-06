@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trust workspace
-        run: git config --global safe.directory '*'
+        run: git config --global --replace-all safe.directory '*'
 
       - name: Vet
         run: go vet ./...

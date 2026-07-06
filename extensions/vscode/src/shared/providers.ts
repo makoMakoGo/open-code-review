@@ -96,6 +96,14 @@ export const PROVIDER_PRESETS: OcrProviderPreset[] = [
     models: ['glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7'],
   },
   {
+    name: 'z-ai-coding',
+    displayName: 'Z.AI Coding Plan API',
+    protocol: 'openai',
+    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    envVar: 'Z_AI_CODING_API_KEY',
+    models: ['glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7'],
+  },
+  {
     name: 'mimo',
     displayName: 'Xiaomi MiMo API',
     protocol: 'openai',

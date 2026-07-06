@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trust workspace
-        run: git config --global safe.directory '*'
+        run: git config --global --replace-all safe.directory '*'
 
       - name: Build
         env:
@@ -73,7 +73,7 @@ jobs:
           fetch-depth: 0
 
       - name: Trust workspace
-        run: git config --global safe.directory '*'
+        run: git config --global --replace-all safe.directory '*'
 
       - name: Generate release notes from commits
         id: notes
@@ -160,14 +160,14 @@ jobs:
     needs: release
     runs-on: self-hosted
     container:
-      image: node:20
+      image: node:24
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Trust workspace
-        run: git config --global safe.directory '*'
+        run: git config --global --replace-all safe.directory '*'
 
       - name: Install jq
         run: apt-get update && apt-get install -y jq

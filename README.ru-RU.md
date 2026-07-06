@@ -38,6 +38,8 @@ Open Code Review — это CLI-инструмент для код-ревью н
 
 Инструмент читает git-диффы, отправляет изменённые файлы настраиваемой LLM через агента с поддержкой вызова инструментов (tool use) и генерирует структурированные ревью-комментарии с точностью до строки. Агент может читать полное содержимое файлов, искать по кодовой базе, заглядывать в другие изменённые файлы за контекстом и выполнять глубокое ревью — а не только давать поверхностные замечания по диффу. Помимо ревью диффов, `ocr scan` позволяет проверять файлы целиком — удобно для аудита незнакомой кодовой базы или каталогов без значимого диффа.
 
+Подробнее на [официальном сайте](https://alibaba.github.io/open-code-review/).
+
 ![Highlights](imgs/highlights-en.png)
 
 ## Бенчмарк
@@ -89,6 +91,10 @@ Open Code Review — это CLI-инструмент для код-ревью н
 - **Набор инструментов, заточенный под сценарий** — выведен из глубокого анализа трейсов вызовов инструментов на больших продакшен-данных, включая распределение частоты вызовов, долю повторных вызовов каждого инструмента и влияние новых инструментов на всю цепочку вызовов. В результате получился специализированный набор инструментов, который для код-ревью стабильнее и предсказуемее, чем универсальный агентский тулкит.
 
 ## Как использовать
+
+### Предварительные требования
+
+- **Git >= 2.41** — Open Code Review использует Git для генерации diff, поиска по коду и операций с репозиторием.
 
 ### CLI
 
@@ -404,6 +410,7 @@ ocr review \
 
 - [`github_actions/`](./examples/github_actions/) — пример интеграции с GitHub Actions
 - [`gitlab_ci/`](./examples/gitlab_ci/) — пример интеграции с GitLab CI
+- [`gitflic_ci/`](./examples/gitflic_ci/) — пример интеграции с GitFlic CI
 
 ## Команды
 
@@ -662,15 +669,22 @@ OCR разрешает правила ревью по цепочке приор�
 | `providers.<name>.models` | array | Необязательный список моделей для интерактивного выбора |
 | `providers.<name>.auth_header` | string | `x-api-key` \| `authorization` |
 | `providers.<name>.extra_body` | object | JSON-объект, добавляемый в каждое тело запроса |
+| `providers.<name>.timeout_sec` | integer | Таймаут HTTP-запроса в секундах, по умолчанию `300` |
 | `providers.<name>.extra_headers` | string | HTTP-заголовки `key=value` через запятую |
 | `custom_providers.<name>.*` | — | Те же поля, что и `providers.<name>.*`, включая необязательное `models` |
 | `llm.url` | string | `https://api.openai.com/v1/chat/completions` |
 | `llm.auth_token` | string | `sk-xxxxxxx` |
 | `llm.auth_header` | string | Только для Anthropic: `x-api-key` \| `authorization` |
 | `llm.extra_body` | object | JSON-объект, добавляемый в каждое тело запроса |
+| `llm.timeout_sec` | integer | Таймаут HTTP-запроса в секундах, по умолчанию `300` |
 | `llm.extra_headers` | string | HTTP-заголовки `key=value` через запятую |
 | `llm.model` | string | `claude-opus-4-6` |
 | `llm.use_anthropic` | boolean | `true` \| `false` |
+| `mcp_servers.<name>.command` | string | Команда для запуска MCP-сервера |
+| `mcp_servers.<name>.args` | array | Аргументы командной строки для MCP-сервера |
+| `mcp_servers.<name>.env` | array | Переменные окружения в формате `KEY=VALUE` |
+| `mcp_servers.<name>.tools` | array | Разрешённые имена инструментов (пусто = все инструменты) |
+| `mcp_servers.<name>.setup` | string | Команда настройки перед запуском сервера |
 | `language` | string | Любое название языка, например `English`, `Chinese` (по умолчанию: `English`) |
 | `telemetry.enabled` | boolean | `true` \| `false` |
 | `telemetry.exporter` | string | `console` \| `otlp` |
@@ -678,6 +692,43 @@ OCR разрешает правила ревью по цепочке приор�
 | `telemetry.content_logging` | boolean | Включать промпты в телеметрию |
 
 Переменные окружения имеют приоритет над файлом конфигурации.
+
+### MCP-сервер
+
+Open Code Review поддерживает серверы [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), позволяя агенту ревью использовать внешние инструменты во время проверки кода через stdio-транспорт.
+
+Настройка MCP-серверов через CLI:
+
+```bash
+# Добавить MCP-сервер
+ocr config set mcp_servers.<name>.command <command>
+ocr config set mcp_servers.<name>.args '["arg1","arg2"]'
+ocr config set mcp_servers.<name>.env '["KEY=VALUE"]'
+ocr config set mcp_servers.<name>.tools '["tool_name"]'
+ocr config set mcp_servers.<name>.setup '<setup command>'
+
+# Удалить MCP-сервер
+ocr config unset mcp_servers.<name>
+```
+
+| Поле | Обязательно | Описание |
+|------|-------------|----------|
+| `command` | Да | Исполняемая команда для запуска MCP-сервера |
+| `args` | Нет | Аргументы командной строки для сервера |
+| `env` | Нет | Переменные окружения в формате `KEY=VALUE` |
+| `tools` | Нет | Разрешённые имена инструментов; если пусто — доступны все инструменты сервера |
+| `setup` | Нет | Shell-команда для выполнения перед запуском сервера (например, построение индекса) |
+
+> **Примечание:** Если имя MCP-инструмента конфликтует со встроенным инструментом, он будет пропущен с предупреждением. Таймаут команды `setup` составляет 5 минут.
+
+**Пример: добавление [CodeGraph](https://github.com/nicholasgasior/codegraph) для усиления анализа структуры кода**
+
+```bash
+ocr config set mcp_servers.codegraph.command codegraph
+ocr config set mcp_servers.codegraph.args '["serve","--mcp"]'
+ocr config set mcp_servers.codegraph.tools '["codegraph_explore"]'
+ocr config set mcp_servers.codegraph.setup 'codegraph init && codegraph index'
+```
 
 ### Переменные окружения
 
@@ -688,6 +739,7 @@ OCR разрешает правила ревью по цепочке приор�
 | `OCR_LLM_AUTH_HEADER` | Заголовок авторизации Anthropic (`x-api-key` или `authorization`) |
 | `OCR_LLM_EXTRA_HEADERS` | HTTP-заголовки `key=value` через запятую |
 | `OCR_LLM_MODEL` | Имя модели |
+| `OCR_LLM_TIMEOUT` | Таймаут HTTP-запроса в секундах (переопределяет `timeout_sec` из файла конфигурации) |
 | `OCR_USE_ANTHROPIC` | `true` = Anthropic, `false` = OpenAI |
 
 
