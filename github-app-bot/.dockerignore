@@ -2,6 +2,8 @@
 config
 data
 node_modules
+.env
+.env.*
 
 # Test/dev-only files are not copied into the runtime image.
 test
