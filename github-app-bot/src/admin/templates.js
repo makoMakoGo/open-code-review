@@ -50,7 +50,7 @@ export function renderLayout({ title, active = 'dashboard', csrfToken = '', body
   if (typeof title !== 'string' || title.trim() === '') throw new Error('title is required');
   if (typeof body !== 'string') throw new Error('body must be a string');
   const tabs = NAV_ITEMS
-    .map(([key, href, label]) => `<a class="${key === active ? 'active' : ''}" href="${href}" data-i18n="nav_${key}">${escapeHtml(label)}</a>`)
+    .map(([key, href, label]) => { const current = key === active; return `<a class="${current ? 'active' : ''}"${current ? ' aria-current="page"' : ''} href="${href}" data-i18n="nav_${key}">${escapeHtml(label)}</a>`; })
     .join('');
   const logoutForm = csrfToken
     ? `<form class="signout" method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}"><button type="submit" data-i18n="signout">sign out</button></form>`
@@ -669,7 +669,8 @@ function statusDot(status) {
 const I18N = {
   en: {
     nav_dashboard: 'Dashboard', nav_jobs: 'Jobs', nav_config: 'Config', signout: 'sign out',
-    toggle_theme: 'Toggle theme', toggle_lang: 'Switch language',
+    toggle_theme: 'Toggle theme', toggle_theme_dark: 'Switch to dark theme', toggle_theme_light: 'Switch to light theme',
+    toggle_lang: 'Switch language', toggle_lang_en: 'Switch to English', toggle_lang_zh: 'Switch to Chinese',
     page_dashboard: 'Dashboard', page_jobs: 'Jobs', page_config: 'Config',
     login_sub: 'open code review · github app bot', login_prompt: '// admin auth — enter password',
     label_password: 'password', sign_in: '[ sign in ]',
@@ -702,7 +703,8 @@ const I18N = {
   },
   zh: {
     nav_dashboard: '仪表盘', nav_jobs: '任务', nav_config: '配置', signout: '退出',
-    toggle_theme: '切换主题', toggle_lang: '切换语言',
+    toggle_theme: '切换主题', toggle_theme_dark: '切换到深色主题', toggle_theme_light: '切换到浅色主题',
+    toggle_lang: '切换语言', toggle_lang_en: '切换到英文', toggle_lang_zh: '切换到中文',
     page_dashboard: '仪表盘', page_jobs: '任务', page_config: '配置',
     login_sub: 'open code review · github app 机器人', login_prompt: '// 管理员认证 — 输入密码',
     label_password: '密码', sign_in: '[ 登录 ]',
@@ -740,7 +742,7 @@ function themeInitScript(nonce) {
 }
 
 function togglesHtml() {
-  return `<div class="toggles"><button type="button" class="toggle-btn" data-act="toggle-theme" data-theme-target aria-label="Toggle theme" aria-pressed="false"></button><button type="button" class="toggle-btn" data-act="toggle-lang" data-lang-target aria-pressed="false">中文</button></div>`;
+  return `<div class="toggles"><button type="button" class="toggle-btn" data-act="toggle-theme" data-theme-target aria-label="Toggle theme"></button><button type="button" class="toggle-btn" data-act="toggle-lang" data-lang-target>中文</button></div>`;
 }
 
 export function safeScriptJson(value) {
@@ -753,7 +755,7 @@ export function safeScriptJson(value) {
 }
 
 function bodyScript(nonce) {
-  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){b.textContent=document.documentElement.dataset.theme==='light'?'☾':'☀';b.setAttribute('aria-label',d.toggle_theme||'Toggle theme');b.setAttribute('aria-pressed',document.documentElement.dataset.theme==='light'?'true':'false');});document.querySelectorAll('[data-lang-target]').forEach(function(b){b.textContent=document.documentElement.lang==='zh'?'EN':'中文';b.setAttribute('aria-label',d.toggle_lang||'Switch language');b.setAttribute('aria-pressed',document.documentElement.lang==='zh'?'true':'false');});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
+  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){var light=document.documentElement.dataset.theme==='light';b.textContent=light?'☾':'☀';b.setAttribute('aria-label',light?(d.toggle_theme_dark||d.toggle_theme||'Toggle theme'):(d.toggle_theme_light||d.toggle_theme||'Toggle theme'));});document.querySelectorAll('[data-lang-target]').forEach(function(b){var zh=document.documentElement.lang==='zh';b.textContent=zh?'EN':'中文';b.setAttribute('aria-label',zh?(d.toggle_lang_en||d.toggle_lang||'Switch language'):(d.toggle_lang_zh||d.toggle_lang||'Switch language'));});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
 }
 
 function fontLinks() {
@@ -784,7 +786,7 @@ function baseStyles() {
   --red: #f87171; --red-soft: rgba(248, 113, 113, 0.12); --red-glow: rgba(248, 113, 113, 0.40);
   /* semantic aliases — components reference these, not the raw palette */
   --ok: var(--green); --warn: var(--amber); --fail: var(--red); --run: var(--cyan); --queued: var(--muted);
-  --accent: var(--cyan);
+  --accent: var(--cyan); --link: var(--cyan); --link-hover: #7dd3fc; --link-shadow: 0 0 12px var(--cyan-glow);
   --brand-gradient: linear-gradient(135deg, var(--cyan), var(--indigo), var(--magenta));
   /* radii, motion, elevation */
   --radius: 12px; --radius-sm: 8px; --radius-pill: 999px;
@@ -818,8 +820,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 p { margin: 0.75rem 0; }
-a { color: var(--accent); text-decoration: none; transition: color var(--t-fast) var(--ease), text-shadow var(--t-fast) var(--ease); }
-a:hover { color: #7dd3fc; text-shadow: 0 0 12px var(--cyan-glow); }
+a { color: var(--link); text-decoration: none; transition: color var(--t-fast) var(--ease), text-shadow var(--t-fast) var(--ease); }
+a:hover { color: var(--link-hover); text-shadow: var(--link-shadow); }
 code { font-family: var(--font-mono); background: var(--surface-2); padding: 0.15em 0.4em; border-radius: var(--radius-sm); color: #e2e8f0; font-size: 0.9em; border: 1px solid var(--border); }
 pre { margin: 0.8rem 0; padding: 1rem; white-space: pre-wrap; word-break: break-word; color: #e2e8f0; background: rgba(0, 0, 0, 0.4); border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--font-mono); font-size: 13px; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2); }
 h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
@@ -847,7 +849,7 @@ nav.tabs a {
   font-size: 13px; font-weight: 500; color: var(--muted); padding: 0.5rem 1rem; border-radius: var(--radius-sm); text-transform: uppercase; letter-spacing: 0.05em;
   transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
 }
-nav.tabs a:hover { color: var(--text); background: var(--surface-2); transform: translateY(var(--lift-1)); }
+nav.tabs a:hover { color: var(--text); background: var(--surface-2); transform: translateY(calc(-1 * var(--lift-1))); }
 nav.tabs a.active { color: var(--text); background: var(--cyan-soft); border: 1px solid var(--border-bright); box-shadow: 0 0 16px var(--cyan-soft); }
 
 .signout { margin: 0; }
@@ -869,9 +871,6 @@ main.centered { max-width: 500px; display: flex; flex-direction: column; align-i
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin-bottom: 1.5rem; padding: 1.5rem;
   box-shadow: var(--shadow-card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
-/* Only elements that are genuinely clickable lift on hover. */
-.card--interactive { cursor: pointer; transition: transform var(--t-slow) var(--ease), box-shadow var(--t-slow) var(--ease), border-color var(--t-slow) var(--ease); }
-.card--interactive:hover { transform: translateY(calc(-1 * var(--lift-2))); box-shadow: var(--shadow-card-hover); border-color: var(--border-bright); }
 .card > h2, .card > h3, .card > summary > h2 {
   font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text); margin: -1.5rem -1.5rem 1.5rem;
   padding: 1rem 1.5rem; background: rgba(0, 0, 0, 0.2); border-bottom: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0;
@@ -1026,13 +1025,13 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   .card { padding: 1.25rem; }
   .card > h2, .card > summary > h2 { margin: -1.25rem -1.25rem 1.25rem; padding: 0.85rem 1.25rem; }
   nav.tabs a, .signout button, .toggle-btn, nav.pagination a, .filter-reset, button { min-height: 44px; }
+  .toggle-btn { min-width: 44px; }
   nav.tabs a { padding: 0.6rem 0.9rem; }
 }
 
 .toggles { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
 .toggle-btn { font-size: 13px; font-weight: 600; min-width: 36px; padding: 0.4rem 0.55rem; line-height: 1; }
 .toggle-btn:hover { color: var(--accent); border-color: var(--accent); transform: translateY(calc(-1 * var(--lift-1))); }
-.toggle-btn[aria-pressed="true"] { color: var(--text); border-color: var(--border-bright); background: var(--surface-3); }
 .login .toggles { justify-content: center; margin: 0 auto 1.5rem; }
 
 /* Light theme: override only primitives — components inherit the same rules. */
@@ -1058,6 +1057,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   --shadow-card: 0 8px 32px rgba(15, 23, 42, 0.06);
   --shadow-card-hover: 0 12px 40px rgba(15, 23, 42, 0.10);
   --shadow-pop: 0 4px 12px rgba(15, 23, 42, 0.06);
+  --link: #0369a1; --link-hover: #075985; --link-shadow: none;
 }
 :root[data-theme="light"] body {
   background-image: radial-gradient(circle at 15% 50%, rgba(2, 132, 199, 0.06), transparent 25%), radial-gradient(circle at 85% 30%, rgba(192, 38, 211, 0.05), transparent 25%);
