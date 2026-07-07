@@ -1,0 +1,14 @@
+services:
+  open-code-review-github-app-bot:
+    image: ghcr.io/makomakogo/open-code-review-github-app-bot:latest
+    pull_policy: always
+    container_name: open-code-review-github-app-bot
+    restart: unless-stopped
+    user: "10001:10001"
+    env_file:
+      - ./.env
+    ports:
+      - "127.0.0.1:3007:3007"
+    volumes:
+      - ./github-app-private-key.pem:/config/github-app-private-key.pem:ro
+      - ./data:/data

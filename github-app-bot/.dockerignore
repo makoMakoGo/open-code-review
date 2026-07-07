@@ -1,11 +1,15 @@
-# Never send local secrets or runtime state into Docker builds.
-config
-data
-node_modules
+# Local runtime config and state must never enter Docker builds.
 .env
 .env.*
+config
+data
+deploy/.env
+deploy/.env.*
+deploy/github-app-private-key.pem
+deploy/data
 
-# Test/dev-only files are not copied into the runtime image.
+# Dependencies and development artifacts are not part of the runtime image.
+node_modules
 test
 *.log
 .DS_Store

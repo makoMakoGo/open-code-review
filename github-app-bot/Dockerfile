@@ -1,7 +1,5 @@
-ARG NODE_IMAGE=node:20-bookworm-slim
-FROM ${NODE_IMAGE}
+FROM node:20-bookworm-slim
 
-ARG OCR_VERSION=1.7.3
 ENV NODE_ENV=production \
     OCR_NO_UPDATE=1
 
@@ -12,11 +10,11 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev \
-  && npm install -g @alibaba-group/open-code-review@${OCR_VERSION} \
+  && npm install -g @alibaba-group/open-code-review@latest \
   && ocr --version \
   && npm cache clean --force
-RUN useradd --create-home --uid 10001 appuser
 
+RUN useradd --create-home --uid 10001 appuser
 COPY src ./src
 RUN chown -R appuser:appuser /app
 
