@@ -997,6 +997,11 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .danger { color: var(--fail); }
 .nowrap { display: block; white-space: nowrap; margin-top: 0.35rem; }
 
+.toggles { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
+.toggle-btn { font-size: 13px; font-weight: 600; min-width: 36px; padding: 0.4rem 0.55rem; line-height: 1; }
+.toggle-btn:hover { color: var(--accent); border-color: var(--accent); transform: translateY(calc(-1 * var(--lift-1))); }
+.login .toggles { justify-content: center; margin: 0 auto 1.5rem; }
+
 /* Tablet: tighten the topbar so brand + nav + actions stay on one row. */
 @media (max-width: 1024px) {
   header.topbar { gap: 0.75rem; padding: 0.75rem 1rem; }
@@ -1014,6 +1019,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   .inline { flex-direction: column; align-items: stretch; }
   .inline input, .inline select { width: 100%; }
 }
+
 /* Phone: hit targets grow to 44px, density relaxes. */
 @media (max-width: 480px) {
   header.topbar { padding: 0.6rem 0.75rem; }
@@ -1028,11 +1034,6 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   .toggle-btn { min-width: 44px; }
   nav.tabs a { padding: 0.6rem 0.9rem; }
 }
-
-.toggles { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
-.toggle-btn { font-size: 13px; font-weight: 600; min-width: 36px; padding: 0.4rem 0.55rem; line-height: 1; }
-.toggle-btn:hover { color: var(--accent); border-color: var(--accent); transform: translateY(calc(-1 * var(--lift-1))); }
-.login .toggles { justify-content: center; margin: 0 auto 1.5rem; }
 
 /* Light theme: override only primitives — components inherit the same rules. */
 :root[data-theme="light"] {
