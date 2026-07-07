@@ -1,0 +1,9 @@
+# Never send local secrets or runtime state into Docker builds.
+config
+data
+node_modules
+
+# Test/dev-only files are not copied into the runtime image.
+test
+*.log
+.DS_Store
