@@ -1,4 +1,8 @@
 FROM node:20-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/makoMakoGo/open-code-review"
+
+ENV NODE_ENV=production \
+    OCR_NO_UPDATE=1
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates openssh-client \
@@ -7,15 +11,14 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev \
-  && npm install -g @alibaba-group/open-code-review@1.6.5
+  && npm install -g @alibaba-group/open-code-review@latest \
+  && ocr --version \
+  && npm cache clean --force
+
 RUN useradd --create-home --uid 10001 appuser
-
-
 COPY src ./src
 RUN chown -R appuser:appuser /app
 
-
-ENV NODE_ENV=production
 EXPOSE 3007
 USER appuser
 CMD ["node", "src/server.js"]

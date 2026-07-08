@@ -11,7 +11,7 @@ Flow:
 3. The bot verifies `X-Hub-Signature-256`.
 4. The bot checks sender and repository owner allowlists.
 5. The bot fetches the PR head into a temporary worktree.
-6. The bot runs `ocr review --from origin/<base> --to <head_sha> --format json`.
+6. The bot runs `ocr review --from <base_sha> --to <head_sha> --format json`.
 7. The bot posts OCR comments through GitHub's pull request review API.
 8. The temporary worktree is deleted when the job finishes.
 
@@ -22,11 +22,11 @@ The bot is intentionally boring: one process, one in-memory queue, one review jo
 ```text
 github-app-bot/
   Dockerfile
-  docker-compose.yml
   package.json
   package-lock.json
   src/server.js
-  config/bot.env.example
+  deploy/docker-compose.yml
+  deploy/.env.example
   test/trigger.test.js
   README.md
   README.zh-CN.md
@@ -35,9 +35,9 @@ github-app-bot/
 Runtime-only files are not committed:
 
 ```text
-config/bot.env
-config/github-app-private-key.pem
-data/
+deploy/.env
+deploy/github-app-private-key.pem
+deploy/data/
 ```
 
 ## GitHub App setup
@@ -66,30 +66,36 @@ Install the App on the repositories or accounts that should use it.
 
 ## Configuration
 
-Copy the example env file:
+Copy the deploy env example:
 
 ```bash
-mkdir -p config data/repos data/admin
-cp config/bot.env.example config/bot.env
-chmod 755 config
-chmod 600 config/bot.env
+cd github-app-bot/deploy
+cp .env.example .env
+mkdir -p data/repos data/admin
+chmod 600 .env
 sudo chown -R 10001:10001 data
 ```
 
 Put the GitHub App private key at:
 
 ```text
-config/github-app-private-key.pem
+github-app-bot/deploy/github-app-private-key.pem
 ```
 
 Recommended permissions:
 
 ```bash
-sudo chown 10001:10001 config/github-app-private-key.pem
-chmod 600 config/github-app-private-key.pem
+sudo chown 10001:10001 github-app-private-key.pem
+chmod 600 github-app-private-key.pem
 ```
 
-Required values in `config/bot.env`:
+The private key path in `.env` is the container path:
+
+```env
+GITHUB_APP_PRIVATE_KEY_PATH=/config/github-app-private-key.pem
+```
+
+Required values in `.env`:
 
 ```env
 BOT_TRIGGER_PHRASE=/ocr review
@@ -141,7 +147,7 @@ The local proxy accepts OCR's `Authorization: Bearer <LLM_PROXY_INTERNAL_TOKEN>`
 
 ## Admin dashboard
 
-Set `ADMIN_PASSWORD` to a value with at least 16 characters to enable the embedded dashboard at `/admin/`. If `ADMIN_PASSWORD` is unset or too short, `/admin/*` returns 404 after the Host guard.
+The admin dashboard code is included in the published image. Set `ADMIN_PASSWORD` to a value with at least 16 characters to enable the embedded dashboard at `/admin/`. If `ADMIN_PASSWORD` is unset or too short, `/admin/*` returns 404 after the Host guard.
 
 ```env
 ADMIN_PASSWORD=replace-with-long-admin-password
@@ -159,7 +165,7 @@ ADMIN_DATA_MAX_BYTES=536870912
 RETENTION_INTERVAL_HOURS=6
 ```
 
-`ADMIN_DATA_DIR` is runtime state and should be writable by UID/GID `10001`; `/config` stays read-only. Config precedence is code defaults, environment, then `/data/admin/config-overrides.json`. The dashboard can edit bot config except `ADMIN_PASSWORD`, `ADMIN_DATA_DIR`, and the legacy `ADMIN_STORAGE_DIR` alias. Queued jobs load the latest config when they start; running jobs keep their start-time config snapshot. `PORT` changes are written with a pending-restart marker, then cleared after the process successfully binds the requested port.
+`ADMIN_DATA_DIR` is runtime state and should be writable by UID/GID `10001`; `/config` stays read-only. On the VPS, `/data/admin` maps to `github-app-bot/deploy/data/admin`. Config precedence is code defaults, environment, then `/data/admin/config-overrides.json`. The dashboard can edit bot config except `ADMIN_PASSWORD`, `ADMIN_DATA_DIR`, and the legacy `ADMIN_STORAGE_DIR` alias. Queued jobs load the latest config when they start; running jobs keep their start-time config snapshot. `PORT` changes are written with a pending-restart marker, then cleared after the process successfully binds the requested port.
 
 The dashboard stores job history, bounded per-job logs, daily stats, config audit records, session state, and retention state under `/data/admin`. Logs keep stage messages, errors, git stderr, and OCR stderr; they do not store OCR stdout, webhook payloads, raw provider output, or secrets. Retention runs at startup and then every `RETENTION_INTERVAL_HOURS` hours. Defaults retain task details for 90 days, logs for 14 days, stats and config audit records for 365 days, cap each job log at 5 MiB, and apply a 512 MiB soft cap to `/data/admin`.
 
@@ -168,7 +174,8 @@ All admin POSTs require same-origin `Origin` or `Referer` plus CSRF. Admin cooki
 ## Run
 
 ```bash
-docker compose build
+cd github-app-bot/deploy
+docker compose pull
 docker compose up -d
 ```
 
@@ -182,6 +189,22 @@ Expected response:
 
 ```json
 {"ok":true,"service":"open-code-review-github-app-bot"}
+```
+
+## Image build and upgrades
+
+The bot image is built by GitHub Actions from `github-app-bot/Dockerfile` and pushed to GHCR as `ghcr.io/makomakogo/open-code-review-github-app-bot:latest`.
+
+For anonymous `docker compose pull`, make the GHCR package public after its first publish. If the package stays private, run `docker login ghcr.io` on the VPS with a token that can read packages before pulling.
+
+The Dockerfile intentionally installs `@alibaba-group/open-code-review@latest`. The image workflow builds with `--pull --no-cache`, so each image build resolves the current npm latest version instead of reusing an old Docker layer. The build log prints `ocr --version`; that is the exact OCR version baked into the image.
+
+To upgrade the VPS:
+
+```bash
+cd github-app-bot/deploy
+docker compose pull
+docker compose up -d
 ```
 
 ## Reverse proxy

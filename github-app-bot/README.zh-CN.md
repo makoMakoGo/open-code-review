@@ -11,7 +11,7 @@
 3. 机器人校验 `X-Hub-Signature-256`。
 4. 机器人检查发送者与仓库所有者的白名单。
 5. 机器人将 PR head 拉取到临时工作目录。
-6. 机器人执行 `ocr review --from origin/<base> --to <head_sha> --format json`。
+6. 机器人执行 `ocr review --from <base_sha> --to <head_sha> --format json`。
 7. 机器人通过 GitHub 的 Pull Request review API 发布审查评论。
 8. 任务结束后删除临时工作目录。
 
@@ -22,11 +22,11 @@
 ```text
 github-app-bot/
   Dockerfile
-  docker-compose.yml
   package.json
   package-lock.json
   src/server.js
-  config/bot.env.example
+  deploy/docker-compose.yml
+  deploy/.env.example
   test/trigger.test.js
   README.md
   README.zh-CN.md
@@ -35,9 +35,9 @@ github-app-bot/
 以下运行期文件不纳入版本管理：
 
 ```text
-config/bot.env
-config/github-app-private-key.pem
-data/
+deploy/.env
+deploy/github-app-private-key.pem
+deploy/data/
 ```
 
 ## 创建 GitHub App
@@ -66,30 +66,36 @@ Events: Issue comment
 
 ## 配置
 
-复制示例 env 文件：
+复制部署 env 示例：
 
 ```bash
-mkdir -p config data/repos data/admin
-cp config/bot.env.example config/bot.env
-chmod 755 config
-chmod 600 config/bot.env
+cd github-app-bot/deploy
+cp .env.example .env
+mkdir -p data/repos data/admin
+chmod 600 .env
 sudo chown -R 10001:10001 data
 ```
 
 将 GitHub App 私钥放到：
 
 ```text
-config/github-app-private-key.pem
+github-app-bot/deploy/github-app-private-key.pem
 ```
 
 建议的权限：
 
 ```bash
-sudo chown 10001:10001 config/github-app-private-key.pem
-chmod 600 config/github-app-private-key.pem
+sudo chown 10001:10001 github-app-private-key.pem
+chmod 600 github-app-private-key.pem
 ```
 
-`config/bot.env` 中的必填项：
+`.env` 里的私钥路径是容器内路径：
+
+```env
+GITHUB_APP_PRIVATE_KEY_PATH=/config/github-app-private-key.pem
+```
+
+`.env` 中的必填项：
 
 ```env
 BOT_TRIGGER_PHRASE=/ocr review
@@ -141,7 +147,7 @@ LLM_PROXY_UPSTREAM_TOKEN=Bearer provider-token
 
 ## 管理面板
 
-将 `ADMIN_PASSWORD` 设置为至少 16 个字符后，内置管理面板会在 `/admin/` 启用。`ADMIN_PASSWORD` 未设置或过短时，`/admin/*` 会在 Host guard 之后返回 404。
+管理面板代码随发布镜像一起提供。将 `ADMIN_PASSWORD` 设置为至少 16 个字符后，内置管理面板会在 `/admin/` 启用。`ADMIN_PASSWORD` 未设置或过短时，`/admin/*` 会在 Host guard 之后返回 404。
 
 ```env
 ADMIN_PASSWORD=replace-with-long-admin-password
@@ -159,7 +165,7 @@ ADMIN_DATA_MAX_BYTES=536870912
 RETENTION_INTERVAL_HOURS=6
 ```
 
-`ADMIN_DATA_DIR` 是运行时状态目录，应允许 UID/GID `10001` 写入；`/config` 保持只读。配置优先级为代码默认值、环境变量、`/data/admin/config-overrides.json`。面板可编辑除 `ADMIN_PASSWORD`、`ADMIN_DATA_DIR` 和旧别名 `ADMIN_STORAGE_DIR` 之外的机器人配置。排队任务在真正开始时读取最新配置；运行中的任务保留开始时的配置快照。`PORT` 变更会和待重启标记一起写入，并在进程成功绑定目标端口后清除。
+`ADMIN_DATA_DIR` 是运行时状态目录，应允许 UID/GID `10001` 写入；`/config` 保持只读。在 VPS 上，`/data/admin` 对应 `github-app-bot/deploy/data/admin`。配置优先级为代码默认值、环境变量、`/data/admin/config-overrides.json`。面板可编辑除 `ADMIN_PASSWORD`、`ADMIN_DATA_DIR` 和旧别名 `ADMIN_STORAGE_DIR` 之外的机器人配置。排队任务在真正开始时读取最新配置；运行中的任务保留开始时的配置快照。`PORT` 变更会和待重启标记一起写入，并在进程成功绑定目标端口后清除。
 
 面板在 `/data/admin` 下保存任务历史、受限大小的单任务日志、每日统计、配置审计、会话状态和保留策略状态。日志只保存阶段消息、错误、git stderr 和 OCR stderr；不保存 OCR stdout、webhook payload、原始供应商输出或密钥。保留策略在启动时运行一次，之后每 `RETENTION_INTERVAL_HOURS` 小时运行一次。默认保留任务详情 90 天、日志 14 天、统计和配置审计 365 天，单任务日志上限 5 MiB，并对 `/data/admin` 应用 512 MiB 软上限。
 
@@ -168,7 +174,8 @@ RETENTION_INTERVAL_HOURS=6
 ## 运行
 
 ```bash
-docker compose build
+cd github-app-bot/deploy
+docker compose pull
 docker compose up -d
 ```
 
@@ -182,6 +189,22 @@ curl http://127.0.0.1:3007/health
 
 ```json
 {"ok":true,"service":"open-code-review-github-app-bot"}
+```
+
+## 镜像构建与升级
+
+机器人镜像由 GitHub Actions 根据 `github-app-bot/Dockerfile` 构建，并推送到 GHCR：`ghcr.io/makomakogo/open-code-review-github-app-bot:latest`。
+
+如果 VPS 要匿名执行 `docker compose pull`，首次发布后需要将 GHCR package 设为 public。如果 package 保持 private，需要先在 VPS 上用具备 package 读取权限的 token 执行 `docker login ghcr.io`。
+
+Dockerfile 有意安装 `@alibaba-group/open-code-review@latest`。镜像 workflow 使用 `--pull --no-cache` 构建，因此每次构建都会解析 npm 当前 latest 版本，而不是复用旧 Docker layer。构建日志里的 `ocr --version` 就是进入镜像的实际 OCR 版本。
+
+VPS 升级：
+
+```bash
+cd github-app-bot/deploy
+docker compose pull
+docker compose up -d
 ```
 
 ## 反向代理
