@@ -85,6 +85,7 @@ github-app-bot/deploy/github-app-private-key.pem
 Recommended permissions:
 
 ```bash
+sudo chown 10001:10001 github-app-private-key.pem
 chmod 600 github-app-private-key.pem
 ```
 
@@ -193,6 +194,8 @@ Expected response:
 ## Image build and upgrades
 
 The bot image is built by GitHub Actions from `github-app-bot/Dockerfile` and pushed to GHCR as `ghcr.io/makomakogo/open-code-review-github-app-bot:latest`.
+
+For anonymous `docker compose pull`, make the GHCR package public after its first publish. If the package stays private, run `docker login ghcr.io` on the VPS with a token that can read packages before pulling.
 
 The Dockerfile intentionally installs `@alibaba-group/open-code-review@latest`. The image workflow builds with `--pull --no-cache`, so each image build resolves the current npm latest version instead of reusing an old Docker layer. The build log prints `ocr --version`; that is the exact OCR version baked into the image.
 

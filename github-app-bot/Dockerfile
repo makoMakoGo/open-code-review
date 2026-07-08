@@ -1,4 +1,5 @@
 FROM node:20-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/makoMakoGo/open-code-review"
 
 ENV NODE_ENV=production \
     OCR_NO_UPDATE=1

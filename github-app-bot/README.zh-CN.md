@@ -85,6 +85,7 @@ github-app-bot/deploy/github-app-private-key.pem
 建议的权限：
 
 ```bash
+sudo chown 10001:10001 github-app-private-key.pem
 chmod 600 github-app-private-key.pem
 ```
 
@@ -193,6 +194,8 @@ curl http://127.0.0.1:3007/health
 ## 镜像构建与升级
 
 机器人镜像由 GitHub Actions 根据 `github-app-bot/Dockerfile` 构建，并推送到 GHCR：`ghcr.io/makomakogo/open-code-review-github-app-bot:latest`。
+
+如果 VPS 要匿名执行 `docker compose pull`，首次发布后需要将 GHCR package 设为 public。如果 package 保持 private，需要先在 VPS 上用具备 package 读取权限的 token 执行 `docker login ghcr.io`。
 
 Dockerfile 有意安装 `@alibaba-group/open-code-review@latest`。镜像 workflow 使用 `--pull --no-cache` 构建，因此每次构建都会解析 npm 当前 latest 版本，而不是复用旧 Docker layer。构建日志里的 `ocr --version` 就是进入镜像的实际 OCR 版本。
 
