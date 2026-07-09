@@ -1220,6 +1220,8 @@ function baseStyles() {
 ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: var(--radius-pill); border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-bright); background-clip: padding-box; }
 
+html { scrollbar-gutter: stable; }
+
 body {
   margin: 0;
   background-color: var(--bg-subtle);
@@ -1299,7 +1301,7 @@ header.topbar {
 }
 .signout { margin: 0; }
 .signout button:hover { color: var(--danger); border-color: var(--danger-border); background: var(--danger-subtle); }
-h1.page-title { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; margin: 4px 0 18px; }
+h1.page-title { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 8px; color: var(--text); }
 
 .content { padding: 24px 28px 56px; max-width: 1180px; width: 100%; }
 main.centered { max-width: 500px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; }
@@ -1338,8 +1340,6 @@ main.centered { max-width: 500px; margin: 0 auto; display: flex; flex-direction:
 dl { display: grid; grid-template-columns: minmax(140px, max-content) 1fr; gap: 0.8rem 1.5rem; align-items: center; }
 dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
 dd { margin: 0; color: var(--text); font-size: 14px; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
-
-h1.page-title { font-size: 26px; color: var(--text); margin: 0 0 2rem; font-weight: 650; display: inline-block; }
 
 .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
 .strip .cell { padding: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; position: relative; overflow: hidden; }
@@ -1543,7 +1543,6 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   header.topbar { padding: 0.6rem 0.75rem; }
   .brand { font-size: 16px; }
   main { padding: 1.25rem 0.75rem 4rem; }
-  h1.page-title { font-size: 24px; }
   .strip { grid-template-columns: 1fr; }
   .strip .num { font-size: 2rem; }
   .card { padding: 1.25rem; }
@@ -1556,7 +1555,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 /* Primer polish */
 .page-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 0 0 16px; }
 .page-toolbar--end { justify-content: flex-end; }
-.page-desc { margin: 0; font-size: 14px; max-width: 62ch; }
+.page-desc { margin: 0 0 16px; font-size: 14px; max-width: 62ch; }
 .box { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); box-shadow: var(--shadow-flat); overflow: hidden; margin-bottom: 16px; }
 .box-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg); }
 .box-header strong { font-size: 14px; font-weight: 600; }
@@ -1590,7 +1589,6 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .mono-link code { color: var(--accent); background: transparent; border: 0; padding: 0; }
 .mono-link:hover code { text-decoration: underline; }
 .empty-state { padding: 28px 16px; text-align: center; color: var(--muted); font-style: normal; }
-.jobs-page .page-desc { margin: 0 0 14px; }
 .jobs-page .tablewrap { margin-bottom: 16px; }
 .job-filters { margin: 0; }
 .job-filters .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -1614,10 +1612,6 @@ nav.pagination a:hover { transform: none; background: var(--surface); }
 button, .toggle-btn, .signout button { text-transform: none; letter-spacing: 0; }
 button { background: var(--surface); border: 1px solid var(--btn-border); min-height: 32px; padding: 5px 12px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; }
 button:hover { transform: none; box-shadow: none; background: var(--surface-2); border-color: var(--border-bright); }
-h1.page-title { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 8px; display: block; color: var(--text); }
-.content > .page-title + .dashboard,
-.content > .page-title + .jobs-page,
-.content > .page-title + .settings { margin-top: 4px; }
 .dashboard .status-grid { margin-bottom: 12px; }
 .dashboard .sect { margin-top: 24px; }
 .dashboard .sect:first-child { margin-top: 8px; }
