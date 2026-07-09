@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { AdminRuntime, renderDashboardPage, renderJobDetailPage } from '../src/admin/index.js';
+import { AdminRuntime, renderDashboardPage, renderJobDetailPage, renderMetricsPage } from '../src/admin/index.js';
 import { loadConfig } from '../src/config.js';
 import { AdminJobQueue, BoundedJobLogger, createJobEvent, JobEventStore } from '../src/jobs/index.js';
 
@@ -28,7 +28,7 @@ function emptyReplay(jobs = []) {
   return { jobs, degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
 }
 
-test('dashboard renders latency percentiles comments failure repository and daily metrics', () => {
+test('metrics page renders latency percentiles comments failure repository and daily metrics', () => {
   const stats = {
     total: {
       jobs: 2,
@@ -59,11 +59,8 @@ test('dashboard renders latency percentiles comments failure repository and dail
     ],
   };
 
-  const html = renderDashboardPage({
+  const html = renderMetricsPage({
     csrfToken: 'csrf',
-    summary: { queued: 0, running: 0, succeeded: 1, failed: 1, succeeded_with_warnings: 0 },
-    recentJobs: [],
-    diagnostics: [],
     stats,
   });
 
@@ -101,9 +98,8 @@ test('service status renders actual listener port separately from configured por
   assert.equal(status.configuredPort, 3007);
 
   const html = renderDashboardPage({ csrfToken: 'csrf', summary: {}, recentJobs: [], diagnostics: [], serviceStatus: status });
-  assert.match(html, /Actual listening port[\s\S]*43123/);
-  assert.match(html, /Configured port[\s\S]*3007/);
-  assert.doesNotMatch(html, /<dt>Actual listening port<\/dt><dd>3007<\/dd>/);
+  assert.match(html, /Port[\s\S]*43123/);
+  assert.match(html, /configured 3007/);
 });
 
 test('job detail renders start-time config snapshot and auditable phase timeline', async () => {

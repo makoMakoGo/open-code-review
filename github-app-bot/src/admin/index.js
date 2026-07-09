@@ -53,6 +53,7 @@ export {
   redactSecretValue,
   renderConfigPage,
   renderDashboardPage,
+  renderMetricsPage,
   renderDiagnosticsList,
   renderErrorPage,
   renderJobDetailPage,
