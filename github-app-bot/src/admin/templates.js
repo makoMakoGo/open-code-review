@@ -137,7 +137,7 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
     { dot: Number(summary.running) > 0 ? 'run' : 'idle', k: 'Queue depth', v: `${dash(summary.queued)} queued · ${dash(summary.running)} running` },
     { dot: Number(summary.failed) > 0 ? 'err' : 'ok', k: 'Reviewed', v: `${dash(summary.succeeded)} ok · ${dash(summary.failed)} failed` },
     { dot: Number(summary.succeeded_with_warnings) > 0 ? 'warn' : 'idle', k: 'Warnings', v: dash(summary.succeeded_with_warnings) },
-  ].map((t) => `<div class="st"><span class="k"><i class="dot ${t.dot}"></i>${escapeHtml(t.k)}</span><span class="v">${t.v}</span></div>`).join('');
+  ].map((t) => `<div class="st"><span class="k"><i class="dot ${t.dot}" aria-hidden="true"></i>${escapeHtml(t.k)}</span><span class="v">${t.v}</span></div>`).join('');
 
   const actualPort = svc.actualListeningPort ?? svc.listeningPort;
   const configuredPort = svc.configuredPort ?? svc.port;
@@ -185,7 +185,7 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
 
   const qitems = svc.queued?.items ?? [];
   const queuedHtml = qitems.length
-    ? `<div class="qlist">${qitems.map((it) => `<div class="qrow"><span class="dpill queued"><i class="dot idle"></i>queued</span><span class="repo">${escapeHtml(formatRepository(it.repository ?? it.repo))}</span><code>${escapeHtml(it.jobId ?? it.id ?? '')}</code></div>`).join('')}</div>`
+    ? `<div class="qlist">${qitems.map((it) => `<div class="qrow"><span class="dpill queued"><i class="dot idle" aria-hidden="true"></i>queued</span><span class="repo">${escapeHtml(formatRepository(it.repository ?? it.repo))}</span><code>${escapeHtml(it.jobId ?? it.id ?? '')}</code></div>`).join('')}</div>`
     : `<p class="empty">${dash(svc.queued?.count ?? summary.queued)} queued.</p>`;
 
   const sfCard = (job, tone, label) => job
@@ -196,21 +196,13 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
     : '';
   const sflHtml = `${sfCard(svc.lastSuccess, 'ok', 'success')}${sfCard(svc.lastFailure, 'fail', 'failed')}`;
 
-  const recent = Array.isArray(recentJobs) ? recentJobs.slice(0, 8) : [];
-  const jobsHtml = `<div class="box">
-  <div class="box-header">
-    <strong data-i18n="h2_recent_jobs">Recent jobs</strong>
-    <a class="bar-link" href="/admin/jobs" data-i18n="btn_view_all_jobs">View all →</a>
-  </div>
-  ${renderJobsTable(recent)}
-</div>`;
-
   const body = `<div class="dashboard">
-<p class="page-desc muted" data-i18n="overview_page_desc">Service health, queue, and recent review jobs.</p>
+<p class="page-desc muted" data-i18n="overview_page_desc">Service health, queue, and current activity.</p>
 <div class="page-toolbar page-toolbar--end">
   <a class="bar-link" href="/admin/metrics" data-i18n="btn_view_metrics">Open metrics →</a>
  </div>
 <div class="sect">
+  <h2 class="vh" data-i18n="h2_overview">Service status</h2>
   <div class="status-grid">${tiles}</div>
   <div class="status-details">${statusDetails}</div>
 </div>
@@ -219,7 +211,6 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
   <div class="twocol">${runningHtml}<div class="dcard"><div class="bd"><div class="subhead" data-i18n="ss_queued">Queued summaries</div>${queuedHtml}</div></div></div>
 </div>
 ${sflHtml ? `<div class="sect"><h3 data-i18n="ss_last_sf">Last success / failure</h3><div class="sfl">${sflHtml}</div></div>` : ''}
-<div class="sect">${jobsHtml}</div>
 ${Array.isArray(diagnostics) && diagnostics.length ? `<div class="sect"><h2 data-i18n="h2_diagnostics">Diagnostics</h2>${renderDiagnosticsList(diagnostics)}</div>` : ''}
 </div>`;
   return renderLayout({ title: 'Status', active: 'dashboard', csrfToken, body, titleKey: 'page_dashboard', cspNonce });
@@ -452,7 +443,7 @@ function renderSettingsField(field) {
   return `<article class="settings-item" id="config-field-${escapeAttribute(envKey)}" data-config-row data-env-key="${escapeAttribute(envKey)}" data-group="${escapeAttribute(field.group || 'service')}" data-search="${escapeAttribute(searchText)}" data-flags="${escapeAttribute(flags)}">
   <div class="settings-item-main">
     <div class="settings-item-copy">
-      <h4>${escapeHtml(label)}</h4>
+      <div class="field-label" id="config-label-${escapeAttribute(envKey)}">${escapeHtml(label)}</div>
       <code>${escapeHtml(envKey)}</code>
       ${description ? `<p class="muted">${escapeHtml(description)}</p>` : ''}
       <div class="settings-item-meta">${renderConfigBadges(field)}</div>
@@ -511,7 +502,7 @@ function renderConfigEditorRow(field) {
     field.restartRequired || field.pendingRestart ? 'restart' : '',
     field.overridden ? 'override' : '',
   ].filter(Boolean).join(' ');
-  return `<tr id="config-field-${escapeAttribute(envKey)}" data-config-row data-env-key="${escapeAttribute(envKey)}" data-group="${escapeAttribute(field.group || 'service')}" data-search="${escapeAttribute(searchText)}" data-flags="${escapeAttribute(flags)}"><th scope="row"><strong>${escapeHtml(label)}</strong><br><code>${escapeHtml(envKey)}</code>${description ? `<p class="muted config-desc">${escapeHtml(description)}</p>` : ''}</th><td>${renderConfigFieldValue(field)}</td><td>${renderConfigEditorControl(field)}</td><td>${renderConfigBadges(field)}${renderConfigReset(field)}${renderHighRiskConfirm(field)}</td></tr>`;
+  return `<tr id="config-field-${escapeAttribute(envKey)}" data-config-row data-env-key="${escapeAttribute(envKey)}" data-group="${escapeAttribute(field.group || 'service')}" data-search="${escapeAttribute(searchText)}" data-flags="${escapeAttribute(flags)}"><th scope="row" id="config-label-${escapeAttribute(envKey)}"><strong>${escapeHtml(label)}</strong><br><code>${escapeHtml(envKey)}</code>${description ? `<p class="muted config-desc">${escapeHtml(description)}</p>` : ''}</th><td>${renderConfigFieldValue(field)}</td><td>${renderConfigEditorControl(field)}</td><td>${renderConfigBadges(field)}${renderConfigReset(field)}${renderHighRiskConfirm(field)}</td></tr>`;
 }
 
 function renderConfigFieldValue(field) {
@@ -541,9 +532,9 @@ function renderConfigEditorControl(field) {
   const envKey = field.envKey ?? '';
   if (!field.editable) return '<span class="empty" data-i18n="not_editable">Not editable from dashboard.</span>';
   if (field.secret) {
-    return `<div class="stack"><label><input type="radio" name="secret_${escapeAttribute(envKey)}" value="keep" checked> <span data-i18n="keep_secret">Keep current secret</span></label><label><input type="radio" name="secret_${escapeAttribute(envKey)}" value="clear"> <span data-i18n="clear_secret">Clear secret</span></label><label><input type="radio" name="secret_${escapeAttribute(envKey)}" value="replace"> <span data-i18n="replace_with">Replace with</span></label><input class="config-control" type="password" name="value_${escapeAttribute(envKey)}" autocomplete="off" value=""></div>`;
+    return `<div class="stack"><label><input type="radio" name="secret_${escapeAttribute(envKey)}" value="keep" checked> <span data-i18n="keep_secret">Keep current secret</span></label><label><input type="radio" name="secret_${escapeAttribute(envKey)}" value="clear"> <span data-i18n="clear_secret">Clear secret</span></label><label><input type="radio" name="secret_${escapeAttribute(envKey)}" value="replace"> <span data-i18n="replace_with">Replace with</span></label><input class="config-control" type="password" name="value_${escapeAttribute(envKey)}" autocomplete="off" value="" aria-labelledby="config-label-${escapeAttribute(envKey)}"></div>`;
   }
-  return `<input class="config-control" name="value_${escapeAttribute(envKey)}" value="${escapeAttribute(formatEditorValue(field.effectiveValue ?? field.value))}">`;
+  return `<input class="config-control" name="value_${escapeAttribute(envKey)}" value="${escapeAttribute(formatEditorValue(field.effectiveValue ?? field.value))}" aria-labelledby="config-label-${escapeAttribute(envKey)}">`;
 }
 
 function renderConfigBadges(field) {
@@ -1051,7 +1042,7 @@ function jobStatusTone(status) {
 }
 function jobStatusPill(status) {
   const { tone, dot, label } = jobStatusTone(status);
-  return `<span class="dpill ${tone}"><i class="dot ${dot}"></i>${escapeHtml(label)}</span>`;
+  return `<span class="dpill ${tone}"><i class="dot ${dot}" aria-hidden="true"></i>${escapeHtml(label)}</span>`;
 }
 
 const I18N = {
@@ -1059,12 +1050,12 @@ const I18N = {
     nav_dashboard: 'Status', nav_jobs: 'Jobs', nav_metrics: 'Metrics', nav_config: 'Settings', nav_brand_tag: 'self-hosted', nav_side_foot: 'Open Code Review', signout: 'Sign out',
     toggle_theme: 'Toggle theme', toggle_theme_dark: 'Switch to dark theme', toggle_theme_light: 'Switch to light theme',
     toggle_lang: 'Switch language', toggle_lang_en: 'Switch to English', toggle_lang_zh: 'Switch to Chinese',
-    page_dashboard: 'Status', page_jobs: 'Jobs', page_metrics: 'Metrics', page_config: 'Settings', jobs_page_desc: 'Review queue history, filter failures, and open job detail logs.', overview_page_desc: 'Service health, queue, and recent review jobs.', metrics_page_desc: 'Latency, comment volume, failure classification, and repository success trends.', btn_view_metrics: 'Open metrics →',
+    page_dashboard: 'Status', page_jobs: 'Jobs', page_metrics: 'Metrics', page_config: 'Settings', jobs_page_desc: 'Review queue history, filter failures, and open job detail logs.', overview_page_desc: 'Service health, queue, and current activity.', metrics_page_desc: 'Latency, comment volume, failure classification, and repository success trends.', btn_view_metrics: 'Open metrics →',
     login_sub: 'open code review · github app bot', login_prompt: '// admin auth — enter password',
     label_password: 'password', sign_in: '[ sign in ]',
     strip_queued: 'Queued', strip_running: 'Running', strip_succeeded: 'Succeeded', strip_warnings: 'Warnings', strip_failed: 'Failed',
-    h2_recent_jobs: 'Recent jobs', h2_diagnostics: 'Diagnostics', empty_jobs: 'No jobs found.', empty_diagnostics: 'No diagnostics.',
-    h2_service_status: 'Status', ss_uptime: 'Uptime', ss_started: 'Started', ss_version: 'Version', ss_config_revision: 'Config revision',
+    h2_diagnostics: 'Diagnostics', empty_jobs: 'No jobs found.', empty_diagnostics: 'No diagnostics.',
+    h2_service_status: 'Status', h2_overview: 'Service status', ss_uptime: 'Uptime', ss_started: 'Started', ss_version: 'Version', ss_config_revision: 'Config revision',
     ss_actual_port: 'Actual listening port', ss_configured_port: 'Configured port', ss_pending_port: 'Desired pending port',
     ss_storage_health: 'Storage writable/degraded', ss_storage_size: 'Storage size / budget', ss_last_retention: 'Last retention', ss_diag_counts: 'Corrupt/truncated diagnostics',
     ss_running_job: 'Current running job', empty_running: 'No running job.', ss_queued: 'Queued summaries', ss_last_sf: 'Last success/failure',
@@ -1086,11 +1077,9 @@ const I18N = {
     th_field: 'Field', th_effective: 'Effective value', th_edit: 'Edit', th_state: 'State', btn_save_config: 'save configuration',
     keep_secret: 'Keep current secret', clear_secret: 'Clear secret', replace_with: 'Replace with', reset_override: 'Reset override', confirm_high_risk: 'Confirm high-risk change',
     not_editable: 'Not editable from dashboard.', secret_set: 'secret set', not_set: 'not set', admin_dashboard_enabled: 'dashboard enabled', admin_dashboard_disabled: 'dashboard disabled',
-    config_group_service: 'Service', config_group_access: 'Triggers & Access', config_group_github: 'GitHub App', config_group_ocr: 'OCR Engine', config_group_proxy: 'LLM Proxy', config_group_admin: 'Admin Dashboard', config_group_retention: 'Retention & Storage', config_group_service_desc: 'Core runtime process, ports, and workdir behavior.', config_group_access_desc: 'Who can trigger reviews and which repositories are allowed.', config_group_github_desc: 'GitHub App identity, private key path, and webhook secret.', config_group_ocr_desc: 'OpenCodeReview provider endpoint, model, and concurrency.', config_group_proxy_desc: 'Internal LLM proxy routing and upstream authentication.', config_group_admin_desc: 'Dashboard access, host allowlist, cookies, and data root.', config_group_retention_desc: 'How long jobs, logs, stats, and audits are kept.', btn_view_all_jobs: 'View all →',
-    config_search_label: 'Search fields', config_search_placeholder: 'label, env key, description',
-    config_chip_all: 'All', config_chip_secret: 'Secrets', config_chip_high_risk: 'High-risk', config_chip_restart: 'Restart', config_chip_override: 'Overrides',
+    config_group_service: 'Service', config_group_access: 'Triggers & Access', config_group_github: 'GitHub App', config_group_ocr: 'OCR Engine', config_group_proxy: 'LLM Proxy', config_group_admin: 'Admin Dashboard', config_group_retention: 'Retention & Storage', config_group_service_desc: 'Core runtime process, ports, and workdir behavior.', config_group_access_desc: 'Who can trigger reviews and which repositories are allowed.', config_group_github_desc: 'GitHub App identity, private key path, and webhook secret.', config_group_ocr_desc: 'OpenCodeReview provider endpoint, model, and concurrency.', config_group_proxy_desc: 'Internal LLM proxy routing and upstream authentication.', config_group_admin_desc: 'Dashboard access, host allowlist, cookies, and data root.', config_group_retention_desc: 'How long jobs, logs, stats, and audits are kept.',
     config_field_total: 'fields', config_override_count: 'overrides', config_secret_count: 'secrets', config_restart_count: 'restart required',
-    config_filter_status: 'Showing {visible} / {total} fields', config_no_matches: 'No matching configuration fields.', config_back_to_top: 'Back to top',
+    config_no_matches: 'No matching configuration fields.',
     aria_config_filters: 'Field filters', aria_config_groups: 'Config groups',
     aria_sections: 'Sections', aria_job_summary: 'Job summary', aria_jobs_pages: 'Jobs pages', skip_to_main: 'Skip to main',
     logs_degraded: 'Log history is degraded.', pagination_summary: 'page {page} / {total-pages} · {total} jobs',
@@ -1099,12 +1088,12 @@ const I18N = {
     nav_dashboard: '状态', nav_jobs: '任务', nav_metrics: '指标', nav_config: '设置', nav_brand_tag: '自托管', nav_side_foot: 'Open Code Review', signout: '退出',
     toggle_theme: '切换主题', toggle_theme_dark: '切换到深色主题', toggle_theme_light: '切换到浅色主题',
     toggle_lang: '切换语言', toggle_lang_en: '切换到英文', toggle_lang_zh: '切换到中文',
-    page_dashboard: '状态', page_jobs: '任务', page_metrics: '指标', page_config: '设置', metrics_page_desc: '耗时、评论量、失败分类与仓库成功率趋势。', btn_view_metrics: '打开指标 →', jobs_page_desc: '查看任务历史、筛选失败并打开任务日志。', overview_page_desc: '服务状态、队列与最近任务。',
+    page_dashboard: '状态', page_jobs: '任务', page_metrics: '指标', page_config: '设置', metrics_page_desc: '耗时、评论量、失败分类与仓库成功率趋势。', btn_view_metrics: '打开指标 →', jobs_page_desc: '查看任务历史、筛选失败并打开任务日志。', overview_page_desc: '服务健康、队列与当前动态。',
     login_sub: 'open code review · github app 机器人', login_prompt: '// 管理员认证 — 输入密码',
     label_password: '密码', sign_in: '[ 登录 ]',
     strip_queued: '排队', strip_running: '运行中', strip_succeeded: '成功', strip_warnings: '带警告', strip_failed: '失败',
-    h2_recent_jobs: '最近任务', h2_diagnostics: '诊断', empty_jobs: '暂无任务。', empty_diagnostics: '暂无诊断。',
-    h2_service_status: '状态', ss_uptime: '运行时长', ss_started: '启动时间', ss_version: '版本', ss_config_revision: '配置版本',
+    h2_diagnostics: '诊断', empty_jobs: '暂无任务。', empty_diagnostics: '暂无诊断。',
+    h2_service_status: '状态', h2_overview: '服务状态', ss_uptime: '运行时长', ss_started: '启动时间', ss_version: '版本', ss_config_revision: '配置版本',
     ss_actual_port: '实际监听端口', ss_configured_port: '配置端口', ss_pending_port: '待生效端口',
     ss_storage_health: '存储可写/降级', ss_storage_size: '存储用量 / 配额', ss_last_retention: '上次清理', ss_diag_counts: '损坏/截断的诊断',
     ss_running_job: '当前运行中任务', empty_running: '无运行中任务。', ss_queued: '排队摘要', ss_last_sf: '上次成功/失败',
@@ -1126,11 +1115,9 @@ const I18N = {
     th_field: '字段', th_effective: '生效值', th_edit: '编辑', th_state: '状态', btn_save_config: '保存配置',
     keep_secret: '保留当前密钥', clear_secret: '清除密钥', replace_with: '替换为', reset_override: '重置覆盖', confirm_high_risk: '确认高风险变更',
     not_editable: '控制台不可编辑。', secret_set: '密钥已设', not_set: '未设置', admin_dashboard_enabled: '控制台已启用', admin_dashboard_disabled: '控制台已禁用',
-    config_group_service: '服务', config_group_access: '触发与权限', config_group_github: 'GitHub App', config_group_ocr: 'OCR 引擎', config_group_proxy: 'LLM 代理', config_group_admin: '管理控制台', config_group_retention: '保留与存储', config_group_service_desc: '核心运行时、端口与工作目录行为。', config_group_access_desc: '谁可以触发审查，以及允许哪些仓库。', config_group_github_desc: 'GitHub App 身份、私钥路径与 webhook 密钥。', config_group_ocr_desc: 'OpenCodeReview 供应商地址、模型与并发。', config_group_proxy_desc: '内部 LLM 代理路由与上游鉴权。', config_group_admin_desc: '控制台访问、Host 白名单、Cookie 与数据目录。', config_group_retention_desc: '任务、日志、统计与审计的保留时长。', btn_view_all_jobs: '查看全部 →',
-    config_search_label: '搜索配置项', config_search_placeholder: '标签、环境变量、描述',
-    config_chip_all: '全部', config_chip_secret: '密钥', config_chip_high_risk: '高风险', config_chip_restart: '需重启', config_chip_override: '覆盖项',
+    config_group_service: '服务', config_group_access: '触发与权限', config_group_github: 'GitHub App', config_group_ocr: 'OCR 引擎', config_group_proxy: 'LLM 代理', config_group_admin: '管理控制台', config_group_retention: '保留与存储', config_group_service_desc: '核心运行时、端口与工作目录行为。', config_group_access_desc: '谁可以触发审查，以及允许哪些仓库。', config_group_github_desc: 'GitHub App 身份、私钥路径与 webhook 密钥。', config_group_ocr_desc: 'OpenCodeReview 供应商地址、模型与并发。', config_group_proxy_desc: '内部 LLM 代理路由与上游鉴权。', config_group_admin_desc: '控制台访问、Host 白名单、Cookie 与数据目录。', config_group_retention_desc: '任务、日志、统计与审计的保留时长。',
     config_field_total: '字段', config_override_count: '覆盖项', config_secret_count: '密钥', config_restart_count: '需重启',
-    config_filter_status: '显示 {visible} / {total} 项', config_no_matches: '没有匹配的配置项。', config_back_to_top: '回到顶部',
+    config_no_matches: '没有匹配的配置项。',
     aria_config_filters: '配置筛选', aria_config_groups: '配置分组',
     aria_sections: '区块导航', aria_job_summary: '任务概览', aria_jobs_pages: '任务分页', skip_to_main: '跳到主内容',
     logs_degraded: '日志历史已降级。', pagination_summary: '第 {page} / {total-pages} 页 · {total} 个任务',
@@ -1142,7 +1129,7 @@ function themeInitScript(nonce) {
 }
 
 function togglesHtml() {
-  return `<div class="toggles"><button type="button" class="toggle-btn" data-act="toggle-theme" data-theme-target aria-label="Toggle theme"></button><button type="button" class="toggle-btn" data-act="toggle-lang" data-lang-target>中文</button></div>`;
+  return `<div class="toggles"><button type="button" class="toggle-btn" data-act="toggle-theme" data-theme-target aria-label="Toggle theme"><span aria-hidden="true">☾</span></button><button type="button" class="toggle-btn" data-act="toggle-lang" data-lang-target>中文</button></div>`;
 }
 
 export function safeScriptJson(value) {
@@ -1154,7 +1141,7 @@ export function safeScriptJson(value) {
     .replace(/\u2029/g, '\\u2029');
 }
 function bodyScript(nonce) {
-  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el){var k=el.getAttribute('data-i18n-placeholder');if(d[k]!==undefined)el.setAttribute('placeholder',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'').split('{visible}').join(el.getAttribute('data-visible')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){var light=document.documentElement.dataset.theme==='light';b.textContent=light?'☾':'☀';b.setAttribute('aria-label',light?d.toggle_theme_dark:d.toggle_theme_light);});document.querySelectorAll('[data-lang-target]').forEach(function(b){var zh=document.documentElement.lang==='zh';b.textContent=zh?'EN':'中文';b.setAttribute('aria-label',zh?d.toggle_lang_en:d.toggle_lang_zh);});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}function initConfigEditor(){var root=document.querySelector('[data-config-editor]');if(!root)return;var search=root.querySelector('[data-config-search]');var chips=[].slice.call(root.querySelectorAll('[data-config-chip]'));var rows=[].slice.call(root.querySelectorAll('[data-config-row]'));var groups=[].slice.call(root.querySelectorAll('[data-config-group]'));var tocLinks=[].slice.call(root.querySelectorAll('[data-config-toc]'));var empty=root.querySelector('[data-config-empty]');var status=root.querySelector('[data-config-filter-status]');var topBtn=root.querySelector('[data-config-top]');var sticky=root.querySelector('[data-config-sticky]');var activeChip='all';function stickyOffset(){var h=sticky?sticky.getBoundingClientRect().height:0;return Math.round(h+88);}function scrollToEl(el){if(!el)return;var y=window.scrollY+el.getBoundingClientRect().top-stickyOffset();window.scrollTo({top:Math.max(0,y),behavior:'smooth'});}function rowMatches(row,query,chip){var flags=(row.getAttribute('data-flags')||'').split(/\\s+/).filter(Boolean);var hay=(row.getAttribute('data-search')||'').toLowerCase();if(query&&hay.indexOf(query)===-1)return false;if(chip&&chip!=='all'&&flags.indexOf(chip)===-1)return false;return true;}function setActiveToc(id){tocLinks.forEach(function(link){link.classList.toggle('is-active',link.getAttribute('data-config-toc')===id);});}function applyFilter(){var query=((search&&search.value)||'').trim().toLowerCase();var visible=0;var groupVisible={};rows.forEach(function(row){var ok=rowMatches(row,query,activeChip);row.hidden=!ok;if(ok){visible+=1;var gid=row.getAttribute('data-group')||'service';groupVisible[gid]=(groupVisible[gid]||0)+1;}});groups.forEach(function(section){var gid=section.getAttribute('data-config-group');var count=groupVisible[gid]||0;section.hidden=count===0;var badges=root.querySelectorAll('[data-config-count="'+gid+'"]');badges.forEach(function(badge){badge.textContent=String(count);});});if(empty)empty.hidden=visible!==0;if(status){status.setAttribute('data-visible',String(visible));status.setAttribute('data-total',String(rows.length));var d=dict();var template=d.config_filter_status||'Showing {visible} / {total} fields';status.textContent=template.split('{visible}').join(String(visible)).split('{total}').join(String(rows.length));}}if(search)search.addEventListener('input',applyFilter);chips.forEach(function(chip){chip.addEventListener('click',function(){activeChip=chip.getAttribute('data-config-chip')||'all';chips.forEach(function(item){item.classList.toggle('is-active',item===chip);});applyFilter();});});tocLinks.forEach(function(link){link.addEventListener('click',function(e){e.preventDefault();var id=link.getAttribute('data-config-toc');var target=root.querySelector('[data-config-group="'+id+'"]');if(target&&!target.hidden){setActiveToc(id);scrollToEl(target);if(history&&history.replaceState)history.replaceState(null,'','#config-group-'+id);}});});if(topBtn)topBtn.addEventListener('click',function(){scrollToEl(root);if(history&&history.replaceState)history.replaceState(null,'',location.pathname+location.search);});if('IntersectionObserver' in window){var io=new IntersectionObserver(function(entries){var best=null;entries.forEach(function(entry){if(entry.isIntersecting){if(!best||entry.intersectionRatio>best.intersectionRatio)best=entry;}});if(best&&best.target)setActiveToc(best.target.getAttribute('data-config-group'));},{root:null,rootMargin:'-30% 0px -55% 0px',threshold:[0.1,0.25,0.5,0.75]});groups.forEach(function(section){io.observe(section);});}if(location.hash&&location.hash.indexOf('#config-field-')===0){var fieldTarget=document.getElementById(location.hash.slice(1));if(fieldTarget)scrollToEl(fieldTarget);}else if(location.hash&&location.hash.indexOf('#config-group-')===0){var groupTarget=document.getElementById(location.hash.slice(1));if(groupTarget){setActiveToc(groupTarget.getAttribute('data-config-group'));scrollToEl(groupTarget);}}applyFilter();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();initConfigEditor();})();`, nonce);
+  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el){var k=el.getAttribute('data-i18n-placeholder');if(d[k]!==undefined)el.setAttribute('placeholder',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'').split('{visible}').join(el.getAttribute('data-visible')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){var light=document.documentElement.dataset.theme==='light';b.textContent=light?'☾':'☀';b.setAttribute('aria-label',light?d.toggle_theme_dark:d.toggle_theme_light);});document.querySelectorAll('[data-lang-target]').forEach(function(b){var zh=document.documentElement.lang==='zh';b.textContent=zh?'EN':'中文';b.setAttribute('aria-label',zh?d.toggle_lang_en:d.toggle_lang_zh);});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}function initConfigEditor(){var root=document.querySelector('[data-config-editor]');if(!root)return;var search=root.querySelector('[data-config-search]');var chips=[].slice.call(root.querySelectorAll('[data-config-chip]'));var rows=[].slice.call(root.querySelectorAll('[data-config-row]'));var groups=[].slice.call(root.querySelectorAll('[data-config-group]'));var tocLinks=[].slice.call(root.querySelectorAll('[data-config-toc]'));var empty=root.querySelector('[data-config-empty]');var status=root.querySelector('[data-config-filter-status]');var topBtn=root.querySelector('[data-config-top]');var sticky=root.querySelector('[data-config-sticky]');var activeChip='all';function stickyOffset(){var h=sticky?sticky.getBoundingClientRect().height:0;return Math.round(h+88);}function scrollToEl(el){if(!el)return;var y=window.scrollY+el.getBoundingClientRect().top-stickyOffset();window.scrollTo({top:Math.max(0,y),behavior:'smooth'});}function rowMatches(row,query,chip){var flags=(row.getAttribute('data-flags')||'').split(/\\s+/).filter(Boolean);var hay=(row.getAttribute('data-search')||'').toLowerCase();if(query&&hay.indexOf(query)===-1)return false;if(chip&&chip!=='all'&&flags.indexOf(chip)===-1)return false;return true;}function setActiveToc(id){tocLinks.forEach(function(link){link.classList.toggle('is-active',link.getAttribute('data-config-toc')===id);});}function applyFilter(){var query=((search&&search.value)||'').trim().toLowerCase();var visible=0;var groupVisible={};rows.forEach(function(row){var ok=rowMatches(row,query,activeChip);row.hidden=!ok;if(ok){visible+=1;var gid=row.getAttribute('data-group')||'service';groupVisible[gid]=(groupVisible[gid]||0)+1;}});groups.forEach(function(section){var gid=section.getAttribute('data-config-group');var count=groupVisible[gid]||0;section.hidden=count===0;var badges=root.querySelectorAll('[data-config-count="'+gid+'"]');badges.forEach(function(badge){badge.textContent=String(count);});});if(empty)empty.hidden=visible!==0;if(status){status.setAttribute('data-visible',String(visible));status.setAttribute('data-total',String(rows.length));var d=dict();var template=d.config_filter_status||'Showing {visible} / {total} fields';status.textContent=template.split('{visible}').join(String(visible)).split('{total}').join(String(rows.length));}}if(search)search.addEventListener('input',applyFilter);chips.forEach(function(chip){chip.addEventListener('click',function(){activeChip=chip.getAttribute('data-config-chip')||'all';chips.forEach(function(item){item.classList.toggle('is-active',item===chip);});applyFilter();});});tocLinks.forEach(function(link){link.addEventListener('click',function(e){e.preventDefault();var id=link.getAttribute('data-config-toc');var target=root.querySelector('[data-config-group="'+id+'"]');if(target&&!target.hidden){setActiveToc(id);scrollToEl(target);if(history&&history.replaceState)history.replaceState(null,'','#config-group-'+id);}});});if(topBtn)topBtn.addEventListener('click',function(){scrollToEl(root);if(history&&history.replaceState)history.replaceState(null,'',location.pathname+location.search);});if('IntersectionObserver' in window){var io=new IntersectionObserver(function(entries){var best=null;entries.forEach(function(entry){if(entry.isIntersecting){if(!best||entry.intersectionRatio>best.intersectionRatio)best=entry;}});if(best&&best.target)setActiveToc(best.target.getAttribute('data-config-group'));},{root:null,rootMargin:'-30% 0px -55% 0px',threshold:[0.1,0.25,0.5,0.75]});groups.forEach(function(section){io.observe(section);});}if(location.hash&&location.hash.indexOf('#config-field-')===0){var fieldTarget=document.getElementById(location.hash.slice(1));if(fieldTarget)scrollToEl(fieldTarget);}else if(location.hash&&location.hash.indexOf('#config-group-')===0){var groupTarget=document.getElementById(location.hash.slice(1));if(groupTarget){setActiveToc(groupTarget.getAttribute('data-config-group'));scrollToEl(groupTarget);}}applyFilter();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
 }
 
 function fontLinks() {
@@ -1175,7 +1162,7 @@ function baseStyles() {
   --border-bright: #afb8c1;
   --text: #1f2328;
   --muted: #57606a;
-  --faint: #6e7781;
+  --faint: #636c76;
   /* accent + status — calmer and accessible; soft = fills, glow = unused (kept for compat) */
   --cyan: #0969da; --cyan-soft: rgba(9, 105, 218, 0.10); --cyan-glow: transparent;
   --indigo: #6f5ed6; --indigo-soft: rgba(111, 94, 214, 0.10); --indigo-glow: transparent;
@@ -1241,6 +1228,8 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
 
 .skip-link { position: absolute; left: -9999px; top: 0; z-index: 100; background: var(--accent); color: #04121b; padding: 0.65rem 1.1rem; border-radius: var(--radius-sm); font-weight: 600; font-size: 13px; box-shadow: var(--shadow-pop); }
 .skip-link:focus { left: 1rem; top: 1rem; }
+.vh { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (pointer: coarse) { button, .toggle-btn, .signout button, .chip, nav.pagination a, .filter-reset, .login-box button { min-height: 44px; } }
 
 .app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
 .side {
@@ -1384,7 +1373,7 @@ button.primary:active { background: var(--primary-bg-hover); }
 .filter-reset:hover { color: var(--text); border-color: var(--accent); background: var(--cyan-soft); transform: translateY(calc(-1 * var(--lift-2))); box-shadow: var(--shadow-pop); }
 .filter-reset:active { transform: translateY(0); box-shadow: none; }
 
-input:focus, select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--cyan-soft); }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.2em; height: 1.2em; cursor: pointer; }
 
 .inline { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; background: var(--surface); padding: 1.25rem; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1.5rem; }
@@ -1462,7 +1451,7 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 .settings-item { padding: 16px; border-bottom: 1px solid var(--border); }
 .settings-item:last-child { border-bottom: 0; }
 .settings-item-main { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr); gap: 20px; align-items: start; }
-.settings-item-copy h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.settings-item-copy .field-label { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
 .settings-item-copy code { display: inline-block; margin: 0 0 8px; font-size: 12px; }
 .settings-item-copy p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; }
 .settings-item-meta { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -1500,7 +1489,7 @@ main.login { max-width: 440px; margin: 10vh auto; padding: 0 1.5rem; perspective
 .login-box .login-prompt { margin: 0; color: var(--muted); font-size: 12px; font-weight: 500; text-align: center; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.08em; }
 .login-box label { color: var(--text); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 .login-box input { width: 100%; padding: 0.75rem 1rem; background: var(--bg); border: 1px solid var(--border); font-size: 15px; border-radius: var(--radius-sm); transition: border-color var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease); }
-.login-box input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--cyan-soft); }
+.login-box input:focus { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
 .login-box button { width: 100%; padding: 0.8rem; font-size: 14px; margin-top: 0.5rem; border-radius: var(--radius-sm); justify-self: stretch; }
 
 main > *:first-child { margin-top: 0; }
