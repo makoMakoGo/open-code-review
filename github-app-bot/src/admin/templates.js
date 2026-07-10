@@ -279,20 +279,16 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
 <p class="page-desc muted" data-i18n="metrics_page_desc">Latency, comment volume, failure classification, and repository success trends.</p>
 <div class="metric-row">${metricTiles}</div>
 <div class="box">
-  <div class="box-header"><strong data-i18n="th_window">Window</strong></div>
   <div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th></tr></thead><tbody>${windowRows}</tbody></table></div>
 </div>
 <div class="box">
-  <div class="box-header"><strong data-i18n="m_fail_class">Failure classification</strong></div>
-  <div class="box-body">${failureHtml}</div>
+  ${failureHtml}
 </div>
 <div class="box">
-  <div class="box-header"><strong data-i18n="m_repo_rate">Repository success rate</strong></div>
-  <div class="box-body">${repoHtml}</div>
+  ${repoHtml}
 </div>
 <div class="box">
-  <div class="box-header"><strong data-i18n="m_daily_trend">Daily trend</strong></div>
-  <div class="box-body">${dailyHtml}</div>
+  ${dailyHtml}
 </div>
 </div>`;
   return renderLayout({ title: 'Metrics', active: 'metrics', csrfToken, body, titleKey: 'page_metrics', cspNonce });
@@ -1335,7 +1331,7 @@ th, td { padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--border); text-a
 thead th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--bg); white-space: nowrap; }
 tbody tr { transition: background var(--t-fast) var(--ease); }
 tbody tr:hover { background: var(--surface); }
-tbody tr:last-child td { border-bottom: 0; }
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
