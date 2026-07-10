@@ -412,6 +412,44 @@ test('semantic terminal event rejection becomes a persisted failed transition', 
   assert.deepEqual(store.diagnostics().warnings, []);
 });
 
+test('mixed valid and invalid appendMany batch leaves file and outbox unchanged', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-batch-atomicity-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const store = new JobEventStore({ adminDir });
+  const jobId = '15151515-1515-4515-8515-151515151515';
+  const validQueued = createJobEvent({ type: 'job.queued', jobId, timestamp: '2026-07-10T11:20:00.000Z', data: { repository: 'alice/atomic', pullNumber: 16 } });
+  const invalidCompleted = createJobEvent({ type: 'job.completed', jobId, timestamp: '2026-07-10T11:21:00.000Z', data: { status: 'running' } });
+
+  await assert.rejects(() => store.appendMany([validQueued, invalidCompleted]), error => {
+    assert.equal(error.name, 'EventSemanticError');
+    assert.notEqual(error.eventRetained, true);
+    return true;
+  });
+  assert.equal(store.diagnostics().pendingEventCount, 0);
+  assert.deepEqual(store.diagnostics().warnings, []);
+  assert.deepEqual((await store.replay({ force: true })).jobs, []);
+  await assert.rejects(() => fs.readFile(path.join(adminDir, 'jobs', 'events.jsonl'), 'utf8'), error => error?.code === 'ENOENT');
+});
+
+test('older invalid pending event reports newly staged additions as retained', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-batch-retained-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const store = new JobEventStore({ adminDir });
+  const olderJobId = '16161616-1616-4616-8616-161616161616';
+  store.pendingEvents.push(createJobEvent({ type: 'job.completed', jobId: olderJobId, timestamp: '2026-07-10T11:30:00.000Z', data: { status: 'running' } }));
+  const newJobId = '17171717-1717-4717-8717-171717171717';
+  const newQueued = createJobEvent({ type: 'job.queued', jobId: newJobId, timestamp: '2026-07-10T11:31:00.000Z', data: { repository: 'alice/retained', pullNumber: 17 } });
+
+  await assert.rejects(() => store.append(newQueued), error => {
+    assert.equal(error.name, 'PendingEventWriteError');
+    assert.equal(error.eventRetained, true);
+    return true;
+  });
+  assert.equal(store.diagnostics().pendingEventCount, 1);
+  assert.equal(store.pendingEvents[0].id, newQueued.id);
+  assert.equal(store.diagnostics().integrityFailureCount, 1);
+});
+
 test('ambiguous event write reconciles stable IDs without duplicate replay effects', async (t) => {
   const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-idempotent-outbox-'));
   t.after(() => fs.rm(adminDir, { recursive: true, force: true }));

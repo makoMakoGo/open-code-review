@@ -202,10 +202,17 @@ export class JobEventStore {
       throw retainedWriteError(error, additions, this.pendingEvents);
     }
     const additionIds = new Set(additions.map(event => eventIdentityKey(event.id)));
-    const preview = this.#createPendingPreview(additionIds);
     try {
+      const preview = this.#createPendingPreview(additionIds);
       await this.#flushPrepared(preview);
     } catch (error) {
+      if (error instanceof EventSemanticError) {
+        if (additionIds.has(eventIdentityKey(error.event.id))) {
+          this.#removePendingEvents(additions);
+          throw error;
+        }
+        throw retainedWriteError(error, additions, this.pendingEvents);
+      }
       this.writeFailure = error;
       throw retainedWriteError(error, additions, this.pendingEvents);
     }
@@ -263,7 +270,7 @@ export class JobEventStore {
         applyJobEvent(preview, event);
       } catch (error) {
         if (!additionIds.has(eventIdentityKey(event.id))) return;
-        this.#removePendingEvents([event]);
+        this.#removePendingEvents(additions);
         throw new EventSemanticError(event, error);
       }
     }
