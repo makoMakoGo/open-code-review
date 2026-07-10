@@ -128,22 +128,202 @@ test('deriveServiceHealth never reports healthy for missing or degraded signals'
   }), 'healthy');
 });
 
-test('AdminRuntime.serviceStatus emits degraded/unavailable from persistence and replay signals', async () => {
+test('dashboard includes runtime config failure in the same snapshot and clears it on recovery', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let configReads = 0;
   const runtime = new AdminRuntime({
-    configProvider: () => ({ version: 'test', port: 3007 }),
-    listener: { address: () => ({ port: 3007 }) },
+    configProvider: () => {
+      configReads += 1;
+      if (configReads === 2) throw new Error('runtime config unavailable');
+      return { version: 'test', port: 3007 };
+    },
   });
-  runtime.persistenceWarning = 'disk full';
-  runtime.replay = { jobs: [], degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
-  const unavailable = await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [] });
-  assert.equal(unavailable.health, 'unavailable');
-  assert.equal(unavailable.storage.writable, false);
 
-  runtime.persistenceWarning = null;
-  runtime.replay = { jobs: [], degraded: true, corruptions: [{ lineNumber: 1, message: 'bad' }], invalidEvents: [], truncatedTail: null };
-  const degraded = await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [] });
-  assert.equal(degraded.health, 'degraded');
-  assert.equal(degraded.storage.degraded, true);
+  const failed = await runtime.dashboard();
+  assert.equal(failed.serviceStatus.health, 'degraded');
+  assert.equal(failed.serviceStatus.storage.writable, true);
+  assert.equal(failed.serviceStatus.diagnostics.runtimeWarnings, 1);
+  assert.deepEqual(failed.diagnostics.map((item) => item.id), ['persistence.runtimeConfig']);
+
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.serviceStatus.diagnostics.runtimeWarnings, 0);
+  assert.equal(recovered.diagnostics.some((item) => item.id === 'persistence.runtimeConfig'), false);
+});
+
+test('dashboard exposes a failing storage size probe in the same snapshot', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-storage-size-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const readdir = fs.readdir.bind(fs);
+  t.mock.method(fs, 'readdir', async (target, ...args) => {
+    if (target === adminDir) {
+      const error = new Error('directory size unavailable');
+      error.code = 'EACCES';
+      throw error;
+    }
+    return readdir(target, ...args);
+  });
+  const runtime = new AdminRuntime({ adminDir, configProvider: () => ({ version: 'test', port: 3007 }) });
+
+  const dashboard = await runtime.dashboard();
+  assert.equal(dashboard.serviceStatus.health, 'degraded');
+  assert.equal(dashboard.serviceStatus.storage.writable, true);
+  assert.equal(dashboard.serviceStatus.storage.degraded, true);
+  assert.equal(dashboard.serviceStatus.diagnostics.runtimeWarnings, 1);
+  assert.deepEqual(dashboard.diagnostics.filter((item) => item.id === 'storage.size').map((item) => item.message), [
+    'Could not read admin data directory size: directory size unavailable',
+  ]);
+});
+
+test('dashboard performs one event replay probe and clears a recovered read failure', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let replayAttempts = 0;
+  const eventStore = {
+    replay: async () => {
+      replayAttempts += 1;
+      if (replayAttempts === 1) throw new Error('event history unavailable');
+      return { jobs: [], degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
+    },
+  };
+  const runtime = new AdminRuntime({ eventStore });
+
+  const failed = await runtime.dashboard();
+  assert.equal(replayAttempts, 1);
+  assert.equal(failed.serviceStatus.health, 'degraded');
+  assert.equal(failed.serviceStatus.storage.writable, true);
+  assert.equal(failed.diagnostics.some((item) => item.id === 'persistence.eventReplay'), true);
+
+  const recovered = await runtime.dashboard();
+  assert.equal(replayAttempts, 2);
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.diagnostics.some((item) => item.id === 'persistence.eventReplay'), false);
+});
+
+test('only a current write-capability failure makes storage not writable', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let storageUnavailable = true;
+  const configManager = {
+    ensureStorageDir: async () => {
+      if (storageUnavailable) throw new Error('storage is read-only');
+    },
+    load: async () => ({ summary: { values: {} }, config: {} }),
+  };
+  const runtime = new AdminRuntime({ configManager });
+
+  await runtime.initialize();
+  const failed = await runtime.dashboard();
+  assert.equal(failed.serviceStatus.health, 'unavailable');
+  assert.equal(failed.serviceStatus.storage.writable, false);
+  assert.equal(failed.diagnostics.some((item) => item.id === 'persistence.configStorage'), true);
+
+  storageUnavailable = false;
+  await runtime.initialize();
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.serviceStatus.storage.writable, true);
+  assert.equal(recovered.diagnostics.some((item) => item.id === 'persistence.configStorage'), false);
+});
+
+test('retention persistence failure controls writability until a successful retry', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-retention-write-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const statePath = path.join(adminDir, 'retention-state.json');
+  await fs.mkdir(statePath);
+  const runtime = new AdminRuntime({ adminDir, configProvider: () => ({ version: 'test', port: 3007 }) });
+  const queue = { running: null, queuedCount: 0, queued: [], diagnostics: [] };
+  const stats = { daily: { degraded: false } };
+
+  const failedResult = { ok: true, diagnostics: [] };
+  await runtime.persistRetentionResult(failedResult);
+  const failed = await runtime.serviceStatus(queue, {
+    stats,
+    retention: { config: {}, lastRun: failedResult, diagnostics: failedResult.diagnostics },
+  });
+  assert.equal(failedResult.ok, false);
+  assert.equal(failed.storage.writable, false);
+
+  await fs.rm(statePath, { recursive: true });
+  const recoveredResult = { ok: true, diagnostics: [] };
+  await runtime.persistRetentionResult(recoveredResult);
+  const recovered = await runtime.serviceStatus(queue, {
+    stats,
+    retention: { config: {}, lastRun: recoveredResult, diagnostics: recoveredResult.diagnostics },
+  });
+  assert.equal(recovered.storage.writable, true);
+});
+
+test('job log read failure degrades health without claiming storage is not writable', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const jobId = '22222222-2222-4222-8222-222222222222';
+  let logReads = 0;
+  let failLogRead = true;
+  const logger = {
+    read: async () => {
+      logReads += 1;
+      if (failLogRead) throw new Error('job log unavailable');
+      return { entries: [], degraded: false, truncatedTail: false, total: 0, offset: 0, limit: 200 };
+    },
+  };
+  const runtime = new AdminRuntime({ logger, configProvider: () => ({ version: 'test', port: 3007 }) });
+  runtime.replay.jobs = [{
+    id: jobId,
+    status: 'succeeded',
+    repository: { owner: 'alice', name: 'repo', fullName: 'alice/repo' },
+    queuedAt: '2026-07-10T06:00:00.000Z',
+    startedAt: '2026-07-10T06:01:00.000Z',
+    finishedAt: '2026-07-10T06:02:00.000Z',
+    updatedAt: '2026-07-10T06:02:00.000Z',
+    result: { outcome: 'succeeded' },
+  }];
+
+  const detail = await runtime.jobDetail(jobId);
+  assert.equal(logReads, 1);
+  assert.equal(detail.diagnostics.some((item) => item.id === 'logs.unavailable'), true);
+  const failed = await runtime.dashboard();
+  assert.equal(failed.serviceStatus.health, 'degraded');
+  assert.equal(failed.serviceStatus.storage.writable, true);
+  assert.equal(failed.diagnostics.some((item) => item.id === `persistence.jobLog.${jobId}`), true);
+
+  failLogRead = false;
+  await runtime.jobDetail(jobId);
+  assert.equal(logReads, 2);
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.diagnostics.some((item) => item.id === `persistence.jobLog.${jobId}`), false);
+});
+
+test('job detail paginates one log read without truncating the phase timeline', async () => {
+  const jobId = '33333333-3333-4333-8333-333333333333';
+  const entries = [
+    { timestamp: '2026-07-10T06:01:10.000Z', level: 'info', message: 'Authenticating', fields: { phase: 'github_auth' } },
+    { timestamp: '2026-07-10T06:01:40.000Z', level: 'info', message: 'Publishing', fields: { phase: 'publishing' } },
+  ];
+  let logReads = 0;
+  const logger = {
+    read: async (_jobId, options = {}) => {
+      logReads += 1;
+      const offset = options.offset ?? 0;
+      const limit = options.limit ?? entries.length;
+      return { entries: entries.slice(offset, offset + limit), total: entries.length, degraded: false, truncatedTail: false };
+    },
+  };
+  const runtime = new AdminRuntime({ logger, configProvider: () => ({ version: 'test', port: 3007 }) });
+  runtime.replay.jobs = [{
+    id: jobId,
+    status: 'succeeded',
+    repository: { owner: 'alice', name: 'repo', fullName: 'alice/repo' },
+    queuedAt: '2026-07-10T06:00:00.000Z',
+    startedAt: '2026-07-10T06:01:00.000Z',
+    finishedAt: '2026-07-10T06:02:00.000Z',
+    updatedAt: '2026-07-10T06:02:00.000Z',
+    result: { outcome: 'succeeded' },
+  }];
+
+  const detail = await runtime.jobDetail(jobId, { logLimit: 1, logOffset: 1 });
+  assert.equal(logReads, 1);
+  assert.deepEqual(detail.logs.entries.map((entry) => entry.fields.phase), ['publishing']);
+  assert.deepEqual(detail.phaseTimeline.filter((item) => item.source === 'log').map((item) => item.label), ['github_auth', 'publishing']);
 });
 
 test('dashboard health tile maps runtime health and is never optimistic Healthy', () => {
@@ -391,6 +571,17 @@ test('service health uses deduplicated current stats, retention, and queue diagn
   });
   assert.equal(retentionDegraded.health, 'degraded');
   assert.equal(retentionDegraded.diagnostics.runtimeWarnings, 1);
+
+  const retentionWriteDiagnostic = { ...retentionDiagnostic, affectsWritability: true };
+  const retentionWriteFailure = await runtime.serviceStatus(queue, {
+    stats: healthyStats,
+    retention: {
+      config: {},
+      lastRun: { ok: false, diagnostics: [retentionWriteDiagnostic] },
+      diagnostics: [retentionWriteDiagnostic],
+    },
+  });
+  assert.equal(retentionWriteFailure.storage.writable, false);
 
   const distinctRetentionFailures = await runtime.serviceStatus(queue, {
     stats: healthyStats,
