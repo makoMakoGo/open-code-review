@@ -9,7 +9,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { ConfigManager, loadConfig } from '../src/config.js';
 import { createServer } from '../src/server.js';
-import { createAdminRouter, AdminRuntime, formatRepository } from '../src/admin/index.js';
+import { createAdminRouter, AdminRuntime, formatRepository, renderConfigPage } from '../src/admin/index.js';
 import { AdminJobQueue, BoundedJobLogger, JobEventStore, computeJobStats, createJobEvent, readDailyStats, redactSensitiveString } from '../src/jobs/index.js';
 
 const env = {
@@ -352,18 +352,104 @@ test('admin retention compacts config audit JSONL by event timestamp, not file m
   assert.deepEqual(retained, [freshRecord]);
 });
 
+test('admin config editor exposes one admin password row and canonical admin data dir', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
+  const manager = new ConfigManager({
+    env: { ...env, ADMIN_PASSWORD: 'a-secure-admin-password', ADMIN_DATA_DIR: dir },
+    dataDir: dir,
+  });
+  await manager.ensureStorageDir();
+
+  const state = await manager.load();
+  const adminPasswordFields = state.summary.fields.filter(field => field.envKey === 'ADMIN_PASSWORD');
+  assert.equal(adminPasswordFields.length, 1);
+  const [adminPasswordField] = adminPasswordFields;
+  assert.equal(adminPasswordField.name, 'adminPassword');
+  assert.equal(adminPasswordField.secret, true);
+  assert.equal(adminPasswordField.set, true);
+  assert.equal(adminPasswordField.editable, false);
+  assert.equal(adminPasswordField.adminDashboardEnabled, true);
+  assert.equal(adminPasswordField.adminDashboardDisabledReason, '');
+
+  const configHtml = renderConfigPage({ csrfToken: 'csrf', config: state.summary, adminRoot: dir, section: 'admin' });
+  assert.equal((configHtml.match(/<code>ADMIN_PASSWORD<\/code>/g) ?? []).length, 1);
+  assert.equal((configHtml.match(/<code>ADMIN_STORAGE_DIR<\/code>/g) ?? []).length, 0);
+  assert.match(configHtml, /dashboard enabled/);
+
+  assert.equal(state.summary.values.adminEnabled.value, true);
+  assert.equal(state.summary.values.adminDisabledReason.value, '');
+  assert.equal(state.summary.fields.find(field => field.name === 'adminEnabled'), undefined);
+  assert.equal(state.summary.fields.find(field => field.name === 'adminDisabledReason'), undefined);
+
+  const adminDataDirFields = state.summary.fields.filter(field => field.name === 'adminDataDir');
+  assert.equal(adminDataDirFields.length, 1);
+  assert.equal(adminDataDirFields[0].envKey, 'ADMIN_DATA_DIR');
+  assert.equal(state.summary.fields.find(field => field.name === 'adminStorageDir'), undefined);
+});
+
+test('admin config editor groups fields and renders searchable sections', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
+  const manager = new ConfigManager({
+    env: { ...env, ADMIN_PASSWORD: 'a-secure-admin-password', ADMIN_DATA_DIR: dir },
+    dataDir: dir,
+  });
+  await manager.ensureStorageDir();
+  const state = await manager.load();
+
+  for (const field of state.summary.fields) {
+    assert.equal(typeof field.group, 'string');
+    assert.match(field.group, /^(service|access|github|ocr|proxy|admin|retention)$/);
+  }
+
+  const byEnv = Object.fromEntries(state.summary.fields.map(field => [field.envKey, field]));
+  assert.equal(byEnv.PORT.group, 'service');
+  assert.equal(byEnv.BOT_TRIGGER_PHRASES.group, 'access');
+  assert.equal(byEnv.GITHUB_APP_ID.group, 'github');
+  assert.equal(byEnv.OCR_LLM_URL.group, 'ocr');
+  assert.equal(byEnv.LLM_PROXY_TARGET_URL.group, 'proxy');
+  assert.equal(byEnv.ADMIN_PASSWORD.group, 'admin');
+  assert.equal(byEnv.JOB_HISTORY_RETENTION_DAYS.group, 'retention');
+
+  const groups = [];
+  for (const field of state.summary.fields) {
+    if (groups[groups.length - 1] !== field.group) groups.push(field.group);
+  }
+  assert.deepEqual(groups, ['service', 'access', 'github', 'ocr', 'proxy', 'admin', 'retention']);
+
+  const serviceHtml = renderConfigPage({ csrfToken: 'csrf', config: state.summary, adminRoot: dir, section: 'service' });
+  const adminHtml = renderConfigPage({ csrfToken: 'csrf', config: state.summary, adminRoot: dir, section: 'admin' });
+  const ocrHtml = renderConfigPage({ csrfToken: 'csrf', config: state.summary, adminRoot: dir, section: 'ocr' });
+  assert.match(serviceHtml, /data-config-editor/);
+  assert.match(serviceHtml, /settings-subnav/);
+  assert.match(serviceHtml, /settings-item/);
+  assert.match(serviceHtml, /\/admin\/config\?section=service/);
+  assert.match(serviceHtml, /\/admin\/config\?section=ocr/);
+  assert.match(serviceHtml, /\/admin\/config\?section=admin/);
+  assert.match(serviceHtml, /id="config-group-service"/);
+  assert.match(serviceHtml, /id="config-field-PORT"/);
+  assert.equal((serviceHtml.match(/id="config-field-ADMIN_PASSWORD"/g) ?? []).length, 0);
+  assert.match(adminHtml, /id="config-field-ADMIN_PASSWORD"/);
+  assert.match(ocrHtml, /id="config-field-OCR_LLM_URL"/);
+  assert.equal((serviceHtml.match(/href="\/admin\/config\?section=/g) ?? []).length, 7);
+});
+
 test('admin config editor exposes legacy trigger phrase and startup-fixed fields', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-config-'));
   const manager = new ConfigManager({ env: { ...env, ADMIN_DATA_DIR: dir }, dataDir: dir });
   await manager.ensureStorageDir();
   const state = await manager.load();
-  const fields = new Map(state.summary.fields.map(field => [field.envKey, field]));
+  const triggerPhraseFields = state.summary.fields.filter(field => field.envKey === 'BOT_TRIGGER_PHRASE');
+  assert.equal(triggerPhraseFields.length, 1);
+  const [triggerPhraseField] = triggerPhraseFields;
 
-  assert.equal(fields.get('BOT_TRIGGER_PHRASE').editable, true);
-  assert.equal(fields.get('BOT_TRIGGER_PHRASE').effectiveValue, '/juya review');
+  assert.equal(triggerPhraseField.editable, true);
+  assert.equal(triggerPhraseField.effectiveValue, '/juya review');
   for (const envKey of ['JOB_LOG_MAX_BYTES', 'RETENTION_INTERVAL_HOURS']) {
-    assert.equal(fields.get(envKey).restartRequired, true);
-    assert.equal(fields.get(envKey).hotReloadable, false);
+    const fieldRows = state.summary.fields.filter(field => field.envKey === envKey);
+    assert.equal(fieldRows.length, 1);
+    const [field] = fieldRows;
+    assert.equal(field.restartRequired, true);
+    assert.equal(field.hotReloadable, false);
   }
 });
 
@@ -566,6 +652,7 @@ test('job completed events reject active statuses', async () => {
     () => store.append(createJobEvent({ type: 'job.completed', jobId, data: { status: 'running' } })),
     /job.completed requires terminal status: running/,
   );
+  assert.equal(store.diagnostics().pendingEventCount, 0);
   const replayed = await store.replay({ force: true });
   assert.equal(replayed.jobs[0].status, 'queued');
 });

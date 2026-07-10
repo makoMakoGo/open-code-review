@@ -10,7 +10,7 @@ import {
   clearCsrfCookie,
 } from './session.js';
 import { forbidden, htmlResponse, methodNotAllowed, notFound, redirect, textResponse } from './security.js';
-import { renderConfigPage, renderDashboardPage, renderJobDetailPage, renderJobsPage, renderLoginPage } from './templates.js';
+import { CONFIG_GROUP_IDS, renderConfigPage, renderDashboardPage, renderJobDetailPage, renderJobsPage, renderLoginPage, renderMetricsPage } from './templates.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -83,6 +83,12 @@ export class AdminRouter {
       return htmlResponse((nonce) => renderDashboardPage({ csrfToken: session.csrfToken, cspNonce: nonce, ...dashboard }));
     }
 
+    if (normalized.pathname === '/admin/metrics') {
+      if (normalized.method !== 'GET') return methodNotAllowed(['GET']);
+      const dashboard = await this.loadDashboard({ request: normalized, session });
+      return htmlResponse((nonce) => renderMetricsPage({ csrfToken: session.csrfToken, cspNonce: nonce, stats: dashboard.stats, metrics: dashboard.metrics }));
+    }
+
     if (normalized.pathname === '/admin/jobs') {
       if (normalized.method !== 'GET') return methodNotAllowed(['GET']);
       const jobsPage = await this.loadJobs({ request: normalized, session });
@@ -103,7 +109,8 @@ export class AdminRouter {
       if (normalized.method === 'GET') {
         const config = await this.loadConfig({ request: normalized, session });
         const flash = this.#consumeFlash(session);
-        return htmlResponse((nonce) => renderConfigPage({ csrfToken: session.csrfToken, cspNonce: nonce, config, adminRoot: this.adminRoot, flash }));
+        const section = normalized.query?.get?.('section') || normalized.query?.section || 'service';
+        return htmlResponse((nonce) => renderConfigPage({ csrfToken: session.csrfToken, cspNonce: nonce, config, adminRoot: this.adminRoot, flash, section }));
       }
       if (normalized.method === 'POST') return this.#saveConfig(normalized, session);
       return methodNotAllowed(['GET', 'POST']);
@@ -178,7 +185,7 @@ export class AdminRouter {
     } catch (error) {
       this.#setFlash(session, { type: 'error', message: error?.message ?? String(error) });
     }
-    return redirect('/admin/config');
+    return redirect(configSectionPath(getFormString(form, 'section')));
   }
 
   async #securityConfig() {
@@ -354,6 +361,12 @@ function getHeader(headers, name) {
   return null;
 }
 
+
+function configSectionPath(section) {
+  const id = String(section ?? '').trim();
+  if (CONFIG_GROUP_IDS.includes(id)) return `/admin/config?section=${encodeURIComponent(id)}`;
+  return '/admin/config';
+}
 function getFormString(form, name) {
   const value = form.get(name);
   if (Array.isArray(value)) return value[0] ?? '';

@@ -230,12 +230,80 @@ const CONFIG_FIELD_METADATA = Object.freeze({
   RETENTION_INTERVAL_HOURS: { label: 'Retention interval', description: 'Hours between retention cleanup runs.' },
   ADMIN_SESSION_TTL_HOURS: { label: 'Admin session TTL', description: 'Absolute admin session lifetime in hours.' },
   ADMIN_PASSWORD: { label: 'Admin password', description: 'Non-editable password that enables the admin dashboard when at least 16 characters.' },
-  ADMIN_DATA_DIR: { label: 'Admin data dir', description: 'Non-editable runtime data root for admin state.' },
+  ADMIN_DATA_DIR: { label: 'Admin data dir', description: 'Non-editable runtime data root for admin state. ADMIN_STORAGE_DIR is accepted only as a legacy alias.' },
   ADMIN_STORAGE_DIR: { label: 'Admin storage dir', description: 'Legacy non-editable alias for the admin data root.' },
   ADMIN_ALLOWED_HOSTS: { label: 'Admin allowed hosts', description: 'Comma-separated Host headers allowed to reach /admin.' },
   ADMIN_COOKIE_SECURE: { label: 'Secure admin cookies', description: 'Whether admin cookies include the Secure attribute.' },
   ADMIN_TRUST_PROXY: { label: 'Trust reverse proxy headers', description: 'Whether /admin trusts x-real-ip and x-forwarded-proto from the fronting proxy.' },
 });
+
+const CONFIG_FIELD_GROUPS = Object.freeze([
+  { id: 'service', label: 'Service', labelKey: 'config_group_service' },
+  { id: 'access', label: 'Triggers & Access', labelKey: 'config_group_access' },
+  { id: 'github', label: 'GitHub App', labelKey: 'config_group_github' },
+  { id: 'ocr', label: 'OCR Engine', labelKey: 'config_group_ocr' },
+  { id: 'proxy', label: 'LLM Proxy', labelKey: 'config_group_proxy' },
+  { id: 'admin', label: 'Admin Dashboard', labelKey: 'config_group_admin' },
+  { id: 'retention', label: 'Retention & Storage', labelKey: 'config_group_retention' },
+]);
+const CONFIG_FIELD_GROUP_ORDER = Object.freeze(Object.fromEntries(CONFIG_FIELD_GROUPS.map((group, index) => [group.id, index])));
+const CONFIG_FIELD_GROUP_BY_ENV = Object.freeze({
+  PORT: 'service',
+  BOT_VERSION: 'service',
+  BOT_REPO_ROOT: 'service',
+  JOB_TIMEOUT_MS: 'service',
+  MAX_REVIEW_COMMENTS: 'service',
+  CLEANUP_WORKDIR: 'service',
+  WEBHOOK_BODY_LIMIT_BYTES: 'service',
+  BOT_TRIGGER_PHRASES: 'access',
+  BOT_TRIGGER_PHRASE: 'access',
+  ALLOWED_USERS: 'access',
+  ALLOWED_USER_IDS: 'access',
+  ALLOWED_REPO_OWNERS: 'access',
+  GITHUB_APP_ID: 'github',
+  GITHUB_APP_PRIVATE_KEY_PATH: 'github',
+  GITHUB_WEBHOOK_SECRET: 'github',
+  OCR_LLM_URL: 'ocr',
+  OCR_LLM_TOKEN: 'ocr',
+  OCR_LLM_MODEL: 'ocr',
+  OCR_USE_ANTHROPIC: 'ocr',
+  OCR_LLM_AUTH_HEADER: 'ocr',
+  OCR_CONCURRENCY: 'ocr',
+  OCR_MAX_GIT_PROCS: 'ocr',
+  OCR_PER_FILE_TIMEOUT_MINUTES: 'ocr',
+  LLM_PROXY_TARGET_URL: 'proxy',
+  LLM_PROXY_INTERNAL_TOKEN: 'proxy',
+  LLM_PROXY_UPSTREAM_AUTH_HEADER: 'proxy',
+  LLM_PROXY_UPSTREAM_TOKEN: 'proxy',
+  LLM_PROXY_USER_AGENT: 'proxy',
+  LLM_PROXY_X_APP: 'proxy',
+  LLM_PROXY_BODY_LIMIT_BYTES: 'proxy',
+  ADMIN_PASSWORD: 'admin',
+  ADMIN_ALLOWED_HOSTS: 'admin',
+  ADMIN_TRUST_PROXY: 'admin',
+  ADMIN_COOKIE_SECURE: 'admin',
+  ADMIN_SESSION_TTL_HOURS: 'admin',
+  ADMIN_DATA_DIR: 'admin',
+  ADMIN_STORAGE_DIR: 'admin',
+  ADMIN_DATA_MAX_BYTES: 'admin',
+  JOB_HISTORY_RETENTION_DAYS: 'retention',
+  JOB_LOG_RETENTION_DAYS: 'retention',
+  STATS_RETENTION_DAYS: 'retention',
+  CONFIG_AUDIT_RETENTION_DAYS: 'retention',
+  JOB_LOG_MAX_BYTES: 'retention',
+  RETENTION_INTERVAL_HOURS: 'retention',
+});
+const CONFIG_FIELD_ORDER_BY_ENV = Object.freeze(Object.fromEntries([
+  'PORT', 'BOT_VERSION', 'BOT_REPO_ROOT', 'JOB_TIMEOUT_MS', 'MAX_REVIEW_COMMENTS', 'CLEANUP_WORKDIR', 'WEBHOOK_BODY_LIMIT_BYTES',
+  'BOT_TRIGGER_PHRASES', 'BOT_TRIGGER_PHRASE', 'ALLOWED_USERS', 'ALLOWED_USER_IDS', 'ALLOWED_REPO_OWNERS',
+  'GITHUB_APP_ID', 'GITHUB_APP_PRIVATE_KEY_PATH', 'GITHUB_WEBHOOK_SECRET',
+  'OCR_LLM_URL', 'OCR_LLM_TOKEN', 'OCR_LLM_MODEL', 'OCR_USE_ANTHROPIC', 'OCR_LLM_AUTH_HEADER', 'OCR_CONCURRENCY', 'OCR_MAX_GIT_PROCS', 'OCR_PER_FILE_TIMEOUT_MINUTES',
+  'LLM_PROXY_TARGET_URL', 'LLM_PROXY_INTERNAL_TOKEN', 'LLM_PROXY_UPSTREAM_AUTH_HEADER', 'LLM_PROXY_UPSTREAM_TOKEN', 'LLM_PROXY_USER_AGENT', 'LLM_PROXY_X_APP', 'LLM_PROXY_BODY_LIMIT_BYTES',
+  'ADMIN_PASSWORD', 'ADMIN_ALLOWED_HOSTS', 'ADMIN_TRUST_PROXY', 'ADMIN_COOKIE_SECURE', 'ADMIN_SESSION_TTL_HOURS', 'ADMIN_DATA_DIR', 'ADMIN_STORAGE_DIR', 'ADMIN_DATA_MAX_BYTES',
+  'JOB_HISTORY_RETENTION_DAYS', 'JOB_LOG_RETENTION_DAYS', 'STATS_RETENTION_DAYS', 'CONFIG_AUDIT_RETENTION_DAYS', 'JOB_LOG_MAX_BYTES', 'RETENTION_INTERVAL_HOURS',
+].map((envKey, index) => [envKey, index])));
+
+const CONFIG_EDITOR_EXCLUDED_FIELD_NAMES = new Set(['adminEnabled', 'adminDisabledReason', 'adminStorageDir']);
 
 function hasOwn(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key);
@@ -601,8 +669,30 @@ function normalizePendingRestartForSummary(pendingRestart) {
 function buildConfigEditorFields(config, sourceMetadata = {}, { pendingRestart = null, overrides = null } = {}) {
   const overrideKeys = overrides ? new Set(Object.keys(normalizeRawOverrides(overrides))) : null;
   return [...NON_SECRET_SUMMARY_FIELDS, ...SECRET_SUMMARY_FIELDS]
+    .filter(field => !CONFIG_EDITOR_EXCLUDED_FIELD_NAMES.has(field.name))
     .map(field => buildConfigEditorField(field, config, sourceMetadata, pendingRestart, overrideKeys))
-    .sort((a, b) => a.envKey.localeCompare(b.envKey));
+    .sort(compareConfigEditorFields);
+}
+
+function groupForEnvKey(envKey) {
+  if (CONFIG_FIELD_GROUP_BY_ENV[envKey]) return CONFIG_FIELD_GROUP_BY_ENV[envKey];
+  if (String(envKey).startsWith('ADMIN_')) return 'admin';
+  if (String(envKey).startsWith('OCR_')) return 'ocr';
+  if (String(envKey).startsWith('LLM_PROXY_')) return 'proxy';
+  if (String(envKey).startsWith('GITHUB_')) return 'github';
+  if (String(envKey).startsWith('BOT_TRIGGER') || String(envKey).startsWith('ALLOWED_')) return 'access';
+  if (String(envKey).includes('RETENTION') || String(envKey).includes('LOG_MAX') || String(envKey).includes('STATS_')) return 'retention';
+  return 'service';
+}
+
+function compareConfigEditorFields(left, right) {
+  const leftGroup = CONFIG_FIELD_GROUP_ORDER[left.group] ?? Number.MAX_SAFE_INTEGER;
+  const rightGroup = CONFIG_FIELD_GROUP_ORDER[right.group] ?? Number.MAX_SAFE_INTEGER;
+  if (leftGroup !== rightGroup) return leftGroup - rightGroup;
+  const leftOrder = CONFIG_FIELD_ORDER_BY_ENV[left.envKey] ?? Number.MAX_SAFE_INTEGER;
+  const rightOrder = CONFIG_FIELD_ORDER_BY_ENV[right.envKey] ?? Number.MAX_SAFE_INTEGER;
+  if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+  return String(left.envKey).localeCompare(String(right.envKey));
 }
 
 function buildConfigEditorField(field, config, sourceMetadata, pendingRestart, overrideKeys) {
@@ -614,9 +704,10 @@ function buildConfigEditorField(field, config, sourceMetadata, pendingRestart, o
   const editable = !NON_EDITABLE_ENV_KEYS.has(envKey);
   const definition = CONFIG_FIELD_METADATA[envKey] ?? {};
   const effectiveValue = secret ? '' : summaryValue(field.read(config));
-  return {
+  const editorField = {
     name: field.name,
     envKey,
+    group: groupForEnvKey(envKey),
     label: definition.label ?? labelFromEnvKey(envKey),
     description: definition.description ?? `Environment variable ${envKey}.`,
     source,
@@ -634,6 +725,11 @@ function buildConfigEditorField(field, config, sourceMetadata, pendingRestart, o
     resetAction: editable && overridden ? `reset:${envKey}` : '',
     highRisk: HIGH_RISK_ENV_KEY_SET.has(envKey),
   };
+  if (field.name === 'adminPassword') {
+    editorField.adminDashboardEnabled = config.adminEnabled;
+    editorField.adminDashboardDisabledReason = config.adminDisabledReason;
+  }
+  return editorField;
 }
 
 function labelFromEnvKey(envKey) {
@@ -1363,6 +1459,7 @@ export {
   assertSecretEnvKey,
   atomicWriteJson,
   buildConfigEditorFields,
+  CONFIG_FIELD_GROUPS,
   buildOcrEnv,
   buildPendingRestartMarker,
   buildSourceMetadata,

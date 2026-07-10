@@ -53,6 +53,7 @@ export {
   redactSecretValue,
   renderConfigPage,
   renderDashboardPage,
+  renderMetricsPage,
   renderDiagnosticsList,
   renderErrorPage,
   renderJobDetailPage,
@@ -69,4 +70,4 @@ export {
   normalizeAdminRequest,
   readForm,
 } from './router.js';
-export { AdminRuntime, directorySize } from './runtime.js';
+export { AdminRuntime, directorySize, deriveServiceHealth, normalizeServiceHealth } from './runtime.js';

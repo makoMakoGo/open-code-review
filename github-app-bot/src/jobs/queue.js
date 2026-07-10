@@ -1,4 +1,7 @@
 import { createUuid, redactSensitiveString, sanitizeForAdminStorage, normalizeIsoTimestamp } from './utils.js';
+import { PendingEventWriteError } from './event-store.js';
+
+const COMPLETED_OUTCOMES = new Set(['succeeded', 'succeeded_with_warnings', 'skipped', 'stale']);
 
 export class AdminJobQueue {
   constructor({ handler, store = null, logger = null, configProvider = null, startSnapshotProvider = null } = {}) {
@@ -107,6 +110,9 @@ export class AdminJobQueue {
             continue;
           }
           const status = result?.outcome ?? 'succeeded';
+          if (status !== 'failed' && !COMPLETED_OUTCOMES.has(status)) {
+            throw new TypeError(`job handler returned unsupported outcome: ${status}`);
+          }
           const eventType = status === 'failed' ? 'job.failed' : 'job.completed';
           await this.#record(eventType, this.runningJob, {
             ...queueMetadata(this.runningJob),
@@ -170,19 +176,24 @@ export class AdminJobQueue {
     try {
       await this.store.append({ type, jobId: job.jobId, data });
     } catch (error) {
-      this.#noteDiagnostic('job-event-store', 'Admin job event persistence failed', error);
       console.error('admin job event persistence failed', safeErrorMessage(error));
+      if (error instanceof PendingEventWriteError) return;
+      throw error;
     }
   }
 
   #createJobLogger(job) {
     const write = async (level, message, fields = {}) => {
-      if (!this.logger) return;
+      if (!this.logger) {
+        this.#clearDiagnostic('job-log-store');
+        return;
+      }
       try {
         await this.logger.append(job.jobId, { level, message, fields });
+        this.#clearDiagnostic('job-log-store');
         await this.#record('job.log', job, { level, message });
       } catch (error) {
-        this.#noteDiagnostic('job-log-store', 'Admin job log persistence failed', error);
+        this.#noteDiagnostic('job-log-store', 'Admin job log persistence failed', error, { affectsWritability: true });
         console.error('admin job log persistence failed', safeErrorMessage(error));
       }
     };
@@ -212,15 +223,20 @@ export class AdminJobQueue {
     };
   }
 
-  #noteDiagnostic(id, message, error) {
+  #noteDiagnostic(id, message, error, { affectsWritability = false } = {}) {
     const diagnostic = {
       id,
       level: 'warn',
       message,
       detail: safeErrorMessage(error),
       timestamp: new Date().toISOString(),
+      affectsWritability,
     };
     this.diagnostics = [diagnostic, ...this.diagnostics.filter(item => item.id !== id)].slice(0, 10);
+  }
+
+  #clearDiagnostic(id) {
+    this.diagnostics = this.diagnostics.filter(item => item.id !== id);
   }
 
   #publicJob(job) {

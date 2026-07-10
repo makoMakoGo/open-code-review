@@ -22,6 +22,31 @@ const RETENTION_STATE_FILE = 'retention-state.json';
 const AUDIT_DIR_NAMES = ['audit', 'config-audit'];
 const EXPENDABLE_ADMIN_FILES = [RETENTION_STATE_FILE];
 
+
+const SERVICE_HEALTH = new Set(['healthy', 'degraded', 'unavailable']);
+
+/** Canonical service health for Status. Missing/partial signals never become healthy. */
+export function deriveServiceHealth(input) {
+  if (input == null || typeof input !== 'object') return 'unavailable';
+  const storage = input.storage && typeof input.storage === 'object' ? input.storage : null;
+  const diagnostics = input.diagnostics && typeof input.diagnostics === 'object' ? input.diagnostics : null;
+  if (!storage || !diagnostics) return 'unavailable';
+  if (typeof storage.writable !== 'boolean') return 'unavailable';
+  if (storage.writable === false) return 'unavailable';
+  const corrupt = Number(diagnostics.corruptEvents) || 0;
+  const invalid = Number(diagnostics.invalidEvents) || 0;
+  if (storage.degraded === true || diagnostics.degraded === true || corrupt > 0 || invalid > 0 || diagnostics.truncatedTail) {
+    return 'degraded';
+  }
+  // Partial boolean signals: degraded must be explicitly false before healthy.
+  if (storage.degraded !== false || diagnostics.degraded !== false) return 'unavailable';
+  return 'healthy';
+}
+
+export function normalizeServiceHealth(value) {
+  const level = String(value ?? '').toLowerCase();
+  return SERVICE_HEALTH.has(level) ? level : 'unavailable';
+}
 export class AdminRuntime {
   constructor({ configManager, eventStore, queue, logger = null, configProvider = null, adminDir = null, listener = null, startedAt = new Date() } = {}) {
     this.configManager = configManager;
@@ -33,50 +58,80 @@ export class AdminRuntime {
     this.listener = listener;
     this.startedAt = startedAt;
     this.replay = { jobs: [], degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
-    this.persistenceWarning = null;
-    this.statsWarning = null;
-    this.retentionWarning = null;
+    this.persistenceDiagnostics = new Map();
+    this.retentionDiagnostics = new Map();
     this.lastRetention = null;
+    this.storageProbePath = this.adminDir ? path.join(this.adminDir, '.writability-probe') : null;
+    this.storageProbeTail = Promise.resolve();
+    this.replayAvailable = !this.eventStore;
+    this.interruptedRecoveryPending = false;
   }
 
+  setPersistenceDiagnostic(id, message, { affectsWritability = false } = {}) {
+    this.persistenceDiagnostics.set(id, { level: 'warn', id, message, affectsWritability });
+  }
+
+  clearPersistenceDiagnostic(id) {
+    this.persistenceDiagnostics.delete(id);
+  }
+
+
   async initialize() {
-    try {
-      if (this.configManager) await this.configManager.ensureStorageDir();
-    } catch (error) {
-      this.persistenceWarning = `Admin config storage unavailable: ${error.message}`;
-      console.error('admin config storage unavailable', error.stack || error.message);
-    }
     await this.refresh();
     await this.markInterruptedJobs();
     await this.loadRetentionState();
   }
 
   async refresh() {
-    if (!this.eventStore) return;
+    const diagnosticId = 'persistence.eventReplay';
+    if (!this.eventStore) {
+      this.clearPersistenceDiagnostic(diagnosticId);
+      return;
+    }
+    if (typeof this.eventStore.flushPending === 'function') {
+      try {
+        await this.eventStore.flushPending();
+      } catch (error) {
+        console.error('admin event outbox flush failed', error.stack || error.message);
+      }
+    }
     try {
       this.replay = await this.eventStore.replay();
+      this.replayAvailable = true;
+      this.clearPersistenceDiagnostic(diagnosticId);
+      if (this.interruptedRecoveryPending) await this.retryInterruptedJobs();
     } catch (error) {
-      this.persistenceWarning = error.message;
+      this.replayAvailable = false;
+      this.setPersistenceDiagnostic(diagnosticId, `Could not read job event history: ${error.message}`);
       console.error('admin event replay failed', error.stack || error.message);
     }
   }
 
   async markInterruptedJobs() {
-    const active = this.replay.jobs.filter(job => isActiveStatus(job.status));
-    for (const job of active) {
-      try {
-        await this.eventStore.append({
-          type: 'job.interrupted',
-          jobId: job.id,
-          data: { reason: 'process restarted before job completed' },
-        });
-      } catch (error) {
-        this.persistenceWarning = `Could not mark interrupted jobs: ${error.message}`;
-        console.error('admin interrupted recovery failed', error.stack || error.message);
-        return;
-      }
+    if (!this.eventStore) return;
+    this.interruptedRecoveryPending = true;
+    await this.retryInterruptedJobs();
+  }
+
+  async retryInterruptedJobs() {
+    if (!this.interruptedRecoveryPending || !this.replayAvailable) return;
+    const queue = this.queueSnapshot();
+    const liveJobIds = new Set([
+      queue.running?.jobId,
+      ...queue.queued.map(job => job.jobId),
+    ].filter(Boolean));
+    const active = this.replay.jobs.filter(job => isActiveStatus(job.status) && !liveJobIds.has(job.id));
+    if (active.length === 0) {
+      this.interruptedRecoveryPending = false;
+      return;
     }
-    if (active.length > 0) await this.refresh();
+    try {
+      await this.eventStore.appendInterruptedJobs(active);
+      this.replay = await this.eventStore.replay();
+      this.interruptedRecoveryPending = this.replay.jobs.some(job => isActiveStatus(job.status) && !liveJobIds.has(job.id));
+    } catch (error) {
+      console.error('admin interrupted recovery failed', error.stack || error.message);
+    }
   }
 
   queueSnapshot() {
@@ -88,7 +143,7 @@ export class AdminRuntime {
   }
 
   async jobs(context = {}) {
-    await this.refresh();
+    if (context.refresh !== false) await this.refresh();
     const request = context.request ?? null;
     const filters = normalizeJobFilters(context);
     const validationMessages = validateJobFilters(filters);
@@ -128,6 +183,7 @@ export class AdminRuntime {
     const job = this.replay.jobs.find(item => item.id === jobId);
     if (!job) return null;
     const config = startTimeConfigSummary(job) ?? await this.safeRuntimeConfigSummary();
+    const eventTimeline = await readJobEventTimeline(this.eventStore, job.id);
     const detail = {
       ...toPublicJobSnapshot(job),
       jobId: job.id,
@@ -137,7 +193,7 @@ export class AdminRuntime {
       config,
       configRevision: config.revision,
       runtimeSettings: config.settings,
-      phaseTimeline: await this.phaseTimeline(job),
+      phaseTimeline: mergePhaseTimeline(job, eventTimeline, []),
       ocr: extractOcrStatus(job),
       ocrStatus: extractOcrStatus(job).status,
       counts: extractJobCounts(job),
@@ -150,43 +206,53 @@ export class AdminRuntime {
     };
     const logger = await this.getLogger();
     if (!logger) return detail;
+    const diagnosticId = `persistence.jobLog.${job.id}`;
+    const limit = normalizeLimit(logLimit);
+    const offset = normalizeOffset(logOffset);
     try {
-      detail.logs = await logger.read(job.id, { limit: normalizeLimit(logLimit), offset: normalizeOffset(logOffset) });
+      const logs = await logger.read(job.id);
+      detail.phaseTimeline = mergePhaseTimeline(job, eventTimeline, logTimelineFromEntries(logs.entries));
+      detail.logs = { ...logs, entries: logs.entries.slice(offset, offset + limit) };
+      this.clearPersistenceDiagnostic(diagnosticId);
       if (detail.logs.degraded) detail.diagnostics.push({ level: 'warn', id: 'logs', message: 'Job log history is degraded.' });
       if (detail.logs.truncatedTail) detail.diagnostics.push({ level: 'info', id: 'logs.tail', message: 'Ignored truncated final log line.' });
     } catch (error) {
       const message = `Could not read job log: ${error.message}`;
-      this.persistenceWarning = message;
+      this.setPersistenceDiagnostic(diagnosticId, message);
       detail.diagnostics.push({ level: 'warn', id: 'logs.unavailable', message });
       console.error('admin job log read failed', error.stack || error.message);
     }
     return detail;
   }
 
-  async phaseTimeline(job) {
-    const eventTimeline = await readJobEventTimeline(this.eventStore, job.id);
-    const logTimeline = await readJobLogTimeline(await this.getLogger(), job.id);
-    return mergePhaseTimeline(job, eventTimeline, logTimeline);
-  }
 
   async stats(options = {}) {
-    await this.refresh();
+    if (options.refresh !== false) await this.refresh();
     const computed = computeJobStats(this.replay.jobs, options);
-    if (!this.adminDir) return { ...computed, daily: { records: [], degraded: false, corruptions: [], invalidRecords: [], truncatedTail: null } };
+    if (!this.adminDir) {
+      return { ...computed, daily: { records: [], degraded: false, corruptions: [], invalidRecords: [], truncatedTail: null }, diagnostics: [] };
+    }
     try {
-      return { ...computed, daily: await readDailyStats({ adminDir: this.adminDir }) };
+      const daily = await readDailyStats({ adminDir: this.adminDir });
+      return { ...computed, daily, diagnostics: statsDiagnostics({ daily }) };
     } catch (error) {
-      this.statsWarning = `Could not read aggregate stats: ${error.message}`;
+      const message = `Could not read aggregate stats: ${error.message}`;
       console.error('admin stats read failed', error.stack || error.message);
-      return { ...computed, daily: { records: [], degraded: true, corruptions: [], invalidRecords: [{ reason: error.message }], truncatedTail: null } };
+      const daily = { records: [], degraded: true, corruptions: [], invalidRecords: [{ reason: error.message }], truncatedTail: null };
+      return { ...computed, daily, diagnostics: [{ level: 'warn', id: 'stats.daily', message }] };
     }
   }
 
   async retentionStatus() {
     await this.loadRetentionState();
+    const config = await this.retentionConfig();
     return {
-      config: await this.retentionConfig(),
+      config,
       lastRun: this.lastRetention,
+      diagnostics: retentionStatusDiagnostics({
+        diagnostics: [...this.retentionDiagnostics.values()],
+        lastRun: this.lastRetention,
+      }),
     };
   }
 
@@ -289,35 +355,61 @@ export class AdminRuntime {
     const queue = this.queueSnapshot();
     const summary = summarizeJobs(this.replay.jobs);
     applyQueueCounts(summary, queue);
-    const jobsPage = await this.jobs({ limit: 20, pageSize: 20, page: 1, asPage: true });
+    const jobsPage = await this.jobs({ limit: 20, pageSize: 20, page: 1, asPage: true, refresh: false });
     const nowMs = Date.now();
-    const stats = mergePersistedDailyTrend(enrichDashboardStats(await this.stats({ now: nowMs }), this.replay.jobs, nowMs));
-    const diagnostics = [...this.diagnostics(), ...queueDiagnostics(queue)];
+    const stats = mergePersistedDailyTrend(enrichDashboardStats(await this.stats({ now: nowMs, refresh: false }), this.replay.jobs, nowMs));
+    const retention = await this.retentionStatus();
+    const serviceSnapshot = await this.serviceStatusSnapshot(queue, { stats, retention });
     return {
       summary,
       recentJobs: jobsPage.jobs,
       metrics: stats,
       stats,
       queue,
-      serviceStatus: await this.serviceStatus(queue),
-      retention: await this.retentionStatus(),
-      diagnostics,
+      serviceStatus: serviceSnapshot.status,
+      retention,
+      diagnostics: serviceSnapshot.diagnostics,
     };
   }
 
-  async serviceStatus(queue = this.queueSnapshot()) {
+  async serviceStatus(queue = this.queueSnapshot(), snapshot = {}) {
+    await this.refresh();
+    return (await this.serviceStatusSnapshot(queue, snapshot)).status;
+  }
+
+  async serviceStatusSnapshot(queue = this.queueSnapshot(), snapshot = {}) {
     const nowMs = Date.now();
+    const current = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    const stats = current.stats ?? await this.stats({ now: nowMs });
+    const retention = current.retention ?? await this.retentionStatus();
     const config = await this.safeRuntimeConfigSummary();
-    const retention = await this.retentionStatus();
+    const writeProbe = await this.probeStorageWritability();
     const storageDiagnostics = [];
-    const dirSizeBytes = this.adminDir ? await safeDirectorySize(this.adminDir, storageDiagnostics) : 0;
+    const dirSizeBytes = this.adminDir
+      ? await safeDirectorySize(this.adminDir, storageDiagnostics, {
+        id: 'storage.size',
+        messagePrefix: 'Could not read admin data directory size',
+      })
+      : 0;
+    const diagnosticSnapshot = this.diagnosticsSnapshot({
+      stats,
+      retention,
+      queue,
+      eventStoreDiagnostics: eventStoreWriteDiagnostics(this.eventStore),
+      probeDiagnostics: [...writeProbe.diagnostics, ...storageDiagnostics],
+    });
     const retentionConfig = retention.config;
     const running = queue.running ? {
       ...queue.running,
+      status: 'running',
       elapsedMs: queue.running.startedAt ? Math.max(0, nowMs - timestampMs(queue.running.startedAt, 'running.startedAt')) : null,
     } : null;
+    const runtimeWarningCount = diagnosticSnapshot.operationalWarnings.length;
+    const storageWritable = !diagnosticSnapshot.operationalWarnings.some(item => item.affectsWritability === true);
+    const storageDegraded = this.replay.degraded || storageDiagnostics.length > 0;
+    const degraded = storageDegraded || runtimeWarningCount > 0;
     const actualListeningPort = actualPortFromListener(this.listener);
-    return {
+    const status = {
       startedAt: this.startedAt.toISOString(),
       uptimeMs: Math.max(0, nowMs - this.startedAt.getTime()),
       version: config.version,
@@ -335,26 +427,34 @@ export class AdminRuntime {
       lastFailure: newestJob(this.replay.jobs, job => job.status === 'failed'),
       storage: {
         adminDir: this.adminDir,
-        writable: this.persistenceWarning == null,
-        degraded: this.replay.degraded || storageDiagnostics.length > 0,
+        writable: storageWritable,
+        degraded: storageDegraded,
         dirSizeBytes,
         budgetBytes: retentionConfig.adminDataMaxBytes,
       },
       diagnostics: {
-        degraded: this.replay.degraded || storageDiagnostics.length > 0,
+        degraded,
         corruptEvents: this.replay.corruptions.length,
         invalidEvents: this.replay.invalidEvents.length,
         truncatedTail: Boolean(this.replay.truncatedTail),
+        runtimeWarnings: runtimeWarningCount,
       },
       lastRetention: retention.lastRun,
     };
+    status.health = deriveServiceHealth(status);
+    return { status, diagnostics: diagnosticSnapshot.items };
   }
 
-  diagnostics() {
-    const items = [];
-    if (this.persistenceWarning) items.push({ level: 'warn', id: 'persistence', message: this.persistenceWarning });
-    if (this.statsWarning) items.push({ level: 'warn', id: 'stats', message: this.statsWarning });
-    if (this.retentionWarning) items.push({ level: 'warn', id: 'retention', message: this.retentionWarning });
+  diagnosticsSnapshot({ stats, retention, queue, eventStoreDiagnostics = [], probeDiagnostics = [] }) {
+    const operationalWarnings = dedupeDiagnostics([
+      ...statsDiagnostics(stats),
+      ...retentionStatusDiagnostics(retention),
+      ...queueDiagnostics(queue),
+      ...eventStoreDiagnostics,
+      ...this.persistenceDiagnostics.values(),
+      ...probeDiagnostics,
+    ].filter(isWarningDiagnostic));
+    const items = [...operationalWarnings];
     if (this.replay.degraded) items.push({ level: 'warn', id: 'events', message: 'Job event history is degraded.' });
     if (this.replay.truncatedTail) items.push({ level: 'info', id: 'events.tail', message: 'Ignored truncated final event line.' });
     for (const corruption of this.replay.corruptions.slice(0, 5)) {
@@ -363,10 +463,14 @@ export class AdminRuntime {
     for (const invalid of this.replay.invalidEvents.slice(0, 5)) {
       items.push({ level: 'warn', id: `events.invalid.${invalid.lineNumber}`, message: `Invalid event line ${invalid.lineNumber}: ${invalid.reason}` });
     }
-    if (this.lastRetention && this.lastRetention.ok === false) {
-      items.push({ level: 'warn', id: 'retention.lastRun', message: 'Last retention run completed with diagnostics.' });
-    }
-    return items;
+    return { items: dedupeDiagnostics(items), operationalWarnings };
+  }
+
+  async probeStorageWritability() {
+    const runProbe = () => probeStorageWritability(this.adminDir, this.storageProbePath);
+    const run = this.storageProbeTail.then(runProbe, runProbe);
+    this.storageProbeTail = run.catch(() => {});
+    return run;
   }
 
   async configSummary() {
@@ -376,52 +480,67 @@ export class AdminRuntime {
   }
 
   async safeRuntimeConfigSummary() {
+    const diagnosticId = 'persistence.runtimeConfig';
     try {
+      let summary = { revision: null, version: null, port: null, pendingPort: null, settings: {} };
       if (this.configManager) {
         const state = await this.configManager.load();
         const values = state.summary?.values ?? {};
-        return {
+        summary = {
           revision: state.revision,
           version: values.version?.value,
           port: values.port?.value,
           pendingPort: state.pendingRestart?.keys?.includes('PORT') ? values.port?.value : null,
           settings: redactRuntimeSettings(values),
         };
-      }
-      if (this.configProvider) {
+      } else if (this.configProvider) {
         const config = await this.configProvider();
-        return { revision: null, version: config.version, port: config.port, pendingPort: null, settings: redactRuntimeSettings(config) };
+        summary = { revision: null, version: config.version, port: config.port, pendingPort: null, settings: redactRuntimeSettings(config) };
       }
+      this.clearPersistenceDiagnostic(diagnosticId);
+      return summary;
     } catch (error) {
-      this.persistenceWarning = `Could not load runtime config summary: ${error.message}`;
+      this.setPersistenceDiagnostic(diagnosticId, `Could not load runtime config summary: ${error.message}`);
       console.error('admin runtime config summary failed', error.stack || error.message);
+      return { revision: null, version: null, port: null, pendingPort: null, settings: {} };
     }
-    return { revision: null, version: null, port: null, pendingPort: null, settings: {} };
   }
 
   async retentionConfig() {
     try {
-      if (this.configProvider) return retentionDefaults(await this.configProvider());
-      if (this.configManager) {
+      let config;
+      if (this.configProvider) config = retentionDefaults(await this.configProvider());
+      else if (this.configManager) {
         const state = await this.configManager.load();
-        return retentionDefaults(state.config ?? {});
-      }
+        config = retentionDefaults(state.config ?? {});
+      } else config = retentionDefaults();
+      this.retentionDiagnostics.delete('retention.config');
+      return config;
     } catch (error) {
-      this.retentionWarning = `Could not load retention config; using defaults: ${error.message}`;
+      const message = `Could not load retention config; using defaults: ${error.message}`;
+      this.retentionDiagnostics.set('retention.config', { level: 'warn', id: 'retention.config', message });
       console.error('admin retention config load failed', error.stack || error.message);
+      return retentionDefaults();
     }
-    return retentionDefaults();
   }
 
   async loadRetentionState() {
-    if (!this.adminDir || this.lastRetention) return;
+    if (!this.adminDir || this.lastRetention) {
+      this.retentionDiagnostics.delete('retention.state');
+      return;
+    }
     try {
       const raw = await fs.readFile(path.join(this.adminDir, RETENTION_STATE_FILE), 'utf8');
       const parsed = JSON.parse(raw);
       this.lastRetention = parsed.lastRun ?? null;
+      this.retentionDiagnostics.delete('retention.state');
     } catch (error) {
-      if (error && error.code === 'ENOENT') return;
-      this.retentionWarning = `Could not read retention state: ${error.message}`;
+      if (error && error.code === 'ENOENT') {
+        this.retentionDiagnostics.delete('retention.state');
+        return;
+      }
+      const message = `Could not read retention state: ${error.message}`;
+      this.retentionDiagnostics.set('retention.state', { level: 'warn', id: 'retention.state', message });
       console.error('admin retention state read failed', error.stack || error.message);
     }
   }
@@ -435,13 +554,28 @@ export class AdminRuntime {
   }
 
   async persistRetentionResult(result) {
-    if (!this.adminDir) return;
+    if (!this.adminDir) {
+      this.retentionDiagnostics.delete('retention.persist');
+      return;
+    }
+    if (!Array.isArray(result.diagnostics)) throw new TypeError('retention result diagnostics must be an array');
+    const retryingPersist = this.retentionDiagnostics.has('retention.persist')
+      || result.diagnostics.some(item => item?.id === 'retention.persist');
+    if (retryingPersist) {
+      for (let index = result.diagnostics.length - 1; index >= 0; index -= 1) {
+        if (result.diagnostics[index]?.id === 'retention.persist') result.diagnostics.splice(index, 1);
+      }
+      result.ok = result.diagnostics.length === 0;
+    }
     try {
       await atomicWriteFile(path.join(this.adminDir, RETENTION_STATE_FILE), `${JSON.stringify({ lastRun: result }, null, 2)}\n`);
+      this.retentionDiagnostics.delete('retention.persist');
     } catch (error) {
-      this.retentionWarning = `Could not persist retention state: ${error.message}`;
+      const message = `Could not persist retention state: ${error.message}`;
+      const diagnostic = { level: 'warn', id: 'retention.persist', message, affectsWritability: true };
+      this.retentionDiagnostics.set(diagnostic.id, diagnostic);
       result.ok = false;
-      result.diagnostics.push({ level: 'warn', id: 'retention.persist', message: this.retentionWarning });
+      result.diagnostics.push(diagnostic);
       console.error('admin retention state write failed', error.stack || error.message);
     }
   }
@@ -453,7 +587,6 @@ export class AdminRuntime {
       result.ok = false;
       const diagnostic = { level: 'warn', id: `retention.${key}`, message: error.message };
       result.diagnostics.push(diagnostic);
-      this.retentionWarning = `Retention ${key} step failed: ${error.message}`;
       console.error('admin retention step failed', { step: key, error: error.stack || error.message });
     }
   }
@@ -678,11 +811,79 @@ async function logFileInfos(adminDir, activeJobIds, terminalJobIds = new Set()) 
   return files;
 }
 
-async function safeDirectorySize(adminDir, diagnostics) {
+async function probeStorageWritability(adminDir, probePath) {
+  if (!adminDir) return { probed: false, writable: true, diagnostics: [] };
+  try {
+    await fs.mkdir(adminDir, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    return {
+      probed: true,
+      writable: false,
+      diagnostics: [{
+        level: 'warn',
+        id: 'storage.write',
+        message: `Could not prepare admin data directory: ${error.message}`,
+        affectsWritability: true,
+      }],
+    };
+  }
+
+  try {
+    await fs.rm(probePath, { force: true });
+  } catch (error) {
+    return {
+      probed: true,
+      writable: false,
+      diagnostics: [storageProbeCleanupDiagnostic(error)],
+    };
+  }
+
+  let writeError = null;
+  try {
+    await fs.writeFile(probePath, '', { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    writeError = error;
+  }
+  let cleanupError = null;
+  try {
+    await fs.rm(probePath, { force: true });
+  } catch (error) {
+    cleanupError = error;
+  }
+  const diagnostics = [];
+  if (writeError) {
+    diagnostics.push({
+      level: 'warn',
+      id: 'storage.write',
+      message: `Could not write admin data directory: ${writeError.message}`,
+      affectsWritability: true,
+    });
+  }
+  if (cleanupError) diagnostics.push(storageProbeCleanupDiagnostic(cleanupError));
+  return { probed: true, writable: writeError == null && cleanupError == null, diagnostics };
+}
+
+function storageProbeCleanupDiagnostic(error) {
+  return {
+    level: 'warn',
+    id: 'storage.writeCleanup',
+    message: `Could not remove admin data write probe: ${error.message}`,
+    affectsWritability: true,
+  };
+}
+
+function eventStoreWriteDiagnostics(eventStore) {
+  if (!eventStore || typeof eventStore.diagnostics !== 'function') return [];
+  const diagnostics = eventStore.diagnostics();
+  return Array.isArray(diagnostics.warnings) ? diagnostics.warnings : [];
+}
+
+async function safeDirectorySize(adminDir, diagnostics, { id = 'retention.size', messagePrefix = '' } = {}) {
   try {
     return await directorySize(adminDir);
   } catch (error) {
-    diagnostics.push({ level: 'warn', id: 'retention.size', message: error.message });
+    const message = messagePrefix ? `${messagePrefix}: ${error.message}` : error.message;
+    diagnostics.push({ level: 'warn', id, message });
     return 0;
   }
 }
@@ -903,7 +1104,39 @@ function numberOrNull(value) {
 
 function queueDiagnostics(queue) {
   if (!Array.isArray(queue?.diagnostics)) return [];
-  return queue.diagnostics.map((item, index) => ({ level: item.level ?? 'warn', id: item.id ?? `queue.${index}`, message: item.message ?? String(item) }));
+  return queue.diagnostics.map((item, index) => {
+    const source = item && typeof item === 'object' ? item : {};
+    return { ...source, level: source.level ?? 'warn', id: source.id ?? `queue.${index}`, message: source.message ?? String(item) };
+  });
+}
+
+function statsDiagnostics(stats) {
+  const diagnostics = Array.isArray(stats?.diagnostics) ? stats.diagnostics : [];
+  if (stats?.daily?.degraded !== true || diagnostics.some(item => item?.id === 'stats.daily')) {
+    return dedupeDiagnostics(diagnostics);
+  }
+  return dedupeDiagnostics([
+    ...diagnostics,
+    { level: 'warn', id: 'stats.daily', message: 'Aggregate daily stats are degraded.' },
+  ]);
+}
+
+function retentionStatusDiagnostics(retention) {
+  const currentDiagnostics = Array.isArray(retention?.diagnostics) ? retention.diagnostics : [];
+  const lastRunDiagnostics = Array.isArray(retention?.lastRun?.diagnostics) ? retention.lastRun.diagnostics : [];
+  const diagnostics = [...currentDiagnostics, ...lastRunDiagnostics];
+  if (retention?.lastRun?.ok === false && !lastRunDiagnostics.some(isWarningDiagnostic)) {
+    diagnostics.push({ level: 'warn', id: 'retention.lastRun', message: 'Last retention run completed with diagnostics.' });
+  }
+  return dedupeDiagnostics(diagnostics);
+}
+
+function isWarningDiagnostic(item) {
+  return item?.level === 'warn' || item?.level === 'error';
+}
+
+function dedupeDiagnostics(items) {
+  return [...new Map(items.map(item => [item.id, item])).values()];
 }
 
 function newestJob(jobs, predicate) {
@@ -1033,10 +1266,8 @@ async function readJobEventTimeline(eventStore, jobId) {
   return timeline;
 }
 
-async function readJobLogTimeline(logger, jobId) {
-  if (!logger) return [];
-  const logs = await logger.read(jobId);
-  return logs.entries
+function logTimelineFromEntries(entries) {
+  return entries
     .filter(entry => typeof entry.fields?.phase === 'string' && entry.fields.phase !== '')
     .map(entry => ({
       timestamp: entry.timestamp,
