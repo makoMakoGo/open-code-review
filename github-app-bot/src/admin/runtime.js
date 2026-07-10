@@ -339,8 +339,17 @@ export class AdminRuntime {
     const retentionConfig = retention.config;
     const running = queue.running ? {
       ...queue.running,
+      status: 'running',
       elapsedMs: queue.running.startedAt ? Math.max(0, nowMs - timestampMs(queue.running.startedAt, 'running.startedAt')) : null,
     } : null;
+    const runtimeWarningCount = [
+      this.statsWarning,
+      this.retentionWarning,
+      retention.lastRun?.ok === false ? 'retention failed' : null,
+      ...queueDiagnostics(queue),
+    ].filter(Boolean).length;
+    const storageDegraded = this.replay.degraded || storageDiagnostics.length > 0;
+    const degraded = storageDegraded || runtimeWarningCount > 0;
     const actualListeningPort = actualPortFromListener(this.listener);
     const status = {
       startedAt: this.startedAt.toISOString(),
@@ -361,15 +370,16 @@ export class AdminRuntime {
       storage: {
         adminDir: this.adminDir,
         writable: this.persistenceWarning == null,
-        degraded: this.replay.degraded || storageDiagnostics.length > 0,
+        degraded: storageDegraded,
         dirSizeBytes,
         budgetBytes: retentionConfig.adminDataMaxBytes,
       },
       diagnostics: {
-        degraded: this.replay.degraded || storageDiagnostics.length > 0,
+        degraded,
         corruptEvents: this.replay.corruptions.length,
         invalidEvents: this.replay.invalidEvents.length,
         truncatedTail: Boolean(this.replay.truncatedTail),
+        runtimeWarnings: runtimeWarningCount,
       },
       lastRetention: retention.lastRun,
     };

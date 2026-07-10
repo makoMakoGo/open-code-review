@@ -17,6 +17,56 @@ function extractCsrfFromCookie(cookieHeader) {
   return match ? decodeURIComponent(match[1]) : '';
 }
 
+function extractI18nDictionaries(html) {
+  const match = html.match(/var I18N=(\{[\s\S]*?\});function dict\(\)/);
+  assert.ok(match, 'expected I18N dict in body script');
+  return JSON.parse(match[1]);
+}
+
+function cssVariables(block) {
+  return new Map([...block.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/gi)].map((match) => [match[1], match[2].trim()]));
+}
+
+function resolveCssColor(name, variables, seen = new Set()) {
+  assert.ok(!seen.has(name), `cyclic CSS variable ${name}`);
+  seen.add(name);
+  const raw = variables.get(name) ?? name;
+  const variable = raw.match(/^var\((--[a-z0-9-]+)\)$/i);
+  if (variable) return resolveCssColor(variable[1], variables, seen);
+  const hex = raw.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    const value = Number.parseInt(hex[1], 16);
+    return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255, a: 1 };
+  }
+  const rgba = raw.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+  assert.ok(rgba, `unsupported CSS color ${raw}`);
+  return { r: Number(rgba[1]), g: Number(rgba[2]), b: Number(rgba[3]), a: rgba[4] == null ? 1 : Number(rgba[4]) };
+}
+
+function compositeColor(foreground, background) {
+  const alpha = foreground.a + background.a * (1 - foreground.a);
+  return {
+    r: (foreground.r * foreground.a + background.r * background.a * (1 - foreground.a)) / alpha,
+    g: (foreground.g * foreground.a + background.g * background.a * (1 - foreground.a)) / alpha,
+    b: (foreground.b * foreground.a + background.b * background.a * (1 - foreground.a)) / alpha,
+    a: alpha,
+  };
+}
+
+function relativeLuminance(color) {
+  const linear = (channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b);
+}
+
+function contrastRatio(left, right) {
+  const a = relativeLuminance(left);
+  const b = relativeLuminance(right);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
 function runApplyLangOnSettingsNav(html) {
   const match = html.match(/var I18N=(\{[\s\S]*?\});function dict\(\)/);
   assert.ok(match, 'expected I18N dict in body script');
@@ -311,4 +361,105 @@ test('dark theme defines semantic status fills', () => {
   assert.match(html, /:root\[data-theme="dark"\][\s\S]*--danger-subtle:\s*[^;]+;/);
   assert.match(html, /:root\[data-theme="dark"\][\s\S]*--done-subtle:\s*[^;]+;/);
   assert.match(html, /:root\[data-theme="dark"\][\s\S]*--neutral-subtle:\s*[^;]+;/);
+});
+
+test('service health degrades for stats, retention, queue, and failed retention signals', async () => {
+  const runtime = new AdminRuntime({ configProvider: () => ({ version: 'test', port: 3007 }) });
+  runtime.replay = { jobs: [], degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
+
+  runtime.statsWarning = 'stats unavailable';
+  assert.equal((await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [] })).health, 'degraded');
+
+  runtime.statsWarning = null;
+  runtime.retentionWarning = 'retention unavailable';
+  assert.equal((await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [] })).health, 'degraded');
+
+  runtime.retentionWarning = null;
+  const queueDegraded = await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [{ id: 'queue', level: 'warn' }] });
+  assert.equal(queueDegraded.health, 'degraded');
+  assert.equal(queueDegraded.diagnostics.degraded, true);
+  assert.equal(queueDegraded.storage.degraded, false);
+
+  runtime.lastRetention = { ok: false };
+  assert.equal((await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [] })).health, 'degraded');
+});
+
+test('invalid health values map to unavailable and never introduce a fourth state', () => {
+  const html = renderDashboardPage({
+    csrfToken: 'csrf',
+    summary: {},
+    diagnostics: [],
+    serviceStatus: { health: 'unknown', storage: {}, diagnostics: {} },
+  });
+  assert.match(html, /data-i18n="health_unavailable"/);
+  assert.doesNotMatch(html, /health_unknown|>Unknown</);
+});
+
+test('Status i18n keys are complete in English and Chinese', () => {
+  const html = renderDashboardPage({
+    csrfToken: 'csrf',
+    summary: { queued: 1, running: 1, succeeded: 1, failed: 1, succeeded_with_warnings: 1 },
+    diagnostics: [],
+    serviceStatus: {
+      health: 'degraded',
+      configuredPort: 3007,
+      actualListeningPort: 43123,
+      storage: { writable: true, degraded: true, dirSizeBytes: 1, budgetBytes: 10 },
+      diagnostics: { degraded: true, corruptEvents: 1, invalidEvents: 2, truncatedTail: true },
+      running: { jobId: '22222222-2222-4222-8222-222222222222', phase: 'ocr', repository: 'alice/web' },
+    },
+  });
+  const dictionaries = extractI18nDictionaries(html);
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  const keys = new Set([...markup.matchAll(/data-i18n="([^"]+)"/g)].map((match) => match[1]));
+  for (const key of keys) {
+    assert.equal(typeof dictionaries.en[key], 'string', `missing en.${key}`);
+    assert.equal(typeof dictionaries.zh[key], 'string', `missing zh.${key}`);
+  }
+  assert.match(html, /data-i18n="word_configured"/);
+  assert.match(html, /data-i18n="diag_corrupt"[\s\S]*data-i18n="diag_invalid"[\s\S]*data-i18n="diag_truncated"/);
+});
+
+test('runtime running job and dashboard pill remain running across inner phases', async () => {
+  const runtime = new AdminRuntime({ configProvider: () => ({ version: 'test', port: 3007 }) });
+  runtime.replay = { jobs: [], degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
+  const status = await runtime.serviceStatus({
+    running: { jobId: '22222222-2222-4222-8222-222222222222', phase: 'ocr', startedAt: '2026-07-10T06:00:00.000Z' },
+    queuedCount: 0,
+    queued: [],
+    diagnostics: [],
+  });
+  assert.equal(status.running.status, 'running');
+  const html = renderDashboardPage({ csrfToken: 'csrf', summary: { running: 1 }, diagnostics: [], serviceStatus: status });
+  assert.match(html, /dpill run[\s\S]*data-i18n="pill_running"/);
+  assert.doesNotMatch(html, /dpill queued[\s\S]*>ocr</);
+});
+
+test('advanced and login focus rules use the solid accent ring', () => {
+  const html = renderJobsPage({
+    csrfToken: 'csrf',
+    jobs: [],
+    filters: {},
+    pagination: { page: 1, totalPages: 1, total: 0, pageSize: 50, hasPrev: false, hasNext: false },
+  });
+  assert.match(html, /\.adv-grid input:focus, \.adv-grid select:focus \{[^}]*outline: 2px solid var\(--accent\);[^}]*outline-offset: 2px;/);
+  assert.match(html, /\.login-form input:focus \{[^}]*outline: 2px solid var\(--accent\);[^}]*outline-offset: 2px;/);
+});
+
+test('dark status pill text meets WCAG AA against composited fills', () => {
+  const html = renderDashboardPage({ csrfToken: 'csrf', summary: {}, diagnostics: [], serviceStatus: null });
+  const block = html.match(/:root\[data-theme="dark"\] \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(block, 'expected dark theme block');
+  const variables = cssVariables(block);
+  const pageBackground = resolveCssColor('--bg', variables);
+  for (const [foregroundName, fillName] of [
+    ['--success', '--success-subtle'],
+    ['--attention', '--attention-subtle'],
+    ['--danger', '--danger-subtle'],
+    ['--done', '--done-subtle'],
+  ]) {
+    const foreground = resolveCssColor(foregroundName, variables);
+    const fill = compositeColor(resolveCssColor(fillName, variables), pageBackground);
+    assert.ok(contrastRatio(foreground, fill) >= 4.5, `${foregroundName} must reach 4.5:1`);
+  }
 });

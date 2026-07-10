@@ -99,7 +99,7 @@ test('service status renders actual listener port separately from configured por
 
   const html = renderDashboardPage({ csrfToken: 'csrf', summary: {}, recentJobs: [], diagnostics: [], serviceStatus: status });
   assert.match(html, /Port[\s\S]*43123/);
-  assert.match(html, /configured 3007/);
+  assert.match(html, /data-i18n="word_configured">configured<\/span> 3007/);
 });
 
 test('job detail renders start-time config snapshot and auditable phase timeline', async () => {

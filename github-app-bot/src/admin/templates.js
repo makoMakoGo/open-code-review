@@ -158,10 +158,14 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
   const pendingPort = svc?.desiredPendingPort ?? svc?.pendingPort;
   const portValue = (() => {
     const p = actualPort == null || actualPort === '' ? null : String(actualPort);
-    if (p == null) return '—';
-    if (pendingPort != null && pendingPort !== '') return `${p} → ${pendingPort}`;
-    if (configuredPort != null && String(configuredPort) !== p) return `${p} (configured ${configuredPort})`;
-    return p;
+    if (p == null) return { value: '—', raw: false };
+    if (pendingPort != null && pendingPort !== '') {
+      return { value: `${escapeHtml(p)} → ${safeDisplay(pendingPort)}`, raw: true };
+    }
+    if (configuredPort != null && String(configuredPort) !== p) {
+      return { value: `${escapeHtml(p)} (${word('word_configured', 'configured')} ${safeDisplay(configuredPort)})`, raw: true };
+    }
+    return { value: p, raw: false };
   })();
   const writableHtml = storage.writable === false
     ? word('storage_not_writable', 'not writable')
@@ -173,6 +177,13 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
     : storage.degraded === false
       ? word('storage_healthy', 'healthy')
       : word('storage_unknown', 'unknown');
+  const statusDiagnostics = svc?.diagnostics && typeof svc.diagnostics === 'object' ? svc.diagnostics : {};
+  const diagnosticCountsHtml = [
+    `${word('diag_corrupt', 'corrupt')} ${safeDisplay(statusDiagnostics.corruptEvents ?? 0)}`,
+    `${word('diag_invalid', 'invalid')} ${safeDisplay(statusDiagnostics.invalidEvents ?? 0)}`,
+    `${word('diag_truncated', 'truncated')} ${word(statusDiagnostics.truncatedTail ? 'word_yes' : 'word_no', statusDiagnostics.truncatedTail ? 'yes' : 'no')}`,
+    `${word('diag_runtime_warnings', 'runtime warnings')} ${safeDisplay(statusDiagnostics.runtimeWarnings ?? 0)}`,
+  ].join(', ');
   const statusGroups = [
     { label: 'Runtime', key: 'ssg_runtime', rows: [
       ['Uptime', formatDuration(svc?.uptimeMs), 'ss_uptime'],
@@ -181,7 +192,7 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
       ['Config revision', svc?.configRevision, 'ss_config_revision'],
     ] },
     { label: 'Network', key: 'ssg_network', rows: [
-      ['Port', portValue, 'ss_port'],
+      ['Port', portValue.value, 'ss_port', portValue.raw],
     ] },
     { label: 'Storage', key: 'ssg_storage', rows: [
       ['State', `${writableHtml} / ${storageHealthHtml}`, 'ss_storage_health', true],
@@ -189,7 +200,7 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
       ['Last retention', formatDate(svc?.lastRetention?.finishedAt ?? svc?.lastRetention?.startedAt ?? retention?.lastRun?.finishedAt), 'ss_last_retention'],
     ] },
     { label: 'Diagnostics', key: 'ssg_diagnostics', rows: [
-      ['Events', formatDiagnosticCounts(svc?.diagnostics), 'ss_diag_counts'],
+      ['Events', diagnosticCountsHtml, 'ss_diag_counts', true],
     ] },
   ];
   const statusDetails = statusGroups.map((g) => {
@@ -200,10 +211,11 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
   const running = svc?.runningJob || svc?.running || null;
   const runningBody = running
     ? `<div class="kv-list">
-<div class="kv"><span class="k" data-i18n="th_repo">Repository</span><span class="v">${escapeHtml(formatRepository(running.repo ?? running.repository))}</span></div>
+<div class="kv"><span class="k" data-i18n="th_repository">Repository</span><span class="v">${escapeHtml(formatRepository(running.repo ?? running.repository))}</span></div>
 <div class="kv"><span class="k" data-i18n="th_pr">Pull request</span><span class="v">#${escapeHtml(String(running.pullNumber ?? running.pullRequest ?? '—'))}</span></div>
 <div class="kv"><span class="k" data-i18n="th_actor">Actor</span><span class="v">${escapeHtml(running.actor ?? '—')}</span></div>
-<div class="kv"><span class="k" data-i18n="th_status">Phase</span><span class="v">${jobStatusPill(running.status ?? running.phase ?? 'running')}</span></div>
+<div class="kv"><span class="k" data-i18n="th_status">Status</span><span class="v">${jobStatusPill('running')}</span></div>
+<div class="kv"><span class="k" data-i18n="th_phase">Phase</span><span class="v"><code>${safeDisplay(running.phase ?? '—')}</code></span></div>
 ${jobIdRow(running)}
 </div>`
     : `<p class="empty" data-i18n="empty_running">No running job.</p>`;
@@ -226,7 +238,7 @@ ${jobIdRow(running)}
   </div>
   <div class="box-body">
     <div class="kv-list">
-      <div class="kv"><span class="k" data-i18n="th_repo">Repository</span><span class="v">${escapeHtml(formatRepository(job.repo ?? job.repository))}</span></div>
+      <div class="kv"><span class="k" data-i18n="th_repository">Repository</span><span class="v">${escapeHtml(formatRepository(job.repo ?? job.repository))}</span></div>
       <div class="kv"><span class="k" data-i18n="th_pr">Pull request</span><span class="v">#${escapeHtml(String(job.pullNumber ?? '—'))}</span></div>
       <div class="kv"><span class="k" data-i18n="th_actor">Actor</span><span class="v">${escapeHtml(job.actor ?? '—')}</span></div>
       <div class="kv"><span class="k" data-i18n="th_diag">Diagnostic</span><span class="v"><code>${escapeHtml(job.diagnosticId ?? '—')}</code></span></div>
@@ -897,13 +909,6 @@ function formatPercent(value) {
   return Number.isFinite(value) ? `${Math.round(value * 100)}%` : '';
 }
 
-function formatDiagnosticCounts(diagnostics = {}) {
-  if (typeof diagnostics !== 'object' || diagnostics == null) return '';
-  const corrupt = diagnostics.corruptEvents ?? 0;
-  const invalid = diagnostics.invalidEvents ?? 0;
-  const truncated = diagnostics.truncatedTail ? 'yes' : 'no';
-  return `corrupt ${corrupt}, invalid ${invalid}, truncated ${truncated}`;
-}
 function formatDate(value) {
   if (value == null || value === '') return '';
   const date = value instanceof Date ? value : new Date(value);
@@ -917,10 +922,9 @@ function numberOrDash(value) {
 
 function mapServiceHealth(level) {
   const normalized = String(level ?? '').toLowerCase();
-  if (normalized === 'healthy') return { level: 'healthy', labelKey: 'health_healthy', label: 'Healthy', dot: 'ok' };
-  if (normalized === 'degraded') return { level: 'degraded', labelKey: 'health_degraded', label: 'Degraded', dot: 'warn' };
-  if (normalized === 'unknown') return { level: 'unknown', labelKey: 'health_unknown', label: 'Unknown', dot: 'idle' };
-  return { level: 'unavailable', labelKey: 'health_unavailable', label: 'Unavailable', dot: 'err' };
+  if (normalized === 'healthy') return { labelKey: 'health_healthy', label: 'Healthy', dot: 'ok' };
+  if (normalized === 'degraded') return { labelKey: 'health_degraded', label: 'Degraded', dot: 'warn' };
+  return { labelKey: 'health_unavailable', label: 'Unavailable', dot: 'err' };
 }
 
 function jobIdOf(job) {
@@ -973,8 +977,10 @@ const I18N = {
     h2_service_status: 'Status', h2_overview: 'Service status', ss_uptime: 'Uptime', ss_started: 'Started', ss_version: 'Version', ss_config_revision: 'Config revision',
     ss_actual_port: 'Actual listening port', ss_configured_port: 'Configured port', ss_pending_port: 'Desired pending port',
     ss_storage_health: 'Storage writable/degraded', ss_storage_size: 'Storage size / budget', ss_last_retention: 'Last retention', ss_diag_counts: 'Corrupt/truncated diagnostics',
+    ssg_runtime: 'Runtime', ssg_network: 'Network', ssg_storage: 'Storage', ssg_diagnostics: 'Diagnostics', ss_port: 'Port',
     h2_metrics: 'Metrics and trends', m_dur_p50: 'Duration p50', m_dur_p95: 'Duration p95', m_qw_p50: 'Queue wait p50', m_qw_p95: 'Queue wait p95',
     ss_running_job: 'Current running job', empty_running: 'No running job.', ss_queued: 'Queued', ss_last_sf: 'Last completed / failure', ss_last_success: 'Last completed', ss_last_completed: 'Last completed', ss_last_failure: 'Last failure', th_diag: 'Diagnostic', th_job: 'Job', tile_health: 'Health', tile_queue: 'Queue depth', tile_reviewed: 'Reviewed', tile_warnings: 'Warnings', health_healthy: 'Healthy', health_degraded: 'Degraded', health_unavailable: 'Unavailable', pill_success: 'success', pill_warnings: 'warnings', pill_running: 'running', pill_failed: 'failed', pill_queued: 'queued', pill_interrupted: 'interrupted', pill_stale: 'stale', pill_skipped: 'skipped', word_ok: 'ok', storage_writable: 'writable', storage_not_writable: 'not writable', storage_degraded: 'degraded', storage_healthy: 'healthy', storage_unknown: 'unknown',
+    word_configured: 'configured', word_yes: 'yes', word_no: 'no', diag_corrupt: 'corrupt', diag_invalid: 'invalid', diag_truncated: 'truncated', diag_runtime_warnings: 'runtime warnings',
     m_fail_class: 'Failure classification', m_repo_rate: 'Repository success rate', m_daily_trend: 'Daily trend', empty_daily: 'No daily trend data.',
     th_window: 'Window', th_jobs: 'Jobs', th_success_rate: 'Success rate', th_trend: 'Trend', th_day: 'Day',
     h2_jobs: 'Jobs', f_owner: 'Owner', f_repository: 'Repository', f_state: 'State/outcome', f_failure_kind: 'Failure kind', f_diag_id: 'Diagnostic ID', f_from: 'From', f_to: 'To', f_advanced: 'Advanced filters', btn_apply: 'apply', f_all: 'all', btn_reset: 'reset', st_succeeded: 'Succeeded', st_succeeded_with_warnings: 'Succeeded with warnings', st_failed: 'Failed', st_running: 'Running', st_queued: 'Queued', st_interrupted: 'Interrupted', st_stale: 'Stale', st_skipped: 'Skipped', fk_job_timeout: 'Job timeout', fk_ocr_config_error: 'OCR config error', fk_provider_rate_limited: 'Provider rate limited', fk_provider_auth_failed: 'Provider auth failed', fk_provider_unavailable: 'Provider unavailable', fk_ocr_runtime_error: 'OCR runtime error', fk_git_error: 'Git error', fk_github_rate_limited: 'GitHub rate limited', fk_github_api_error: 'GitHub API error', fk_bot_runtime_error: 'Bot runtime error', fk_invalid_ocr_output: 'Invalid OCR output',
@@ -1010,8 +1016,10 @@ const I18N = {
     h2_service_status: '状态', h2_overview: '服务状态', ss_uptime: '运行时长', ss_started: '启动时间', ss_version: '版本', ss_config_revision: '配置版本',
     ss_actual_port: '实际监听端口', ss_configured_port: '配置端口', ss_pending_port: '待生效端口',
     ss_storage_health: '存储可写/降级', ss_storage_size: '存储用量 / 配额', ss_last_retention: '上次清理', ss_diag_counts: '损坏/截断的诊断',
+    ssg_runtime: '运行时', ssg_network: '网络', ssg_storage: '存储', ssg_diagnostics: '诊断', ss_port: '端口',
     h2_metrics: '指标与趋势', m_dur_p50: '耗时 p50', m_dur_p95: '耗时 p95', m_qw_p50: '排队等待 p50', m_qw_p95: '排队等待 p95',
     ss_running_job: '当前运行中任务', empty_running: '无运行中任务。', ss_queued: '排队中', ss_last_sf: '上次完成/失败', ss_last_success: '上次完成', ss_last_completed: '上次完成', ss_last_failure: '上次失败', th_diag: '诊断 ID', th_job: '任务', tile_health: '健康', tile_queue: '队列深度', tile_reviewed: '审查结果', tile_warnings: '警告', health_healthy: '健康', health_degraded: '降级', health_unavailable: '不可用', pill_success: '成功', pill_warnings: '带警告', pill_running: '运行中', pill_failed: '失败', pill_queued: '排队', pill_interrupted: '中断', pill_stale: '过期', pill_skipped: '跳过', word_ok: '成功', storage_writable: '可写', storage_not_writable: '不可写', storage_degraded: '降级', storage_healthy: '健康', storage_unknown: '未知',
+    word_configured: '配置', word_yes: '是', word_no: '否', diag_corrupt: '损坏', diag_invalid: '无效', diag_truncated: '截断', diag_runtime_warnings: '运行时警告',
     m_fail_class: '失败分类', m_repo_rate: '仓库成功率', m_daily_trend: '每日趋势', empty_daily: '暂无每日趋势数据。',
     th_window: '时间窗', th_jobs: '任务数', th_success_rate: '成功率', th_trend: '趋势', th_day: '日期',
     h2_jobs: '任务', f_owner: '所有者', f_repository: '仓库', f_state: '状态/结果', f_failure_kind: '失败类型', f_diag_id: '诊断 ID', f_from: '起', f_to: '止', f_advanced: '高级筛选', btn_apply: '应用', f_all: '全部', btn_reset: '重置', st_succeeded: '成功', st_succeeded_with_warnings: '带警告成功', st_failed: '失败', st_running: '运行中', st_queued: '排队', st_interrupted: '中断', st_stale: '过期', st_skipped: '跳过', fk_job_timeout: '任务超时', fk_ocr_config_error: 'OCR 配置错误', fk_provider_rate_limited: '服务商限流', fk_provider_auth_failed: '服务商鉴权失败', fk_provider_unavailable: '服务商不可用', fk_ocr_runtime_error: 'OCR 运行错误', fk_git_error: 'Git 错误', fk_github_rate_limited: 'GitHub 限流', fk_github_api_error: 'GitHub API 错误', fk_bot_runtime_error: 'Bot 运行错误', fk_invalid_ocr_output: 'OCR 输出无效',
@@ -1282,7 +1290,7 @@ button.primary:active { background: var(--primary-bg-hover); }
 .filter-reset:hover { color: var(--text); border-color: var(--accent); background: var(--cyan-soft); transform: translateY(calc(-1 * var(--lift-2))); box-shadow: var(--shadow-pop); }
 .filter-reset:active { transform: translateY(0); box-shadow: none; }
 
-input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.2em; height: 1.2em; cursor: pointer; }
 
 .inline { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; background: var(--surface); padding: 1.25rem; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1.5rem; }
@@ -1411,7 +1419,7 @@ nav.pagination span[aria-disabled=true] { opacity: 0.5; }
   width: 100%; min-height: 32px; padding: 5px 12px; background: var(--bg);
   border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px;
 }
-.login-form input:focus { border-color: var(--accent); outline: 2px solid var(--accent-subtle); outline-offset: -1px; }
+.login-form input:focus { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
 .login-form button.primary { width: 100%; margin-top: 8px; justify-self: stretch; }
 
 main > *:first-child { margin-top: 0; }
@@ -1521,7 +1529,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .adv-grid { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; padding: 12px 14px; background: var(--bg-subtle); border-bottom: 1px solid var(--border); }
 .adv-grid > label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--fg-muted); }
 .adv-grid input, .adv-grid select { min-width: 132px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 9px; min-height: 30px; font-size: 13px; color: var(--text); font-family: inherit; }
-.adv-grid input:focus, .adv-grid select:focus { outline: 2px solid var(--accent-subtle); outline-offset: -1px; border-color: var(--accent); }
+.adv-grid input:focus, .adv-grid select:focus { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
 .adv-grid .adv-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
 .adv-flag { pointer-events: none; padding: 1px 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
 nav.pagination { margin: 0; padding: 0; border: 0; justify-content: flex-start; gap: 12px; }
@@ -1599,17 +1607,17 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
   --cyan: #4c9bed; --cyan-soft: rgba(76, 155, 237, 0.14); --cyan-glow: transparent;
   --indigo: #8a7ff0; --indigo-soft: rgba(138, 127, 240, 0.14); --indigo-glow: transparent;
   --magenta: #c66fb0; --magenta-soft: rgba(198, 111, 176, 0.10);
-  --green: #46b156; --green-soft: rgba(70, 177, 86, 0.14); --green-glow: transparent;
-  --amber: #c89028; --amber-soft: rgba(200, 144, 40, 0.14); --amber-glow: transparent;
-  --red: #e0666b; --red-soft: rgba(224, 102, 107, 0.12); --red-glow: transparent;
-  --link: #4c9bed; --link-hover: #79b4f2;
-  --primary-bg: #2ea043; --primary-bg-hover: #46b156;
-  --success: var(--green); --success-subtle: rgba(70, 177, 86, 0.16); --success-border: rgba(70, 177, 86, 0.40);
-  --attention: var(--amber); --attention-subtle: rgba(200, 144, 40, 0.16); --attention-border: rgba(200, 144, 40, 0.40);
-  --danger: var(--red); --danger-subtle: rgba(224, 102, 107, 0.16); --danger-border: rgba(224, 102, 107, 0.40);
-  --done: #a371f7; --done-subtle: rgba(163, 113, 247, 0.16);
+  --green: #56d364; --green-soft: rgba(86, 211, 100, 0.12); --green-glow: transparent;
+  --amber: #f2cc60; --amber-soft: rgba(242, 204, 96, 0.12); --amber-glow: transparent;
+  --red: #ff7b72; --red-soft: rgba(255, 123, 114, 0.12); --red-glow: transparent;
+  --link: #58a6ff; --link-hover: #79c0ff;
+  --primary-bg: #238636; --primary-bg-hover: #2ea043;
+  --success: var(--green); --success-subtle: rgba(86, 211, 100, 0.12); --success-border: rgba(86, 211, 100, 0.40);
+  --attention: var(--amber); --attention-subtle: rgba(242, 204, 96, 0.12); --attention-border: rgba(242, 204, 96, 0.40);
+  --danger: var(--red); --danger-subtle: rgba(255, 123, 114, 0.12); --danger-border: rgba(255, 123, 114, 0.40);
+  --done: #d2a8ff; --done-subtle: rgba(210, 168, 255, 0.12);
   --neutral-subtle: rgba(148, 161, 173, 0.16); --neutral-fg: #c9d1d9;
-  --accent-subtle: rgba(76, 155, 237, 0.16);
+  --accent-subtle: rgba(88, 166, 255, 0.16);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.40);
   --shadow-pop: 0 6px 16px rgba(0, 0, 0, 0.45);
