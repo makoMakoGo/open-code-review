@@ -841,9 +841,10 @@ async function probeStorageWritability(adminDir) {
       level: 'warn',
       id: 'storage.writeCleanup',
       message: `Could not remove admin data write probe: ${cleanupError.message}`,
+      affectsWritability: true,
     });
   }
-  return { probed: true, writable: writeError == null, diagnostics };
+  return { probed: true, writable: writeError == null && cleanupError == null, diagnostics };
 }
 
 async function safeDirectorySize(adminDir, diagnostics, { id = 'retention.size', messagePrefix = '' } = {}) {

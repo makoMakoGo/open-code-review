@@ -238,6 +238,27 @@ test('storage writability recovers through the production status probe without r
   assert.equal(recovered.diagnostics.some((item) => item.id === 'persistence.configStorage' || item.id === 'storage.write'), false);
 });
 
+test('write probe cleanup failure keeps storage not writable', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-write-cleanup-'));
+  const rm = fs.rm.bind(fs);
+  t.after(() => rm(adminDir, { recursive: true, force: true }));
+  t.mock.method(fs, 'rm', async (target, ...args) => {
+    if (String(target).includes('.writability-probe-')) {
+      const error = new Error('probe unlink denied');
+      error.code = 'EACCES';
+      throw error;
+    }
+    return rm(target, ...args);
+  });
+  const runtime = new AdminRuntime({ adminDir, configProvider: () => ({ version: 'test', port: 3007 }) });
+
+  const dashboard = await runtime.dashboard();
+  const diagnostic = dashboard.diagnostics.find((item) => item.id === 'storage.writeCleanup');
+  assert.equal(diagnostic.affectsWritability, true);
+  assert.equal(dashboard.serviceStatus.health, 'unavailable');
+  assert.equal(dashboard.serviceStatus.storage.writable, false);
+});
+
 test('queue event persistence diagnostic clears after the next successful append', async (t) => {
   t.mock.method(console, 'error', () => {});
   const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-queue-event-'));
