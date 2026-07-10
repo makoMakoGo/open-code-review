@@ -22,6 +22,31 @@ const RETENTION_STATE_FILE = 'retention-state.json';
 const AUDIT_DIR_NAMES = ['audit', 'config-audit'];
 const EXPENDABLE_ADMIN_FILES = [RETENTION_STATE_FILE];
 
+
+const SERVICE_HEALTH = new Set(['healthy', 'degraded', 'unavailable']);
+
+/** Canonical service health for Status. Missing/partial signals never become healthy. */
+export function deriveServiceHealth(input) {
+  if (input == null || typeof input !== 'object') return 'unavailable';
+  const storage = input.storage && typeof input.storage === 'object' ? input.storage : null;
+  const diagnostics = input.diagnostics && typeof input.diagnostics === 'object' ? input.diagnostics : null;
+  if (!storage || !diagnostics) return 'unavailable';
+  if (typeof storage.writable !== 'boolean') return 'unavailable';
+  if (storage.writable === false) return 'unavailable';
+  const corrupt = Number(diagnostics.corruptEvents) || 0;
+  const invalid = Number(diagnostics.invalidEvents) || 0;
+  if (storage.degraded === true || diagnostics.degraded === true || corrupt > 0 || invalid > 0 || diagnostics.truncatedTail) {
+    return 'degraded';
+  }
+  // Partial boolean signals: degraded must be explicitly false before healthy.
+  if (storage.degraded !== false || diagnostics.degraded !== false) return 'unavailable';
+  return 'healthy';
+}
+
+export function normalizeServiceHealth(value) {
+  const level = String(value ?? '').toLowerCase();
+  return SERVICE_HEALTH.has(level) ? level : 'unavailable';
+}
 export class AdminRuntime {
   constructor({ configManager, eventStore, queue, logger = null, configProvider = null, adminDir = null, listener = null, startedAt = new Date() } = {}) {
     this.configManager = configManager;
@@ -317,7 +342,7 @@ export class AdminRuntime {
       elapsedMs: queue.running.startedAt ? Math.max(0, nowMs - timestampMs(queue.running.startedAt, 'running.startedAt')) : null,
     } : null;
     const actualListeningPort = actualPortFromListener(this.listener);
-    return {
+    const status = {
       startedAt: this.startedAt.toISOString(),
       uptimeMs: Math.max(0, nowMs - this.startedAt.getTime()),
       version: config.version,
@@ -348,6 +373,8 @@ export class AdminRuntime {
       },
       lastRetention: retention.lastRun,
     };
+    status.health = deriveServiceHealth(status);
+    return status;
   }
 
   diagnostics() {

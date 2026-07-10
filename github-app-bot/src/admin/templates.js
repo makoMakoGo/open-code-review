@@ -131,19 +131,31 @@ ${bodyScript(cspNonce)}
 
 export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [], serviceStatus = null, retention = null, cspNonce = '' } = {}) {
   const dash = (n) => escapeHtml(numberOrDash(n));
-  const svc = serviceStatus || {};
-  const storage = svc.storage || {};
+  const svc = serviceStatus && typeof serviceStatus === 'object' ? serviceStatus : null;
+  const storage = svc?.storage && typeof svc.storage === 'object' ? svc.storage : {};
+  const health = mapServiceHealth(svc?.health);
 
+  const word = (key, fallback) => `<span data-i18n="${key}">${escapeHtml(fallback)}</span>`;
   const tiles = [
-    { dot: 'ok', k: 'Health', v: 'Healthy' },
-    { dot: Number(summary.running) > 0 ? 'run' : 'idle', k: 'Queue depth', v: `${dash(summary.queued)} queued · ${dash(summary.running)} running` },
-    { dot: Number(summary.failed) > 0 ? 'err' : 'ok', k: 'Reviewed', v: `${dash(summary.succeeded)} ok · ${dash(summary.failed)} failed` },
-    { dot: Number(summary.succeeded_with_warnings) > 0 ? 'warn' : 'idle', k: 'Warnings', v: dash(summary.succeeded_with_warnings) },
-  ].map((t) => `<div class="st"><span class="k"><i class="dot ${t.dot}" aria-hidden="true"></i>${escapeHtml(t.k)}</span><span class="v">${t.v}</span></div>`).join('');
+    { dot: health.dot, k: 'Health', kKey: 'tile_health', vHtml: word(health.labelKey, health.label) },
+    {
+      dot: Number(summary.running) > 0 ? 'run' : 'idle',
+      k: 'Queue depth',
+      kKey: 'tile_queue',
+      vHtml: `${dash(summary.queued)} ${word('pill_queued', 'queued')} · ${dash(summary.running)} ${word('pill_running', 'running')}`,
+    },
+    {
+      dot: Number(summary.failed) > 0 ? 'err' : 'ok',
+      k: 'Reviewed',
+      kKey: 'tile_reviewed',
+      vHtml: `${dash(summary.succeeded)} ${word('word_ok', 'ok')} · ${dash(summary.failed)} ${word('pill_failed', 'failed')}`,
+    },
+    { dot: Number(summary.succeeded_with_warnings) > 0 ? 'warn' : 'idle', k: 'Warnings', kKey: 'tile_warnings', vHtml: dash(summary.succeeded_with_warnings) },
+  ].map((t) => `<div class="st"><span class="k"><i class="dot ${t.dot}" aria-hidden="true"></i><span data-i18n="${t.kKey}">${escapeHtml(t.k)}</span></span><span class="v">${t.vHtml}</span></div>`).join('');
 
-  const actualPort = svc.actualListeningPort ?? svc.listeningPort;
-  const configuredPort = svc.configuredPort ?? svc.port;
-  const pendingPort = svc.desiredPendingPort ?? svc.pendingPort;
+  const actualPort = svc?.actualListeningPort ?? svc?.listeningPort;
+  const configuredPort = svc?.configuredPort ?? svc?.port;
+  const pendingPort = svc?.desiredPendingPort ?? svc?.pendingPort;
   const portValue = (() => {
     const p = actualPort == null || actualPort === '' ? null : String(actualPort);
     if (p == null) return '—';
@@ -151,56 +163,66 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
     if (configuredPort != null && String(configuredPort) !== p) return `${p} (configured ${configuredPort})`;
     return p;
   })();
+  const writableHtml = storage.writable === false
+    ? word('storage_not_writable', 'not writable')
+    : storage.writable === true
+      ? word('storage_writable', 'writable')
+      : word('storage_unknown', 'unknown');
+  const storageHealthHtml = storage.degraded === true
+    ? word('storage_degraded', 'degraded')
+    : storage.degraded === false
+      ? word('storage_healthy', 'healthy')
+      : word('storage_unknown', 'unknown');
   const statusGroups = [
     { label: 'Runtime', key: 'ssg_runtime', rows: [
-      ['Uptime', formatDuration(svc.uptimeMs), 'ss_uptime'],
-      ['Started', formatDate(svc.startedAt), 'ss_started'],
-      ['Version', svc.version, 'ss_version'],
-      ['Config revision', svc.configRevision, 'ss_config_revision'],
+      ['Uptime', formatDuration(svc?.uptimeMs), 'ss_uptime'],
+      ['Started', formatDate(svc?.startedAt), 'ss_started'],
+      ['Version', svc?.version, 'ss_version'],
+      ['Config revision', svc?.configRevision, 'ss_config_revision'],
     ] },
     { label: 'Network', key: 'ssg_network', rows: [
       ['Port', portValue, 'ss_port'],
     ] },
     { label: 'Storage', key: 'ssg_storage', rows: [
-      ['State', `${storage.writable === false ? 'not writable' : 'writable'} / ${storage.degraded ? 'degraded' : 'healthy'}`, 'ss_storage_health'],
+      ['State', `${writableHtml} / ${storageHealthHtml}`, 'ss_storage_health', true],
       ['Usage', `${formatBytes(storage.sizeBytes ?? storage.dirSizeBytes)} / ${formatBytes(storage.budgetBytes)}`, 'ss_storage_size'],
-      ['Last retention', formatDate(svc.lastRetention?.finishedAt ?? svc.lastRetention?.startedAt ?? retention?.lastRun?.finishedAt), 'ss_last_retention'],
+      ['Last retention', formatDate(svc?.lastRetention?.finishedAt ?? svc?.lastRetention?.startedAt ?? retention?.lastRun?.finishedAt), 'ss_last_retention'],
     ] },
     { label: 'Diagnostics', key: 'ssg_diagnostics', rows: [
-      ['Events', formatDiagnosticCounts(svc.diagnostics), 'ss_diag_counts'],
+      ['Events', formatDiagnosticCounts(svc?.diagnostics), 'ss_diag_counts'],
     ] },
   ];
   const statusDetails = statusGroups.map((g) => {
-    const rows = g.rows.map(([label, value, key]) => `<div class="kv"><span class="k" data-i18n="${key}">${escapeHtml(label)}</span><span class="v">${safeDisplay(value)}</span></div>`).join('');
+    const rows = g.rows.map(([label, value, key, raw = false]) => `<div class="kv"><span class="k" data-i18n="${key}">${escapeHtml(label)}</span><span class="v">${raw ? value : safeDisplay(value)}</span></div>`).join('');
     return `<div class="status-group"><div class="status-group-label" data-i18n="${g.key}">${escapeHtml(g.label)}</div>${rows}</div>`;
   }).join('');
 
-  const running = svc.runningJob || svc.running || null;
+  const running = svc?.runningJob || svc?.running || null;
   const runningBody = running
     ? `<div class="kv-list">
 <div class="kv"><span class="k" data-i18n="th_repo">Repository</span><span class="v">${escapeHtml(formatRepository(running.repo ?? running.repository))}</span></div>
 <div class="kv"><span class="k" data-i18n="th_pr">Pull request</span><span class="v">#${escapeHtml(String(running.pullNumber ?? running.pullRequest ?? '—'))}</span></div>
 <div class="kv"><span class="k" data-i18n="th_actor">Actor</span><span class="v">${escapeHtml(running.actor ?? '—')}</span></div>
 <div class="kv"><span class="k" data-i18n="th_status">Phase</span><span class="v">${jobStatusPill(running.status ?? running.phase ?? 'running')}</span></div>
-${running.jobId || running.id ? `<div class="kv"><span class="k" data-i18n="th_job">Job</span><span class="v"><code>${escapeHtml(running.jobId ?? running.id)}</code></span></div>` : ''}
+${jobIdRow(running)}
 </div>`
     : `<p class="empty" data-i18n="empty_running">No running job.</p>`;
 
-  const qitems = svc.queued?.items ?? [];
+  const qitems = svc?.queued?.items ?? [];
   const queuedBody = qitems.length
-    ? `<div class="qlist">${qitems.map((it) => `<div class="qrow"><span class="dpill queued"><i class="dot idle" aria-hidden="true"></i>queued</span><span class="repo">${escapeHtml(formatRepository(it.repository ?? it.repo))}</span><code>${escapeHtml(it.jobId ?? it.id ?? '')}</code></div>`).join('')}</div>`
-    : `<p class="empty">${dash(svc.queued?.count ?? summary.queued)} queued.</p>`;
+    ? `<div class="qlist">${qitems.map((it) => `<div class="qrow">${jobStatusPill('queued')}<span class="repo">${escapeHtml(formatRepository(it.repository ?? it.repo))}</span>${jobIdCodeLink(it)}</div>`).join('')}</div>`
+    : `<p class="empty">${dash(svc?.queued?.count ?? summary.queued)} ${word('pill_queued', 'queued')}.</p>`;
 
   const activityBox = (titleKey, title, body) => `<div class="box">
   <div class="box-header"><strong data-i18n="${titleKey}">${escapeHtml(title)}</strong></div>
   <div class="box-body">${body}</div>
 </div>`;
 
-  const sfBox = (job, tone, titleKey, title, label) => job
+  const sfBox = (job, titleKey, title) => job
     ? `<div class="box">
   <div class="box-header">
     <strong data-i18n="${titleKey}">${escapeHtml(title)}</strong>
-    <span class="dpill ${tone}"><i class="dot ${tone === 'ok' ? 'ok' : 'err'}" aria-hidden="true"></i>${escapeHtml(label)}</span>
+    ${jobStatusPill(job.status)}
   </div>
   <div class="box-body">
     <div class="kv-list">
@@ -208,12 +230,13 @@ ${running.jobId || running.id ? `<div class="kv"><span class="k" data-i18n="th_j
       <div class="kv"><span class="k" data-i18n="th_pr">Pull request</span><span class="v">#${escapeHtml(String(job.pullNumber ?? '—'))}</span></div>
       <div class="kv"><span class="k" data-i18n="th_actor">Actor</span><span class="v">${escapeHtml(job.actor ?? '—')}</span></div>
       <div class="kv"><span class="k" data-i18n="th_diag">Diagnostic</span><span class="v"><code>${escapeHtml(job.diagnosticId ?? '—')}</code></span></div>
+      ${jobIdRow(job)}
     </div>
   </div>
 </div>`
     : '';
-  const lastSuccessHtml = sfBox(svc.lastSuccess, 'ok', 'ss_last_success', 'Last success', 'success');
-  const lastFailureHtml = sfBox(svc.lastFailure, 'fail', 'ss_last_failure', 'Last failure', 'failed');
+  const lastSuccessHtml = sfBox(svc?.lastSuccess, 'ss_last_completed', 'Last completed');
+  const lastFailureHtml = sfBox(svc?.lastFailure, 'ss_last_failure', 'Last failure');
   const sflHtml = `${lastSuccessHtml}${lastFailureHtml}`;
 
   const body = `<div class="dashboard">
@@ -406,7 +429,7 @@ export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/ad
   const subnav = groups.map((group) => {
     const active = group.id === activeId ? ' is-active' : '';
     const count = group.fields.length;
-    return `<a class="settings-subnav-link${active}" href="/admin/config?section=${escapeAttribute(group.id)}" data-i18n="${escapeAttribute(group.labelKey)}">${escapeHtml(group.label)}<span class="settings-count">${count}</span></a>`;
+    return `<a class="settings-subnav-link${active}" href="/admin/config?section=${escapeAttribute(group.id)}"><span data-i18n="${escapeAttribute(group.labelKey)}">${escapeHtml(group.label)}</span><span class="settings-count">${count}</span></a>`;
   }).join('');
 
   const rows = activeGroup.fields.map(renderSettingsField).join('');
@@ -548,7 +571,7 @@ function renderHighRiskConfirm(field) {
   return `<label class="danger nowrap"><input type="checkbox" name="confirm_${escapeAttribute(envKey)}" value="1"> <span data-i18n="confirm_high_risk">Confirm high-risk change</span></label>`;
 }
 
-const CONFIG_GROUP_DEFS = Object.freeze([
+export const CONFIG_GROUP_DEFS = Object.freeze([
   { id: 'service', label: 'Service', labelKey: 'config_group_service', descriptionKey: 'config_group_service_desc', description: 'Core runtime process, ports, and workdir behavior.' },
   { id: 'access', label: 'Triggers & Access', labelKey: 'config_group_access', descriptionKey: 'config_group_access_desc', description: 'Who can trigger reviews and which repositories are allowed.' },
   { id: 'github', label: 'GitHub App', labelKey: 'config_group_github', descriptionKey: 'config_group_github_desc', description: 'GitHub App identity, private key path, and webhook secret.' },
@@ -557,6 +580,7 @@ const CONFIG_GROUP_DEFS = Object.freeze([
   { id: 'admin', label: 'Admin Dashboard', labelKey: 'config_group_admin', descriptionKey: 'config_group_admin_desc', description: 'Dashboard access, host allowlist, cookies, and data root.' },
   { id: 'retention', label: 'Retention & Storage', labelKey: 'config_group_retention', descriptionKey: 'config_group_retention_desc', description: 'How long jobs, logs, stats, and audits are kept.' },
 ]);
+export const CONFIG_GROUP_IDS = Object.freeze(CONFIG_GROUP_DEFS.map((group) => group.id));
 
 function legacyConfigFields(config) {
   return Object.entries(config)
@@ -658,16 +682,22 @@ function formatScalarValue(value) {
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
-
-// Quick-filter chips for the most-triaged outcomes. Rare states (warnings/interrupted/stale/skipped)
-// stay reachable via the advanced filters or direct URL.
-const STATE_CHIPS = [
+// Canonical job states: chips + advanced select share this definition.
+const JOB_STATES = Object.freeze([
+  { value: 'running', key: 'st_running', quick: true },
+  { value: 'queued', key: 'st_queued', quick: true },
+  { value: 'succeeded', key: 'st_succeeded', quick: true },
+  { value: 'succeeded_with_warnings', key: 'st_succeeded_with_warnings', quick: false },
+  { value: 'failed', key: 'st_failed', quick: true },
+  { value: 'interrupted', key: 'st_interrupted', quick: false },
+  { value: 'stale', key: 'st_stale', quick: false },
+  { value: 'skipped', key: 'st_skipped', quick: false },
+]);
+const STATE_CHIPS = Object.freeze([
   { value: '', key: 'f_all' },
-  { value: 'running', key: 'st_running' },
-  { value: 'queued', key: 'st_queued' },
-  { value: 'succeeded', key: 'st_succeeded' },
-  { value: 'failed', key: 'st_failed' },
-];
+  ...JOB_STATES.filter((s) => s.quick).map(({ value, key }) => ({ value, key })),
+]);
+const STATE_OPTIONS = Object.freeze(JOB_STATES.map(({ value, key }) => [value, key]));
 const FAILURE_KIND_OPTIONS = [
   ['job_timeout', 'fk_job_timeout'],
   ['ocr_config_error', 'fk_ocr_config_error'],
@@ -711,12 +741,12 @@ function renderJobsFilterBar(filters, pagination) {
     from: String(filters.from ?? ''),
     to: String(filters.to ?? ''),
   };
-  const advActive = Object.values(advanced).some((v) => v !== '');
-  // The apply button re-submits the current state, so quick chips and advanced fields share one form
-  // without a duplicate hidden state input.
-  const applyState = `<button type="submit" name="state" value="${escapeAttribute(state)}" class="primary btn-sm" data-i18n="btn_apply">apply</button>`;
+  const advActive = Object.values(advanced).some((v) => v !== '') || Boolean(state);
+  // Apply re-submits current state via the select; chips also submit state directly.
+  const applyState = `<button type="submit" class="primary btn-sm" data-i18n="btn_apply">apply</button>`;
   const advFields = `<label><span data-i18n="f_owner">Owner</span><input name="owner" value="${escapeAttribute(advanced.owner)}" placeholder="owner"></label>`
     + `<label><span data-i18n="f_repository">Repository</span><input name="repository" value="${escapeAttribute(advanced.repository)}" placeholder="name or owner/name"></label>`
+    + `<label><span data-i18n="f_state">State/outcome</span>${renderFilterSelect('state', state, STATE_OPTIONS, 'f_all')}</label>`
     + `<label><span data-i18n="f_failure_kind">Failure kind</span>${renderFilterSelect('failureKind', advanced.failureKind, FAILURE_KIND_OPTIONS, 'f_all')}</label>`
     + `<label><span data-i18n="f_diag_id">Diagnostic ID</span><input name="diagnosticId" value="${escapeAttribute(advanced.diagnosticId)}" placeholder="9c4ea7"></label>`
     + `<label><span data-i18n="f_from">From</span><input name="from" type="date" value="${escapeAttribute(advanced.from)}"></label>`
@@ -874,31 +904,60 @@ function formatDiagnosticCounts(diagnostics = {}) {
   const truncated = diagnostics.truncatedTail ? 'yes' : 'no';
   return `corrupt ${corrupt}, invalid ${invalid}, truncated ${truncated}`;
 }
-
 function formatDate(value) {
   if (value == null || value === '') return '';
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toISOString().slice(0, 16).replace('T', ' ');
+  return `${date.toISOString().slice(0, 19).replace('T', ' ')} UTC`;
 }
 
 function numberOrDash(value) {
   return Number.isFinite(value) ? String(value) : '—';
 }
 
+function mapServiceHealth(level) {
+  const normalized = String(level ?? '').toLowerCase();
+  if (normalized === 'healthy') return { level: 'healthy', labelKey: 'health_healthy', label: 'Healthy', dot: 'ok' };
+  if (normalized === 'degraded') return { level: 'degraded', labelKey: 'health_degraded', label: 'Degraded', dot: 'warn' };
+  if (normalized === 'unknown') return { level: 'unknown', labelKey: 'health_unknown', label: 'Unknown', dot: 'idle' };
+  return { level: 'unavailable', labelKey: 'health_unavailable', label: 'Unavailable', dot: 'err' };
+}
+
+function jobIdOf(job) {
+  const id = job?.jobId ?? job?.id;
+  return id == null || id === '' ? '' : String(id);
+}
+
+function jobIdCodeLink(job) {
+  const id = jobIdOf(job);
+  if (!id) return '<code>—</code>';
+  return `<a href="/admin/jobs/${escapeAttribute(id)}"><code>${escapeHtml(id)}</code></a>`;
+}
+
+function jobIdRow(job) {
+  const id = jobIdOf(job);
+  if (!id) return '';
+  return `<div class="kv"><span class="k" data-i18n="th_job">Job</span><span class="v">${jobIdCodeLink(job)}</span></div>`;
+}
+
 function jobStatusTone(status) {
   const s = String(status ?? '').toLowerCase();
-  if (s === 'succeeded') return { tone: 'ok', dot: 'ok', label: 'success' };
-  if (s === 'succeeded_with_warnings') return { tone: 'warn', dot: 'warn', label: 'warnings' };
-  if (s === 'running') return { tone: 'run', dot: 'run', label: 'running' };
-  if (s === 'failed') return { tone: 'fail', dot: 'err', label: 'failed' };
-  if (s === 'queued') return { tone: 'queued', dot: 'idle', label: 'queued' };
-  if (s === 'interrupted' || s === 'stale' || s === 'skipped') return { tone: 'skip', dot: 'idle', label: s };
-  return { tone: 'queued', dot: 'idle', label: String(status ?? '—') };
+  if (s === 'succeeded') return { tone: 'ok', dot: 'ok', labelKey: 'pill_success', label: 'success' };
+  if (s === 'succeeded_with_warnings') return { tone: 'warn', dot: 'warn', labelKey: 'pill_warnings', label: 'warnings' };
+  if (s === 'running') return { tone: 'run', dot: 'run', labelKey: 'pill_running', label: 'running' };
+  if (s === 'failed') return { tone: 'fail', dot: 'err', labelKey: 'pill_failed', label: 'failed' };
+  if (s === 'queued') return { tone: 'queued', dot: 'idle', labelKey: 'pill_queued', label: 'queued' };
+  if (s === 'interrupted') return { tone: 'skip', dot: 'idle', labelKey: 'pill_interrupted', label: 'interrupted' };
+  if (s === 'stale') return { tone: 'skip', dot: 'idle', labelKey: 'pill_stale', label: 'stale' };
+  if (s === 'skipped') return { tone: 'skip', dot: 'idle', labelKey: 'pill_skipped', label: 'skipped' };
+  return { tone: 'queued', dot: 'idle', labelKey: '', label: String(status ?? '—') };
 }
 function jobStatusPill(status) {
-  const { tone, dot, label } = jobStatusTone(status);
-  return `<span class="dpill ${tone}"><i class="dot ${dot}" aria-hidden="true"></i>${escapeHtml(label)}</span>`;
+  const { tone, dot, label, labelKey } = jobStatusTone(status);
+  const text = labelKey
+    ? `<span data-i18n="${labelKey}">${escapeHtml(label)}</span>`
+    : escapeHtml(label);
+  return `<span class="dpill ${tone}"><i class="dot ${dot}" aria-hidden="true"></i>${text}</span>`;
 }
 
 const I18N = {
@@ -914,9 +973,8 @@ const I18N = {
     h2_service_status: 'Status', h2_overview: 'Service status', ss_uptime: 'Uptime', ss_started: 'Started', ss_version: 'Version', ss_config_revision: 'Config revision',
     ss_actual_port: 'Actual listening port', ss_configured_port: 'Configured port', ss_pending_port: 'Desired pending port',
     ss_storage_health: 'Storage writable/degraded', ss_storage_size: 'Storage size / budget', ss_last_retention: 'Last retention', ss_diag_counts: 'Corrupt/truncated diagnostics',
-    ss_running_job: 'Current running job', empty_running: 'No running job.', ss_queued: 'Queued', ss_last_sf: 'Last success/failure', ss_last_success: 'Last success', ss_last_failure: 'Last failure', th_diag: 'Diagnostic',
     h2_metrics: 'Metrics and trends', m_dur_p50: 'Duration p50', m_dur_p95: 'Duration p95', m_qw_p50: 'Queue wait p50', m_qw_p95: 'Queue wait p95',
-    m_avg_gen: 'Avg comments generated', m_avg_post: 'Avg comments posted', m_stale: 'Stale', m_skipped: 'Skipped', m_interrupted: 'Interrupted',
+    ss_running_job: 'Current running job', empty_running: 'No running job.', ss_queued: 'Queued', ss_last_sf: 'Last completed / failure', ss_last_success: 'Last completed', ss_last_completed: 'Last completed', ss_last_failure: 'Last failure', th_diag: 'Diagnostic', th_job: 'Job', tile_health: 'Health', tile_queue: 'Queue depth', tile_reviewed: 'Reviewed', tile_warnings: 'Warnings', health_healthy: 'Healthy', health_degraded: 'Degraded', health_unavailable: 'Unavailable', pill_success: 'success', pill_warnings: 'warnings', pill_running: 'running', pill_failed: 'failed', pill_queued: 'queued', pill_interrupted: 'interrupted', pill_stale: 'stale', pill_skipped: 'skipped', word_ok: 'ok', storage_writable: 'writable', storage_not_writable: 'not writable', storage_degraded: 'degraded', storage_healthy: 'healthy', storage_unknown: 'unknown',
     m_fail_class: 'Failure classification', m_repo_rate: 'Repository success rate', m_daily_trend: 'Daily trend', empty_daily: 'No daily trend data.',
     th_window: 'Window', th_jobs: 'Jobs', th_success_rate: 'Success rate', th_trend: 'Trend', th_day: 'Day',
     h2_jobs: 'Jobs', f_owner: 'Owner', f_repository: 'Repository', f_state: 'State/outcome', f_failure_kind: 'Failure kind', f_diag_id: 'Diagnostic ID', f_from: 'From', f_to: 'To', f_advanced: 'Advanced filters', btn_apply: 'apply', f_all: 'all', btn_reset: 'reset', st_succeeded: 'Succeeded', st_succeeded_with_warnings: 'Succeeded with warnings', st_failed: 'Failed', st_running: 'Running', st_queued: 'Queued', st_interrupted: 'Interrupted', st_stale: 'Stale', st_skipped: 'Skipped', fk_job_timeout: 'Job timeout', fk_ocr_config_error: 'OCR config error', fk_provider_rate_limited: 'Provider rate limited', fk_provider_auth_failed: 'Provider auth failed', fk_provider_unavailable: 'Provider unavailable', fk_ocr_runtime_error: 'OCR runtime error', fk_git_error: 'Git error', fk_github_rate_limited: 'GitHub rate limited', fk_github_api_error: 'GitHub API error', fk_bot_runtime_error: 'Bot runtime error', fk_invalid_ocr_output: 'Invalid OCR output',
@@ -952,9 +1010,8 @@ const I18N = {
     h2_service_status: '状态', h2_overview: '服务状态', ss_uptime: '运行时长', ss_started: '启动时间', ss_version: '版本', ss_config_revision: '配置版本',
     ss_actual_port: '实际监听端口', ss_configured_port: '配置端口', ss_pending_port: '待生效端口',
     ss_storage_health: '存储可写/降级', ss_storage_size: '存储用量 / 配额', ss_last_retention: '上次清理', ss_diag_counts: '损坏/截断的诊断',
-    ss_running_job: '当前运行中任务', empty_running: '无运行中任务。', ss_queued: '排队中', ss_last_sf: '上次成功/失败', ss_last_success: '上次成功', ss_last_failure: '上次失败', th_diag: '诊断 ID',
     h2_metrics: '指标与趋势', m_dur_p50: '耗时 p50', m_dur_p95: '耗时 p95', m_qw_p50: '排队等待 p50', m_qw_p95: '排队等待 p95',
-    m_avg_gen: '平均生成评论', m_avg_post: '平均发表评论', m_stale: '过期', m_skipped: '跳过', m_interrupted: '中断',
+    ss_running_job: '当前运行中任务', empty_running: '无运行中任务。', ss_queued: '排队中', ss_last_sf: '上次完成/失败', ss_last_success: '上次完成', ss_last_completed: '上次完成', ss_last_failure: '上次失败', th_diag: '诊断 ID', th_job: '任务', tile_health: '健康', tile_queue: '队列深度', tile_reviewed: '审查结果', tile_warnings: '警告', health_healthy: '健康', health_degraded: '降级', health_unavailable: '不可用', pill_success: '成功', pill_warnings: '带警告', pill_running: '运行中', pill_failed: '失败', pill_queued: '排队', pill_interrupted: '中断', pill_stale: '过期', pill_skipped: '跳过', word_ok: '成功', storage_writable: '可写', storage_not_writable: '不可写', storage_degraded: '降级', storage_healthy: '健康', storage_unknown: '未知',
     m_fail_class: '失败分类', m_repo_rate: '仓库成功率', m_daily_trend: '每日趋势', empty_daily: '暂无每日趋势数据。',
     th_window: '时间窗', th_jobs: '任务数', th_success_rate: '成功率', th_trend: '趋势', th_day: '日期',
     h2_jobs: '任务', f_owner: '所有者', f_repository: '仓库', f_state: '状态/结果', f_failure_kind: '失败类型', f_diag_id: '诊断 ID', f_from: '起', f_to: '止', f_advanced: '高级筛选', btn_apply: '应用', f_all: '全部', btn_reset: '重置', st_succeeded: '成功', st_succeeded_with_warnings: '带警告成功', st_failed: '失败', st_running: '运行中', st_queued: '排队', st_interrupted: '中断', st_stale: '过期', st_skipped: '跳过', fk_job_timeout: '任务超时', fk_ocr_config_error: 'OCR 配置错误', fk_provider_rate_limited: '服务商限流', fk_provider_auth_failed: '服务商鉴权失败', fk_provider_unavailable: '服务商不可用', fk_ocr_runtime_error: 'OCR 运行错误', fk_git_error: 'Git 错误', fk_github_rate_limited: 'GitHub 限流', fk_github_api_error: 'GitHub API 错误', fk_bot_runtime_error: 'Bot 运行错误', fk_invalid_ocr_output: 'OCR 输出无效',
@@ -1547,6 +1604,12 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
   --red: #e0666b; --red-soft: rgba(224, 102, 107, 0.12); --red-glow: transparent;
   --link: #4c9bed; --link-hover: #79b4f2;
   --primary-bg: #2ea043; --primary-bg-hover: #46b156;
+  --success: var(--green); --success-subtle: rgba(70, 177, 86, 0.16); --success-border: rgba(70, 177, 86, 0.40);
+  --attention: var(--amber); --attention-subtle: rgba(200, 144, 40, 0.16); --attention-border: rgba(200, 144, 40, 0.40);
+  --danger: var(--red); --danger-subtle: rgba(224, 102, 107, 0.16); --danger-border: rgba(224, 102, 107, 0.40);
+  --done: #a371f7; --done-subtle: rgba(163, 113, 247, 0.16);
+  --neutral-subtle: rgba(148, 161, 173, 0.16); --neutral-fg: #c9d1d9;
+  --accent-subtle: rgba(76, 155, 237, 0.16);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.40);
   --shadow-pop: 0 6px 16px rgba(0, 0, 0, 0.45);

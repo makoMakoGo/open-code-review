@@ -10,7 +10,7 @@ import {
   clearCsrfCookie,
 } from './session.js';
 import { forbidden, htmlResponse, methodNotAllowed, notFound, redirect, textResponse } from './security.js';
-import { renderConfigPage, renderDashboardPage, renderJobDetailPage, renderJobsPage, renderLoginPage, renderMetricsPage } from './templates.js';
+import { CONFIG_GROUP_IDS, renderConfigPage, renderDashboardPage, renderJobDetailPage, renderJobsPage, renderLoginPage, renderMetricsPage } from './templates.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -185,7 +185,7 @@ export class AdminRouter {
     } catch (error) {
       this.#setFlash(session, { type: 'error', message: error?.message ?? String(error) });
     }
-    return redirect('/admin/config');
+    return redirect(configSectionPath(getFormString(form, 'section')));
   }
 
   async #securityConfig() {
@@ -361,6 +361,12 @@ function getHeader(headers, name) {
   return null;
 }
 
+
+function configSectionPath(section) {
+  const id = String(section ?? '').trim();
+  if (CONFIG_GROUP_IDS.includes(id)) return `/admin/config?section=${encodeURIComponent(id)}`;
+  return '/admin/config';
+}
 function getFormString(form, name) {
   const value = form.get(name);
   if (Array.isArray(value)) return value[0] ?? '';
