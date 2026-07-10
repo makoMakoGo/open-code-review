@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import vm from 'node:vm';
 
 import {
@@ -363,25 +366,102 @@ test('dark theme defines semantic status fills', () => {
   assert.match(html, /:root\[data-theme="dark"\][\s\S]*--neutral-subtle:\s*[^;]+;/);
 });
 
-test('service health degrades for stats, retention, queue, and failed retention signals', async () => {
+test('service health uses deduplicated current stats, retention, and queue diagnostics', async () => {
   const runtime = new AdminRuntime({ configProvider: () => ({ version: 'test', port: 3007 }) });
   runtime.replay = { jobs: [], degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
+  const queue = { running: null, queuedCount: 0, queued: [], diagnostics: [] };
+  const healthyStats = { daily: { degraded: false } };
+  const healthyRetention = { config: {}, lastRun: null, diagnostics: [] };
 
-  runtime.statsWarning = 'stats unavailable';
-  assert.equal((await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [] })).health, 'degraded');
+  const statsDegraded = await runtime.serviceStatus(queue, {
+    stats: { daily: { degraded: true } },
+    retention: healthyRetention,
+  });
+  assert.equal(statsDegraded.health, 'degraded');
+  assert.equal(statsDegraded.diagnostics.runtimeWarnings, 1);
 
-  runtime.statsWarning = null;
-  runtime.retentionWarning = 'retention unavailable';
-  assert.equal((await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [] })).health, 'degraded');
+  const retentionDiagnostic = { id: 'retention.persist', level: 'warn', message: 'retention persistence failed' };
+  const retentionDegraded = await runtime.serviceStatus(queue, {
+    stats: healthyStats,
+    retention: {
+      config: {},
+      lastRun: { ok: false, diagnostics: [retentionDiagnostic] },
+      diagnostics: [retentionDiagnostic],
+    },
+  });
+  assert.equal(retentionDegraded.health, 'degraded');
+  assert.equal(retentionDegraded.diagnostics.runtimeWarnings, 1);
 
-  runtime.retentionWarning = null;
-  const queueDegraded = await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [{ id: 'queue', level: 'warn' }] });
+  const distinctRetentionFailures = await runtime.serviceStatus(queue, {
+    stats: healthyStats,
+    retention: {
+      config: {},
+      lastRun: { ok: false, diagnostics: [] },
+      diagnostics: [{ id: 'retention.config', level: 'warn', message: 'retention config unavailable' }],
+    },
+  });
+  assert.equal(distinctRetentionFailures.diagnostics.runtimeWarnings, 2);
+
+  const queueDegraded = await runtime.serviceStatus({ ...queue, diagnostics: [{ id: 'queue', level: 'warn' }] }, {
+    stats: healthyStats,
+    retention: healthyRetention,
+  });
   assert.equal(queueDegraded.health, 'degraded');
   assert.equal(queueDegraded.diagnostics.degraded, true);
   assert.equal(queueDegraded.storage.degraded, false);
+});
 
-  runtime.lastRetention = { ok: false };
-  assert.equal((await runtime.serviceStatus({ running: null, queuedCount: 0, queued: [], diagnostics: [] })).health, 'degraded');
+test('dashboard health recovers after a failed stats read succeeds', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-stats-recovery-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const statsPath = path.join(adminDir, 'stats', 'daily-stats.jsonl');
+  await fs.mkdir(statsPath, { recursive: true });
+  const runtime = new AdminRuntime({ adminDir, configProvider: () => ({ version: 'test', port: 3007 }) });
+
+  const failed = await runtime.dashboard();
+  assert.equal(failed.serviceStatus.health, 'degraded');
+  assert.equal(failed.serviceStatus.diagnostics.runtimeWarnings, 1);
+
+  await fs.rm(statsPath, { recursive: true });
+  await fs.writeFile(statsPath, '');
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.stats.daily.degraded, false);
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.serviceStatus.diagnostics.runtimeWarnings, 0);
+});
+
+test('dashboard health degrades for corrupt daily stats that do not throw', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-stats-degraded-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  await fs.mkdir(path.join(adminDir, 'stats'), { recursive: true });
+  await fs.writeFile(path.join(adminDir, 'stats', 'daily-stats.jsonl'), '{not-json}\n');
+  const runtime = new AdminRuntime({ adminDir, configProvider: () => ({ version: 'test', port: 3007 }) });
+
+  const dashboard = await runtime.dashboard();
+  assert.equal(dashboard.stats.daily.degraded, true);
+  assert.equal(dashboard.serviceStatus.health, 'degraded');
+  assert.equal(dashboard.serviceStatus.diagnostics.runtimeWarnings, 1);
+  assert.equal(dashboard.diagnostics.filter((item) => item.id === 'stats.daily').length, 1);
+});
+
+test('dashboard health clears a recovered retention config failure', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let failing = true;
+  const runtime = new AdminRuntime({
+    configProvider: () => {
+      if (failing) throw new Error('retention config unavailable');
+      return { version: 'test', port: 3007 };
+    },
+  });
+  const failedRetention = await runtime.retentionStatus();
+  assert.deepEqual(failedRetention.diagnostics.map((item) => item.id), ['retention.config']);
+
+  failing = false;
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.serviceStatus.diagnostics.runtimeWarnings, 0);
+  assert.equal(recovered.diagnostics.some((item) => item.id.startsWith('retention.')), false);
 });
 
 test('invalid health values map to unavailable and never introduce a fourth state', () => {
@@ -446,20 +526,27 @@ test('advanced and login focus rules use the solid accent ring', () => {
   assert.match(html, /\.login-form input:focus \{[^}]*outline: 2px solid var\(--accent\);[^}]*outline-offset: 2px;/);
 });
 
-test('dark status pill text meets WCAG AA against composited fills', () => {
+test('dark status pill text meets WCAG AA on page and hover surfaces', () => {
   const html = renderDashboardPage({ csrfToken: 'csrf', summary: {}, diagnostics: [], serviceStatus: null });
-  const block = html.match(/:root\[data-theme="dark"\] \{([\s\S]*?)\n\}/)?.[1];
-  assert.ok(block, 'expected dark theme block');
-  const variables = cssVariables(block);
-  const pageBackground = resolveCssColor('--bg', variables);
-  for (const [foregroundName, fillName] of [
-    ['--success', '--success-subtle'],
-    ['--attention', '--attention-subtle'],
-    ['--danger', '--danger-subtle'],
-    ['--done', '--done-subtle'],
-  ]) {
-    const foreground = resolveCssColor(foregroundName, variables);
-    const fill = compositeColor(resolveCssColor(fillName, variables), pageBackground);
-    assert.ok(contrastRatio(foreground, fill) >= 4.5, `${foregroundName} must reach 4.5:1`);
+  const rootBlock = html.match(/:root \{([\s\S]*?)\n\}/)?.[1];
+  const darkBlock = html.match(/:root\[data-theme="dark"\] \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(rootBlock, 'expected root theme block');
+  assert.ok(darkBlock, 'expected dark theme block');
+  const variables = new Map([...cssVariables(rootBlock), ...cssVariables(darkBlock)]);
+  for (const backgroundName of ['--bg', '--surface']) {
+    const background = resolveCssColor(backgroundName, variables);
+    for (const [foregroundName, fillName] of [
+      ['--accent', '--accent-subtle'],
+      ['--success', '--success-subtle'],
+      ['--attention', '--attention-subtle'],
+      ['--danger', '--danger-subtle'],
+      ['--done', '--done-subtle'],
+    ]) {
+      const foreground = resolveCssColor(foregroundName, variables);
+      const fill = compositeColor(resolveCssColor(fillName, variables), background);
+      assert.ok(contrastRatio(foreground, fill) >= 4.5, `${foregroundName} on ${backgroundName} must reach 4.5:1`);
+    }
   }
+  assert.match(html, /\.dpill\.run \{[^}]*border-color: var\(--accent-border\);/);
+  assert.match(html, /\.chip\.on \{[^}]*border-color: var\(--accent-border\);/);
 });

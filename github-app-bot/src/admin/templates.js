@@ -1111,7 +1111,7 @@ function baseStyles() {
   --bg-inset: #eef1f3;
   --bg-over: #e1e5ea;
   --fg: var(--text); --fg-muted: var(--muted); --fg-subtle: var(--faint);
-  --accent-subtle: var(--cyan-soft);
+  --accent-subtle: var(--cyan-soft); --accent-border: rgba(9, 105, 218, 0.35);
   --success: var(--green); --success-subtle: #dafbe1; --success-border: rgba(26, 127, 55, .35);
   --attention: var(--amber); --attention-subtle: #fff8c5; --attention-border: rgba(154, 103, 0, .35);
   --danger: var(--red); --danger-subtle: #ffebe9; --danger-border: rgba(207, 34, 46, .35);
@@ -1316,7 +1316,7 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 .dpill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; line-height: 1; padding: 4px 10px; border-radius: 20px; border: 1px solid transparent; white-space: nowrap; }
 .dpill .dot { width: 7px; height: 7px; }
 .dpill.ok { background: var(--success-subtle); color: var(--success); border-color: var(--success-border); }
-.dpill.run { background: var(--accent-subtle); color: var(--accent); border-color: rgba(9,105,218,.35); }
+.dpill.run { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); }
 .dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); }
 .dpill.warn { background: var(--attention-subtle); color: var(--attention); border-color: var(--attention-border); }
 .dpill.fail { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
@@ -1325,7 +1325,7 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 /* filter chips + list-card shell — GitHub Primer */
 .chip { font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1.4; padding: 4px 11px; border-radius: 20px; border: 1px solid var(--border); color: var(--fg-muted); background: var(--bg); cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; text-decoration: none; appearance: none; -webkit-appearance: none; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease); }
 .chip:hover { background: var(--bg-subtle); border-color: var(--border-bright); color: var(--fg); text-decoration: none; }
-.chip.on { background: var(--accent-subtle); color: var(--accent); border-color: rgba(9,105,218,.35); font-weight: 600; }
+.chip.on { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); font-weight: 600; }
 .btn-sm { min-height: 30px; padding: 4px 12px; font-size: 12px; }
 .tablewrap { border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; background: var(--bg); }
 .tablewrap .bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg); }
@@ -1604,20 +1604,20 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
   --text: #d6dbe1;
   --muted: #94a1ad;
   --faint: #7a8794;
-  --cyan: #4c9bed; --cyan-soft: rgba(76, 155, 237, 0.14); --cyan-glow: transparent;
+  --cyan: #58a6ff; --cyan-soft: rgba(88, 166, 255, 0.14); --cyan-glow: transparent;
   --indigo: #8a7ff0; --indigo-soft: rgba(138, 127, 240, 0.14); --indigo-glow: transparent;
   --magenta: #c66fb0; --magenta-soft: rgba(198, 111, 176, 0.10);
   --green: #56d364; --green-soft: rgba(86, 211, 100, 0.12); --green-glow: transparent;
   --amber: #f2cc60; --amber-soft: rgba(242, 204, 96, 0.12); --amber-glow: transparent;
   --red: #ff7b72; --red-soft: rgba(255, 123, 114, 0.12); --red-glow: transparent;
-  --link: #58a6ff; --link-hover: #79c0ff;
+  --link: var(--cyan); --link-hover: #79c0ff;
   --primary-bg: #238636; --primary-bg-hover: #2ea043;
   --success: var(--green); --success-subtle: rgba(86, 211, 100, 0.12); --success-border: rgba(86, 211, 100, 0.40);
   --attention: var(--amber); --attention-subtle: rgba(242, 204, 96, 0.12); --attention-border: rgba(242, 204, 96, 0.40);
   --danger: var(--red); --danger-subtle: rgba(255, 123, 114, 0.12); --danger-border: rgba(255, 123, 114, 0.40);
   --done: #d2a8ff; --done-subtle: rgba(210, 168, 255, 0.12);
   --neutral-subtle: rgba(148, 161, 173, 0.16); --neutral-fg: #c9d1d9;
-  --accent-subtle: rgba(88, 166, 255, 0.16);
+  --accent-subtle: var(--cyan-soft); --accent-border: rgba(88, 166, 255, 0.40);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.40);
   --shadow-pop: 0 6px 16px rgba(0, 0, 0, 0.45);
@@ -1639,7 +1639,7 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
 .dashboard .dpill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; line-height: 1; padding: 4px 9px; border-radius: 20px; border: 1px solid transparent; white-space: nowrap; }
 .dashboard .dpill .dot { width: 7px; height: 7px; }
 .dashboard .dpill.ok { background: var(--success-subtle); color: var(--success); border-color: var(--success-border); }
-.dashboard .dpill.run { background: var(--accent-subtle); color: var(--accent); border-color: rgba(9, 105, 218, .35); }
+.dashboard .dpill.run { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); }
 .dashboard .dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); }
 .dashboard .dpill.warn { background: var(--attention-subtle); color: var(--attention); border-color: var(--attention-border); }
 .dashboard .dpill.fail { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }

@@ -59,8 +59,7 @@ export class AdminRuntime {
     this.startedAt = startedAt;
     this.replay = { jobs: [], degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
     this.persistenceWarning = null;
-    this.statsWarning = null;
-    this.retentionWarning = null;
+    this.retentionDiagnostics = new Map();
     this.lastRetention = null;
   }
 
@@ -197,21 +196,30 @@ export class AdminRuntime {
   async stats(options = {}) {
     await this.refresh();
     const computed = computeJobStats(this.replay.jobs, options);
-    if (!this.adminDir) return { ...computed, daily: { records: [], degraded: false, corruptions: [], invalidRecords: [], truncatedTail: null } };
+    if (!this.adminDir) {
+      return { ...computed, daily: { records: [], degraded: false, corruptions: [], invalidRecords: [], truncatedTail: null }, diagnostics: [] };
+    }
     try {
-      return { ...computed, daily: await readDailyStats({ adminDir: this.adminDir }) };
+      const daily = await readDailyStats({ adminDir: this.adminDir });
+      return { ...computed, daily, diagnostics: statsDiagnostics({ daily }) };
     } catch (error) {
-      this.statsWarning = `Could not read aggregate stats: ${error.message}`;
+      const message = `Could not read aggregate stats: ${error.message}`;
       console.error('admin stats read failed', error.stack || error.message);
-      return { ...computed, daily: { records: [], degraded: true, corruptions: [], invalidRecords: [{ reason: error.message }], truncatedTail: null } };
+      const daily = { records: [], degraded: true, corruptions: [], invalidRecords: [{ reason: error.message }], truncatedTail: null };
+      return { ...computed, daily, diagnostics: [{ level: 'warn', id: 'stats.daily', message }] };
     }
   }
 
   async retentionStatus() {
     await this.loadRetentionState();
+    const config = await this.retentionConfig();
     return {
-      config: await this.retentionConfig(),
+      config,
       lastRun: this.lastRetention,
+      diagnostics: retentionStatusDiagnostics({
+        diagnostics: [...this.retentionDiagnostics.values()],
+        lastRun: this.lastRetention,
+      }),
     };
   }
 
@@ -317,23 +325,27 @@ export class AdminRuntime {
     const jobsPage = await this.jobs({ limit: 20, pageSize: 20, page: 1, asPage: true });
     const nowMs = Date.now();
     const stats = mergePersistedDailyTrend(enrichDashboardStats(await this.stats({ now: nowMs }), this.replay.jobs, nowMs));
-    const diagnostics = [...this.diagnostics(), ...queueDiagnostics(queue)];
+    const retention = await this.retentionStatus();
+    const diagnosticSnapshot = this.diagnosticsSnapshot({ stats, retention, queue });
     return {
       summary,
       recentJobs: jobsPage.jobs,
       metrics: stats,
       stats,
       queue,
-      serviceStatus: await this.serviceStatus(queue),
-      retention: await this.retentionStatus(),
-      diagnostics,
+      serviceStatus: await this.serviceStatus(queue, { stats, retention, diagnosticSnapshot }),
+      retention,
+      diagnostics: diagnosticSnapshot.items,
     };
   }
 
-  async serviceStatus(queue = this.queueSnapshot()) {
+  async serviceStatus(queue = this.queueSnapshot(), snapshot = {}) {
     const nowMs = Date.now();
+    const current = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    const stats = current.stats ?? await this.stats({ now: nowMs });
+    const retention = current.retention ?? await this.retentionStatus();
+    const diagnosticSnapshot = current.diagnosticSnapshot ?? this.diagnosticsSnapshot({ stats, retention, queue });
     const config = await this.safeRuntimeConfigSummary();
-    const retention = await this.retentionStatus();
     const storageDiagnostics = [];
     const dirSizeBytes = this.adminDir ? await safeDirectorySize(this.adminDir, storageDiagnostics) : 0;
     const retentionConfig = retention.config;
@@ -342,12 +354,7 @@ export class AdminRuntime {
       status: 'running',
       elapsedMs: queue.running.startedAt ? Math.max(0, nowMs - timestampMs(queue.running.startedAt, 'running.startedAt')) : null,
     } : null;
-    const runtimeWarningCount = [
-      this.statsWarning,
-      this.retentionWarning,
-      retention.lastRun?.ok === false ? 'retention failed' : null,
-      ...queueDiagnostics(queue),
-    ].filter(Boolean).length;
+    const runtimeWarningCount = diagnosticSnapshot.operationalWarnings.length;
     const storageDegraded = this.replay.degraded || storageDiagnostics.length > 0;
     const degraded = storageDegraded || runtimeWarningCount > 0;
     const actualListeningPort = actualPortFromListener(this.listener);
@@ -387,11 +394,15 @@ export class AdminRuntime {
     return status;
   }
 
-  diagnostics() {
+  diagnosticsSnapshot({ stats, retention, queue }) {
+    const operationalWarnings = dedupeDiagnostics([
+      ...statsDiagnostics(stats),
+      ...retentionStatusDiagnostics(retention),
+      ...queueDiagnostics(queue),
+    ].filter(isWarningDiagnostic));
     const items = [];
     if (this.persistenceWarning) items.push({ level: 'warn', id: 'persistence', message: this.persistenceWarning });
-    if (this.statsWarning) items.push({ level: 'warn', id: 'stats', message: this.statsWarning });
-    if (this.retentionWarning) items.push({ level: 'warn', id: 'retention', message: this.retentionWarning });
+    items.push(...operationalWarnings);
     if (this.replay.degraded) items.push({ level: 'warn', id: 'events', message: 'Job event history is degraded.' });
     if (this.replay.truncatedTail) items.push({ level: 'info', id: 'events.tail', message: 'Ignored truncated final event line.' });
     for (const corruption of this.replay.corruptions.slice(0, 5)) {
@@ -400,10 +411,7 @@ export class AdminRuntime {
     for (const invalid of this.replay.invalidEvents.slice(0, 5)) {
       items.push({ level: 'warn', id: `events.invalid.${invalid.lineNumber}`, message: `Invalid event line ${invalid.lineNumber}: ${invalid.reason}` });
     }
-    if (this.lastRetention && this.lastRetention.ok === false) {
-      items.push({ level: 'warn', id: 'retention.lastRun', message: 'Last retention run completed with diagnostics.' });
-    }
-    return items;
+    return { items: dedupeDiagnostics(items), operationalWarnings };
   }
 
   async configSummary() {
@@ -438,27 +446,39 @@ export class AdminRuntime {
 
   async retentionConfig() {
     try {
-      if (this.configProvider) return retentionDefaults(await this.configProvider());
-      if (this.configManager) {
+      let config;
+      if (this.configProvider) config = retentionDefaults(await this.configProvider());
+      else if (this.configManager) {
         const state = await this.configManager.load();
-        return retentionDefaults(state.config ?? {});
-      }
+        config = retentionDefaults(state.config ?? {});
+      } else config = retentionDefaults();
+      this.retentionDiagnostics.delete('retention.config');
+      return config;
     } catch (error) {
-      this.retentionWarning = `Could not load retention config; using defaults: ${error.message}`;
+      const message = `Could not load retention config; using defaults: ${error.message}`;
+      this.retentionDiagnostics.set('retention.config', { level: 'warn', id: 'retention.config', message });
       console.error('admin retention config load failed', error.stack || error.message);
+      return retentionDefaults();
     }
-    return retentionDefaults();
   }
 
   async loadRetentionState() {
-    if (!this.adminDir || this.lastRetention) return;
+    if (!this.adminDir || this.lastRetention) {
+      this.retentionDiagnostics.delete('retention.state');
+      return;
+    }
     try {
       const raw = await fs.readFile(path.join(this.adminDir, RETENTION_STATE_FILE), 'utf8');
       const parsed = JSON.parse(raw);
       this.lastRetention = parsed.lastRun ?? null;
+      this.retentionDiagnostics.delete('retention.state');
     } catch (error) {
-      if (error && error.code === 'ENOENT') return;
-      this.retentionWarning = `Could not read retention state: ${error.message}`;
+      if (error && error.code === 'ENOENT') {
+        this.retentionDiagnostics.delete('retention.state');
+        return;
+      }
+      const message = `Could not read retention state: ${error.message}`;
+      this.retentionDiagnostics.set('retention.state', { level: 'warn', id: 'retention.state', message });
       console.error('admin retention state read failed', error.stack || error.message);
     }
   }
@@ -472,13 +492,19 @@ export class AdminRuntime {
   }
 
   async persistRetentionResult(result) {
-    if (!this.adminDir) return;
+    if (!this.adminDir) {
+      this.retentionDiagnostics.delete('retention.persist');
+      return;
+    }
     try {
       await atomicWriteFile(path.join(this.adminDir, RETENTION_STATE_FILE), `${JSON.stringify({ lastRun: result }, null, 2)}\n`);
+      this.retentionDiagnostics.delete('retention.persist');
     } catch (error) {
-      this.retentionWarning = `Could not persist retention state: ${error.message}`;
+      const message = `Could not persist retention state: ${error.message}`;
+      const diagnostic = { level: 'warn', id: 'retention.persist', message };
+      this.retentionDiagnostics.set(diagnostic.id, diagnostic);
       result.ok = false;
-      result.diagnostics.push({ level: 'warn', id: 'retention.persist', message: this.retentionWarning });
+      result.diagnostics.push(diagnostic);
       console.error('admin retention state write failed', error.stack || error.message);
     }
   }
@@ -490,7 +516,6 @@ export class AdminRuntime {
       result.ok = false;
       const diagnostic = { level: 'warn', id: `retention.${key}`, message: error.message };
       result.diagnostics.push(diagnostic);
-      this.retentionWarning = `Retention ${key} step failed: ${error.message}`;
       console.error('admin retention step failed', { step: key, error: error.stack || error.message });
     }
   }
@@ -941,6 +966,35 @@ function numberOrNull(value) {
 function queueDiagnostics(queue) {
   if (!Array.isArray(queue?.diagnostics)) return [];
   return queue.diagnostics.map((item, index) => ({ level: item.level ?? 'warn', id: item.id ?? `queue.${index}`, message: item.message ?? String(item) }));
+}
+
+function statsDiagnostics(stats) {
+  const diagnostics = Array.isArray(stats?.diagnostics) ? stats.diagnostics : [];
+  if (stats?.daily?.degraded !== true || diagnostics.some(item => item?.id === 'stats.daily')) {
+    return dedupeDiagnostics(diagnostics);
+  }
+  return dedupeDiagnostics([
+    ...diagnostics,
+    { level: 'warn', id: 'stats.daily', message: 'Aggregate daily stats are degraded.' },
+  ]);
+}
+
+function retentionStatusDiagnostics(retention) {
+  const currentDiagnostics = Array.isArray(retention?.diagnostics) ? retention.diagnostics : [];
+  const lastRunDiagnostics = Array.isArray(retention?.lastRun?.diagnostics) ? retention.lastRun.diagnostics : [];
+  const diagnostics = [...currentDiagnostics, ...lastRunDiagnostics];
+  if (retention?.lastRun?.ok === false && !lastRunDiagnostics.some(isWarningDiagnostic)) {
+    diagnostics.push({ level: 'warn', id: 'retention.lastRun', message: 'Last retention run completed with diagnostics.' });
+  }
+  return dedupeDiagnostics(diagnostics);
+}
+
+function isWarningDiagnostic(item) {
+  return item?.level === 'warn' || item?.level === 'error';
+}
+
+function dedupeDiagnostics(items) {
+  return [...new Map(items.map(item => [item.id, item])).values()];
 }
 
 function newestJob(jobs, predicate) {
