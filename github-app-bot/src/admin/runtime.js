@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -69,6 +70,12 @@ export class AdminRuntime {
 
   clearPersistenceDiagnostic(id) {
     this.persistenceDiagnostics.delete(id);
+  }
+
+  clearRecoveredWriteDiagnostics() {
+    for (const [id, diagnostic] of this.persistenceDiagnostics) {
+      if (diagnostic.affectsWritability === true) this.persistenceDiagnostics.delete(id);
+    }
   }
 
   async initialize() {
@@ -371,6 +378,8 @@ export class AdminRuntime {
     const stats = current.stats ?? await this.stats({ now: nowMs });
     const retention = current.retention ?? await this.retentionStatus();
     const config = await this.safeRuntimeConfigSummary();
+    const writeProbe = await probeStorageWritability(this.adminDir);
+    if (writeProbe.probed && writeProbe.writable) this.clearRecoveredWriteDiagnostics();
     const storageDiagnostics = [];
     const dirSizeBytes = this.adminDir
       ? await safeDirectorySize(this.adminDir, storageDiagnostics, {
@@ -378,7 +387,12 @@ export class AdminRuntime {
         messagePrefix: 'Could not read admin data directory size',
       })
       : 0;
-    const diagnosticSnapshot = this.diagnosticsSnapshot({ stats, retention, queue, probeDiagnostics: storageDiagnostics });
+    const diagnosticSnapshot = this.diagnosticsSnapshot({
+      stats,
+      retention,
+      queue,
+      probeDiagnostics: [...writeProbe.diagnostics, ...storageDiagnostics],
+    });
     const retentionConfig = retention.config;
     const running = queue.running ? {
       ...queue.running,
@@ -530,6 +544,15 @@ export class AdminRuntime {
     if (!this.adminDir) {
       this.retentionDiagnostics.delete('retention.persist');
       return;
+    }
+    if (!Array.isArray(result.diagnostics)) throw new TypeError('retention result diagnostics must be an array');
+    const retryingPersist = this.retentionDiagnostics.has('retention.persist')
+      || result.diagnostics.some(item => item?.id === 'retention.persist');
+    if (retryingPersist) {
+      for (let index = result.diagnostics.length - 1; index >= 0; index -= 1) {
+        if (result.diagnostics[index]?.id === 'retention.persist') result.diagnostics.splice(index, 1);
+      }
+      result.ok = result.diagnostics.length === 0;
     }
     try {
       await atomicWriteFile(path.join(this.adminDir, RETENTION_STATE_FILE), `${JSON.stringify({ lastRun: result }, null, 2)}\n`);
@@ -775,6 +798,54 @@ async function logFileInfos(adminDir, activeJobIds, terminalJobIds = new Set()) 
   return files;
 }
 
+async function probeStorageWritability(adminDir) {
+  if (!adminDir) return { probed: false, writable: true, diagnostics: [] };
+  try {
+    await fs.mkdir(adminDir, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    return {
+      probed: true,
+      writable: false,
+      diagnostics: [{
+        level: 'warn',
+        id: 'storage.write',
+        message: `Could not prepare admin data directory: ${error.message}`,
+        affectsWritability: true,
+      }],
+    };
+  }
+  const probePath = path.join(adminDir, `.writability-probe-${process.pid}-${randomUUID()}`);
+  let writeError = null;
+  try {
+    await fs.writeFile(probePath, '', { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    writeError = error;
+  }
+  let cleanupError = null;
+  try {
+    await fs.rm(probePath, { force: true });
+  } catch (error) {
+    cleanupError = error;
+  }
+  const diagnostics = [];
+  if (writeError) {
+    diagnostics.push({
+      level: 'warn',
+      id: 'storage.write',
+      message: `Could not write admin data directory: ${writeError.message}`,
+      affectsWritability: true,
+    });
+  }
+  if (cleanupError) {
+    diagnostics.push({
+      level: 'warn',
+      id: 'storage.writeCleanup',
+      message: `Could not remove admin data write probe: ${cleanupError.message}`,
+    });
+  }
+  return { probed: true, writable: writeError == null, diagnostics };
+}
+
 async function safeDirectorySize(adminDir, diagnostics, { id = 'retention.size', messagePrefix = '' } = {}) {
   try {
     return await directorySize(adminDir);
@@ -1001,7 +1072,10 @@ function numberOrNull(value) {
 
 function queueDiagnostics(queue) {
   if (!Array.isArray(queue?.diagnostics)) return [];
-  return queue.diagnostics.map((item, index) => ({ level: item.level ?? 'warn', id: item.id ?? `queue.${index}`, message: item.message ?? String(item) }));
+  return queue.diagnostics.map((item, index) => {
+    const source = item && typeof item === 'object' ? item : {};
+    return { ...source, level: source.level ?? 'warn', id: source.id ?? `queue.${index}`, message: source.message ?? String(item) };
+  });
 }
 
 function statsDiagnostics(stats) {

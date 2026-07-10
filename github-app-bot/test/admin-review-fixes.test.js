@@ -14,6 +14,7 @@ import {
   renderJobsPage,
   renderJobDetailPage,
 } from '../src/admin/index.js';
+import { AdminJobQueue } from '../src/jobs/index.js';
 
 function extractCsrfFromCookie(cookieHeader) {
   const match = String(cookieHeader).match(/(?:^|;\s*)ocr_admin_csrf=([^;]+)/);
@@ -199,29 +200,133 @@ test('dashboard performs one event replay probe and clears a recovered read fail
   assert.equal(recovered.diagnostics.some((item) => item.id === 'persistence.eventReplay'), false);
 });
 
-test('only a current write-capability failure makes storage not writable', async (t) => {
+test('storage writability recovers through the production status probe without reinitializing', async (t) => {
   t.mock.method(console, 'error', () => {});
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-write-probe-'));
+  const adminDir = path.join(rootDir, 'admin');
+  t.after(() => fs.rm(rootDir, { recursive: true, force: true }));
   let storageUnavailable = true;
+  const writeFile = fs.writeFile.bind(fs);
+  t.mock.method(fs, 'writeFile', async (target, ...args) => {
+    if (String(target).includes('.writability-probe-') && storageUnavailable) {
+      await writeFile(target, 'partial', args[1]);
+      const error = new Error('storage write failed after creating probe');
+      error.code = 'EIO';
+      throw error;
+    }
+    return writeFile(target, ...args);
+  });
   const configManager = {
     ensureStorageDir: async () => {
       if (storageUnavailable) throw new Error('storage is read-only');
     },
     load: async () => ({ summary: { values: {} }, config: {} }),
   };
-  const runtime = new AdminRuntime({ configManager });
+  const runtime = new AdminRuntime({ adminDir, configManager });
 
   await runtime.initialize();
   const failed = await runtime.dashboard();
   assert.equal(failed.serviceStatus.health, 'unavailable');
   assert.equal(failed.serviceStatus.storage.writable, false);
-  assert.equal(failed.diagnostics.some((item) => item.id === 'persistence.configStorage'), true);
+  assert.equal(failed.diagnostics.some((item) => item.id === 'storage.write'), true);
+  assert.deepEqual((await fs.readdir(adminDir)).filter(name => name.startsWith('.writability-probe-')), []);
 
   storageUnavailable = false;
-  await runtime.initialize();
   const recovered = await runtime.dashboard();
   assert.equal(recovered.serviceStatus.health, 'healthy');
   assert.equal(recovered.serviceStatus.storage.writable, true);
-  assert.equal(recovered.diagnostics.some((item) => item.id === 'persistence.configStorage'), false);
+  assert.equal(recovered.diagnostics.some((item) => item.id === 'persistence.configStorage' || item.id === 'storage.write'), false);
+});
+
+test('queue event persistence diagnostic clears after the next successful append', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-queue-event-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  let appendAttempts = 0;
+  let releaseStart;
+  const startGate = new Promise(resolve => { releaseStart = resolve; });
+  const queue = new AdminJobQueue({
+    store: {
+      append: async () => {
+        appendAttempts += 1;
+        if (appendAttempts === 1) throw new Error('event store unavailable');
+      },
+    },
+    configProvider: async () => {
+      await startGate;
+      return {};
+    },
+    handler: async () => ({ outcome: 'succeeded' }),
+  });
+  const runtime = new AdminRuntime({ adminDir, queue, configProvider: () => ({ version: 'test', port: 3007 }) });
+  await queue.enqueue({ key: 'event-recovery', payload: {} });
+  const drain = queue.drainPromise;
+  const failedDiagnostic = queue.snapshot().diagnostics.find((item) => item.id === 'job-event-store');
+  assert.equal(failedDiagnostic.affectsWritability, true);
+  const failed = await runtime.serviceStatus(queue.snapshot(), {
+    stats: { daily: { degraded: false } },
+    retention: { config: {}, lastRun: null, diagnostics: [] },
+  });
+  assert.equal(failed.health, 'unavailable');
+  assert.equal(failed.storage.writable, false);
+
+  releaseStart();
+  await drain;
+  assert.equal(queue.snapshot().diagnostics.some((item) => item.id === 'job-event-store'), false);
+  const recovered = await runtime.serviceStatus(queue.snapshot(), {
+    stats: { daily: { degraded: false } },
+    retention: { config: {}, lastRun: null, diagnostics: [] },
+  });
+  assert.equal(recovered.health, 'healthy');
+  assert.equal(recovered.storage.writable, true);
+});
+
+test('queue log persistence diagnostic clears after the next successful append', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-queue-log-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  let appendAttempts = 0;
+  let firstWriteFinished;
+  const firstWrite = new Promise(resolve => { firstWriteFinished = resolve; });
+  let releaseSecondWrite;
+  const secondWriteGate = new Promise(resolve => { releaseSecondWrite = resolve; });
+  const queue = new AdminJobQueue({
+    logger: {
+      append: async () => {
+        appendAttempts += 1;
+        if (appendAttempts === 1) throw new Error('log store unavailable');
+      },
+    },
+    handler: async (_payload, { logger }) => {
+      await logger.info('first write');
+      firstWriteFinished();
+      await secondWriteGate;
+      await logger.info('second write');
+      return { outcome: 'succeeded' };
+    },
+  });
+  const runtime = new AdminRuntime({ adminDir, queue, configProvider: () => ({ version: 'test', port: 3007 }) });
+  await queue.enqueue({ key: 'log-recovery', payload: {} });
+  const drain = queue.drainPromise;
+  await firstWrite;
+  const failedDiagnostic = queue.snapshot().diagnostics.find((item) => item.id === 'job-log-store');
+  assert.equal(failedDiagnostic.affectsWritability, true);
+  const failed = await runtime.serviceStatus(queue.snapshot(), {
+    stats: { daily: { degraded: false } },
+    retention: { config: {}, lastRun: null, diagnostics: [] },
+  });
+  assert.equal(failed.health, 'unavailable');
+  assert.equal(failed.storage.writable, false);
+
+  releaseSecondWrite();
+  await drain;
+  assert.equal(queue.snapshot().diagnostics.some((item) => item.id === 'job-log-store'), false);
+  const recovered = await runtime.serviceStatus(queue.snapshot(), {
+    stats: { daily: { degraded: false } },
+    retention: { config: {}, lastRun: null, diagnostics: [] },
+  });
+  assert.equal(recovered.health, 'healthy');
+  assert.equal(recovered.storage.writable, true);
 });
 
 test('retention persistence failure controls writability until a successful retry', async (t) => {
@@ -234,22 +339,26 @@ test('retention persistence failure controls writability until a successful retr
   const queue = { running: null, queuedCount: 0, queued: [], diagnostics: [] };
   const stats = { daily: { degraded: false } };
 
-  const failedResult = { ok: true, diagnostics: [] };
-  await runtime.persistRetentionResult(failedResult);
+  const result = { ok: true, diagnostics: [] };
+  await runtime.persistRetentionResult(result);
   const failed = await runtime.serviceStatus(queue, {
     stats,
-    retention: { config: {}, lastRun: failedResult, diagnostics: failedResult.diagnostics },
+    retention: { config: {}, lastRun: result, diagnostics: result.diagnostics },
   });
-  assert.equal(failedResult.ok, false);
+  assert.equal(result.ok, false);
   assert.equal(failed.storage.writable, false);
 
   await fs.rm(statePath, { recursive: true });
-  const recoveredResult = { ok: true, diagnostics: [] };
-  await runtime.persistRetentionResult(recoveredResult);
+  await runtime.persistRetentionResult(result);
   const recovered = await runtime.serviceStatus(queue, {
     stats,
-    retention: { config: {}, lastRun: recoveredResult, diagnostics: recoveredResult.diagnostics },
+    retention: { config: {}, lastRun: result, diagnostics: result.diagnostics },
   });
+  const persisted = JSON.parse(await fs.readFile(statePath, 'utf8'));
+  assert.equal(result.ok, true);
+  assert.equal(result.diagnostics.some((item) => item.id === 'retention.persist'), false);
+  assert.equal(persisted.lastRun.ok, true);
+  assert.equal(persisted.lastRun.diagnostics.some((item) => item.id === 'retention.persist'), false);
   assert.equal(recovered.storage.writable, true);
 });
 
