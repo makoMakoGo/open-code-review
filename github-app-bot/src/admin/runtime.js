@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -62,6 +61,10 @@ export class AdminRuntime {
     this.persistenceDiagnostics = new Map();
     this.retentionDiagnostics = new Map();
     this.lastRetention = null;
+    this.storageProbePath = this.adminDir ? path.join(this.adminDir, '.writability-probe') : null;
+    this.storageProbeTail = Promise.resolve();
+    this.replayAvailable = !this.eventStore;
+    this.interruptedRecoveryPending = false;
   }
 
   setPersistenceDiagnostic(id, message, { affectsWritability = false } = {}) {
@@ -72,24 +75,8 @@ export class AdminRuntime {
     this.persistenceDiagnostics.delete(id);
   }
 
-  clearRecoveredWriteDiagnostics() {
-    for (const [id, diagnostic] of this.persistenceDiagnostics) {
-      if (diagnostic.affectsWritability === true) this.persistenceDiagnostics.delete(id);
-    }
-  }
 
   async initialize() {
-    const diagnosticId = 'persistence.configStorage';
-    if (!this.configManager) this.clearPersistenceDiagnostic(diagnosticId);
-    else {
-      try {
-        await this.configManager.ensureStorageDir();
-        this.clearPersistenceDiagnostic(diagnosticId);
-      } catch (error) {
-        this.setPersistenceDiagnostic(diagnosticId, `Admin config storage unavailable: ${error.message}`, { affectsWritability: true });
-        console.error('admin config storage unavailable', error.stack || error.message);
-      }
-    }
     await this.refresh();
     await this.markInterruptedJobs();
     await this.loadRetentionState();
@@ -101,33 +88,50 @@ export class AdminRuntime {
       this.clearPersistenceDiagnostic(diagnosticId);
       return;
     }
+    if (typeof this.eventStore.flushPending === 'function') {
+      try {
+        await this.eventStore.flushPending();
+      } catch (error) {
+        console.error('admin event outbox flush failed', error.stack || error.message);
+      }
+    }
     try {
       this.replay = await this.eventStore.replay();
+      this.replayAvailable = true;
       this.clearPersistenceDiagnostic(diagnosticId);
+      if (this.interruptedRecoveryPending) await this.retryInterruptedJobs();
     } catch (error) {
+      this.replayAvailable = false;
       this.setPersistenceDiagnostic(diagnosticId, `Could not read job event history: ${error.message}`);
       console.error('admin event replay failed', error.stack || error.message);
     }
   }
 
   async markInterruptedJobs() {
-    const diagnosticId = 'persistence.interruptedRecovery';
-    const active = this.replay.jobs.filter(job => isActiveStatus(job.status));
-    for (const job of active) {
-      try {
-        await this.eventStore.append({
-          type: 'job.interrupted',
-          jobId: job.id,
-          data: { reason: 'process restarted before job completed' },
-        });
-      } catch (error) {
-        this.setPersistenceDiagnostic(diagnosticId, `Could not mark interrupted jobs: ${error.message}`, { affectsWritability: true });
-        console.error('admin interrupted recovery failed', error.stack || error.message);
-        return;
-      }
+    if (!this.eventStore) return;
+    this.interruptedRecoveryPending = true;
+    await this.retryInterruptedJobs();
+  }
+
+  async retryInterruptedJobs() {
+    if (!this.interruptedRecoveryPending || !this.replayAvailable) return;
+    const queue = this.queueSnapshot();
+    const liveJobIds = new Set([
+      queue.running?.jobId,
+      ...queue.queued.map(job => job.jobId),
+    ].filter(Boolean));
+    const active = this.replay.jobs.filter(job => isActiveStatus(job.status) && !liveJobIds.has(job.id));
+    if (active.length === 0) {
+      this.interruptedRecoveryPending = false;
+      return;
     }
-    this.clearPersistenceDiagnostic(diagnosticId);
-    if (active.length > 0) await this.refresh();
+    try {
+      await this.eventStore.appendInterruptedJobs(active);
+      this.replay = await this.eventStore.replay();
+      this.interruptedRecoveryPending = this.replay.jobs.some(job => isActiveStatus(job.status) && !liveJobIds.has(job.id));
+    } catch (error) {
+      console.error('admin interrupted recovery failed', error.stack || error.message);
+    }
   }
 
   queueSnapshot() {
@@ -369,6 +373,7 @@ export class AdminRuntime {
   }
 
   async serviceStatus(queue = this.queueSnapshot(), snapshot = {}) {
+    await this.refresh();
     return (await this.serviceStatusSnapshot(queue, snapshot)).status;
   }
 
@@ -378,8 +383,7 @@ export class AdminRuntime {
     const stats = current.stats ?? await this.stats({ now: nowMs });
     const retention = current.retention ?? await this.retentionStatus();
     const config = await this.safeRuntimeConfigSummary();
-    const writeProbe = await probeStorageWritability(this.adminDir);
-    if (writeProbe.probed && writeProbe.writable) this.clearRecoveredWriteDiagnostics();
+    const writeProbe = await this.probeStorageWritability();
     const storageDiagnostics = [];
     const dirSizeBytes = this.adminDir
       ? await safeDirectorySize(this.adminDir, storageDiagnostics, {
@@ -391,6 +395,7 @@ export class AdminRuntime {
       stats,
       retention,
       queue,
+      eventStoreDiagnostics: eventStoreWriteDiagnostics(this.eventStore),
       probeDiagnostics: [...writeProbe.diagnostics, ...storageDiagnostics],
     });
     const retentionConfig = retention.config;
@@ -440,11 +445,12 @@ export class AdminRuntime {
     return { status, diagnostics: diagnosticSnapshot.items };
   }
 
-  diagnosticsSnapshot({ stats, retention, queue, probeDiagnostics = [] }) {
+  diagnosticsSnapshot({ stats, retention, queue, eventStoreDiagnostics = [], probeDiagnostics = [] }) {
     const operationalWarnings = dedupeDiagnostics([
       ...statsDiagnostics(stats),
       ...retentionStatusDiagnostics(retention),
       ...queueDiagnostics(queue),
+      ...eventStoreDiagnostics,
       ...this.persistenceDiagnostics.values(),
       ...probeDiagnostics,
     ].filter(isWarningDiagnostic));
@@ -458,6 +464,13 @@ export class AdminRuntime {
       items.push({ level: 'warn', id: `events.invalid.${invalid.lineNumber}`, message: `Invalid event line ${invalid.lineNumber}: ${invalid.reason}` });
     }
     return { items: dedupeDiagnostics(items), operationalWarnings };
+  }
+
+  async probeStorageWritability() {
+    const runProbe = () => probeStorageWritability(this.adminDir, this.storageProbePath);
+    const run = this.storageProbeTail.then(runProbe, runProbe);
+    this.storageProbeTail = run.catch(() => {});
+    return run;
   }
 
   async configSummary() {
@@ -798,7 +811,7 @@ async function logFileInfos(adminDir, activeJobIds, terminalJobIds = new Set()) 
   return files;
 }
 
-async function probeStorageWritability(adminDir) {
+async function probeStorageWritability(adminDir, probePath) {
   if (!adminDir) return { probed: false, writable: true, diagnostics: [] };
   try {
     await fs.mkdir(adminDir, { recursive: true, mode: 0o700 });
@@ -814,7 +827,17 @@ async function probeStorageWritability(adminDir) {
       }],
     };
   }
-  const probePath = path.join(adminDir, `.writability-probe-${process.pid}-${randomUUID()}`);
+
+  try {
+    await fs.rm(probePath, { force: true });
+  } catch (error) {
+    return {
+      probed: true,
+      writable: false,
+      diagnostics: [storageProbeCleanupDiagnostic(error)],
+    };
+  }
+
   let writeError = null;
   try {
     await fs.writeFile(probePath, '', { flag: 'wx', mode: 0o600 });
@@ -836,15 +859,23 @@ async function probeStorageWritability(adminDir) {
       affectsWritability: true,
     });
   }
-  if (cleanupError) {
-    diagnostics.push({
-      level: 'warn',
-      id: 'storage.writeCleanup',
-      message: `Could not remove admin data write probe: ${cleanupError.message}`,
-      affectsWritability: true,
-    });
-  }
+  if (cleanupError) diagnostics.push(storageProbeCleanupDiagnostic(cleanupError));
   return { probed: true, writable: writeError == null && cleanupError == null, diagnostics };
+}
+
+function storageProbeCleanupDiagnostic(error) {
+  return {
+    level: 'warn',
+    id: 'storage.writeCleanup',
+    message: `Could not remove admin data write probe: ${error.message}`,
+    affectsWritability: true,
+  };
+}
+
+function eventStoreWriteDiagnostics(eventStore) {
+  if (!eventStore || typeof eventStore.diagnostics !== 'function') return [];
+  const diagnostics = eventStore.diagnostics();
+  return Array.isArray(diagnostics.warnings) ? diagnostics.warnings : [];
 }
 
 async function safeDirectorySize(adminDir, diagnostics, { id = 'retention.size', messagePrefix = '' } = {}) {

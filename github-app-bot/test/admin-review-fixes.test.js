@@ -14,7 +14,7 @@ import {
   renderJobsPage,
   renderJobDetailPage,
 } from '../src/admin/index.js';
-import { AdminJobQueue } from '../src/jobs/index.js';
+import { AdminJobQueue, createJobEvent, JobEventStore } from '../src/jobs/index.js';
 
 function extractCsrfFromCookie(cookieHeader) {
   const match = String(cookieHeader).match(/(?:^|;\s*)ocr_admin_csrf=([^;]+)/);
@@ -100,6 +100,23 @@ function runApplyLangOnSettingsNav(html) {
     // Count sibling must remain a pure number after init.
     assert.match(anchor.countText, /^\d+$/);
   }
+}
+
+async function appendEventRecords(filePath, records) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.appendFile(filePath, records.map(record => `${JSON.stringify(record)}\n`).join(''), 'utf8');
+}
+
+function assertPersistenceFailureSnapshot(dashboard, diagnosticId, pendingEventCount = null) {
+  const warning = dashboard.diagnostics.find(item => item.id === diagnosticId);
+  assert.ok(warning, `expected ${diagnosticId} diagnostic`);
+  if (pendingEventCount != null) assert.equal(warning.pendingEventCount, pendingEventCount);
+  assert.notEqual(dashboard.serviceStatus.health, 'healthy');
+  assert.equal(dashboard.serviceStatus.storage.writable, false);
+  assert.equal(
+    dashboard.serviceStatus.diagnostics.runtimeWarnings,
+    dashboard.diagnostics.filter(item => item.level === 'warn' && !item.id.startsWith('events.')).length,
+  );
 }
 
 test('deriveServiceHealth never reports healthy for missing or degraded signals', () => {
@@ -208,7 +225,7 @@ test('storage writability recovers through the production status probe without r
   let storageUnavailable = true;
   const writeFile = fs.writeFile.bind(fs);
   t.mock.method(fs, 'writeFile', async (target, ...args) => {
-    if (String(target).includes('.writability-probe-') && storageUnavailable) {
+    if (path.basename(String(target)) === '.writability-probe' && storageUnavailable) {
       await writeFile(target, 'partial', args[1]);
       const error = new Error('storage write failed after creating probe');
       error.code = 'EIO';
@@ -229,21 +246,68 @@ test('storage writability recovers through the production status probe without r
   assert.equal(failed.serviceStatus.health, 'unavailable');
   assert.equal(failed.serviceStatus.storage.writable, false);
   assert.equal(failed.diagnostics.some((item) => item.id === 'storage.write'), true);
-  assert.deepEqual((await fs.readdir(adminDir)).filter(name => name.startsWith('.writability-probe-')), []);
+  assert.deepEqual((await fs.readdir(adminDir)).filter(name => name === '.writability-probe'), []);
 
   storageUnavailable = false;
   const recovered = await runtime.dashboard();
   assert.equal(recovered.serviceStatus.health, 'healthy');
   assert.equal(recovered.serviceStatus.storage.writable, true);
-  assert.equal(recovered.diagnostics.some((item) => item.id === 'persistence.configStorage' || item.id === 'storage.write'), false);
+  assert.equal(recovered.diagnostics.some((item) => item.id === 'storage.write'), false);
 });
 
-test('write probe cleanup failure keeps storage not writable', async (t) => {
+test('interrupted recovery remains pending until its event is durably replayed', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-interrupted-outbox-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  let eventWritesBlocked = false;
+  const store = new JobEventStore({
+    adminDir,
+    appendRecords: async (filePath, records) => {
+      if (eventWritesBlocked) throw new Error('event history is read-only');
+      await appendEventRecords(filePath, records);
+    },
+  });
+  const jobId = '44444444-4444-4444-8444-444444444444';
+  await store.appendMany([
+    createJobEvent({ type: 'job.queued', jobId, timestamp: '2026-07-10T08:00:00.000Z', data: { repository: 'alice/recovery', pullNumber: 4 } }),
+    createJobEvent({ type: 'job.started', jobId, timestamp: '2026-07-10T08:01:00.000Z', data: { startedAt: '2026-07-10T08:01:00.000Z' } }),
+  ]);
+  const runtime = new AdminRuntime({ adminDir, eventStore: store, configProvider: () => ({ version: 'test', port: 3007 }) });
+  await runtime.refresh();
+
+  eventWritesBlocked = true;
+  await runtime.markInterruptedJobs();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const failed = await runtime.dashboard();
+    assertPersistenceFailureSnapshot(failed, 'job-event-store', 1);
+    assert.equal(failed.recentJobs.find(job => job.id === jobId).status, 'running');
+    assert.equal(store.diagnostics().pendingEventCount, 1);
+    assert.equal(failed.diagnostics.some(item => item.id === 'storage.write' || item.id === 'storage.writeCleanup'), false);
+  }
+
+  eventWritesBlocked = false;
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.recentJobs.find(job => job.id === jobId).status, 'interrupted');
+  assert.equal(store.diagnostics().pendingEventCount, 0);
+  assert.equal(recovered.diagnostics.some(item => item.id === 'job-event-store'), false);
+  assert.equal(recovered.serviceStatus.storage.writable, true);
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+});
+
+test('fixed serialized write probe bounds cleanup leaks and removes its stale file on recovery', async (t) => {
   const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-write-cleanup-'));
+  const probePath = path.join(adminDir, '.writability-probe');
   const rm = fs.rm.bind(fs);
   t.after(() => rm(adminDir, { recursive: true, force: true }));
+  let cleanupBlocked = true;
   t.mock.method(fs, 'rm', async (target, ...args) => {
-    if (String(target).includes('.writability-probe-')) {
+    if (target === probePath && cleanupBlocked) {
+      try {
+        await fs.stat(target);
+      } catch (error) {
+        if (error?.code === 'ENOENT') return rm(target, ...args);
+        throw error;
+      }
       const error = new Error('probe unlink denied');
       error.code = 'EACCES';
       throw error;
@@ -252,54 +316,311 @@ test('write probe cleanup failure keeps storage not writable', async (t) => {
   });
   const runtime = new AdminRuntime({ adminDir, configProvider: () => ({ version: 'test', port: 3007 }) });
 
-  const dashboard = await runtime.dashboard();
-  const diagnostic = dashboard.diagnostics.find((item) => item.id === 'storage.writeCleanup');
-  assert.equal(diagnostic.affectsWritability, true);
-  assert.equal(dashboard.serviceStatus.health, 'unavailable');
-  assert.equal(dashboard.serviceStatus.storage.writable, false);
+  const failedSnapshots = await Promise.all([runtime.dashboard(), runtime.dashboard(), runtime.dashboard()]);
+  for (const failed of failedSnapshots) assertPersistenceFailureSnapshot(failed, 'storage.writeCleanup');
+  assert.deepEqual((await fs.readdir(adminDir)).filter(name => name === '.writability-probe'), ['.writability-probe']);
+
+  cleanupBlocked = false;
+  const recovered = await runtime.dashboard();
+  assert.deepEqual((await fs.readdir(adminDir)).filter(name => name === '.writability-probe'), []);
+  assert.equal(recovered.diagnostics.some(item => item.id === 'storage.writeCleanup'), false);
+  assert.equal(recovered.serviceStatus.storage.writable, true);
+  assert.equal(recovered.serviceStatus.health, 'healthy');
 });
 
-test('queue event persistence diagnostic clears after the next successful append', async (t) => {
+test('terminal event backlog flushes before a later job event and restores replay state', async (t) => {
   t.mock.method(console, 'error', () => {});
-  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-queue-event-'));
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-terminal-outbox-'));
   t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
-  let appendAttempts = 0;
-  let releaseStart;
-  const startGate = new Promise(resolve => { releaseStart = resolve; });
-  const queue = new AdminJobQueue({
-    store: {
-      append: async () => {
-        appendAttempts += 1;
-        if (appendAttempts === 1) throw new Error('event store unavailable');
-      },
+  let writesBlocked = false;
+  let terminalFailureInjected = false;
+  const successfulBatches = [];
+  const store = new JobEventStore({
+    adminDir,
+    appendRecords: async (filePath, records) => {
+      if (!terminalFailureInjected && records.some(event => event.type === 'job.completed' || event.type === 'job.failed')) {
+        terminalFailureInjected = true;
+        writesBlocked = true;
+      }
+      if (writesBlocked) throw new Error('terminal event write failed');
+      successfulBatches.push(records.map(event => ({ type: event.type, jobId: event.jobId })));
+      await appendEventRecords(filePath, records);
     },
+  });
+  let configReads = 0;
+  let releaseSecondStart;
+  const secondStartGate = new Promise(resolve => { releaseSecondStart = resolve; });
+  const queue = new AdminJobQueue({
+    store,
     configProvider: async () => {
-      await startGate;
+      configReads += 1;
+      if (configReads === 2) await secondStartGate;
       return {};
     },
     handler: async () => ({ outcome: 'succeeded' }),
   });
-  const runtime = new AdminRuntime({ adminDir, queue, configProvider: () => ({ version: 'test', port: 3007 }) });
-  await queue.enqueue({ key: 'event-recovery', payload: {} });
-  const drain = queue.drainPromise;
-  const failedDiagnostic = queue.snapshot().diagnostics.find((item) => item.id === 'job-event-store');
-  assert.equal(failedDiagnostic.affectsWritability, true);
-  const failed = await runtime.serviceStatus(queue.snapshot(), {
-    stats: { daily: { degraded: false } },
-    retention: { config: {}, lastRun: null, diagnostics: [] },
-  });
-  assert.equal(failed.health, 'unavailable');
-  assert.equal(failed.storage.writable, false);
+  const runtime = new AdminRuntime({ adminDir, eventStore: store, queue, configProvider: () => ({ version: 'test', port: 3007 }) });
 
-  releaseStart();
-  await drain;
-  assert.equal(queue.snapshot().diagnostics.some((item) => item.id === 'job-event-store'), false);
-  const recovered = await runtime.serviceStatus(queue.snapshot(), {
-    stats: { daily: { degraded: false } },
-    retention: { config: {}, lastRun: null, diagnostics: [] },
+  const firstResult = await queue.enqueue({ key: 'first-job', payload: {}, metadata: { owner: 'alice', repo: 'first', pullNumber: 1 } });
+  await queue.drainPromise;
+  const firstJobId = firstResult.job.jobId;
+  assert.equal((await store.replay({ force: true })).jobs.find(job => job.id === firstJobId).status, 'running');
+  assert.equal(store.diagnostics().pendingEventCount, 1);
+  await runtime.refresh();
+  await runtime.markInterruptedJobs();
+  assert.equal(store.diagnostics().pendingEventCount, 1, 'pending terminal transition must suppress interrupted recovery');
+
+  const secondResult = await queue.enqueue({ key: 'second-job', payload: {}, metadata: { owner: 'alice', repo: 'second', pullNumber: 2 } });
+  const secondDrain = queue.drainPromise;
+  const secondJobId = secondResult.job.jobId;
+  const failed = await runtime.dashboard();
+  assertPersistenceFailureSnapshot(failed, 'job-event-store', 2);
+  assert.equal(failed.recentJobs.find(job => job.id === firstJobId).status, 'running');
+
+  writesBlocked = false;
+  const recovered = await runtime.dashboard();
+  const repairedBatch = successfulBatches.find(batch => batch.some(event => event.jobId === firstJobId && event.type === 'job.completed'));
+  assert.deepEqual(repairedBatch.slice(0, 2), [
+    { type: 'job.completed', jobId: firstJobId },
+    { type: 'job.queued', jobId: secondJobId },
+  ]);
+  assert.equal(recovered.recentJobs.find(job => job.id === firstJobId).status, 'succeeded');
+  assert.equal(store.diagnostics().pendingEventCount, 0);
+  assert.equal(recovered.serviceStatus.storage.writable, true);
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+
+  releaseSecondStart();
+  await secondDrain;
+});
+
+test('semantic terminal event rejection becomes a persisted failed transition', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-semantic-terminal-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const store = new JobEventStore({ adminDir });
+  const queue = new AdminJobQueue({
+    store,
+    configProvider: () => ({}),
+    handler: async () => ({ outcome: 'running' }),
   });
-  assert.equal(recovered.health, 'healthy');
-  assert.equal(recovered.storage.writable, true);
+
+  const result = await queue.enqueue({ key: 'semantic-terminal', payload: {}, metadata: { owner: 'alice', repo: 'semantic', pullNumber: 3 } });
+  await queue.drainPromise;
+  const replayed = await store.replay({ force: true });
+  assert.equal(replayed.jobs.find(job => job.id === result.job.jobId).status, 'failed');
+  assert.equal(store.diagnostics().pendingEventCount, 0);
+  assert.deepEqual(store.diagnostics().warnings, []);
+});
+
+test('ambiguous event write reconciles stable IDs without duplicate replay effects', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-idempotent-outbox-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  let failAfterWrite = false;
+  const store = new JobEventStore({
+    adminDir,
+    appendRecords: async (filePath, records) => {
+      await appendEventRecords(filePath, records);
+      if (failAfterWrite) throw new Error('writer failed after durable append');
+    },
+  });
+  const runtime = new AdminRuntime({ adminDir, eventStore: store, configProvider: () => ({ version: 'test', port: 3007 }) });
+  const jobId = '77777777-7777-4777-8777-777777777777';
+  await store.appendMany([
+    createJobEvent({ type: 'job.queued', jobId, timestamp: '2026-07-10T09:00:00.000Z', data: { repository: 'alice/idempotent', pullNumber: 7 } }),
+    createJobEvent({ type: 'job.started', jobId, timestamp: '2026-07-10T09:01:00.000Z', data: { startedAt: '2026-07-10T09:01:00.000Z' } }),
+  ]);
+  const logEvent = createJobEvent({ id: '88888888-8888-4888-8888-888888888888', type: 'job.log', jobId, timestamp: '2026-07-10T09:02:00.000Z', data: { level: 'info', message: 'once' } });
+  const completedEvent = createJobEvent({ id: '99999999-9999-4999-8999-999999999999', type: 'job.completed', jobId, timestamp: '2026-07-10T09:03:00.000Z', data: { status: 'succeeded', finishedAt: '2026-07-10T09:03:00.000Z' } });
+
+  failAfterWrite = true;
+  await assert.rejects(() => store.appendMany([logEvent, completedEvent]), /writer failed after durable append/);
+  assert.equal(store.diagnostics().pendingEventCount, 2);
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.recentJobs.find(job => job.id === jobId).status, 'succeeded');
+  assert.equal(runtime.replay.jobs.find(job => job.id === jobId).logCount, 1);
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.serviceStatus.storage.writable, true);
+  assert.equal(recovered.serviceStatus.diagnostics.runtimeWarnings, recovered.diagnostics.filter(item => item.level === 'warn').length);
+  assert.equal(recovered.diagnostics.some(item => item.id === 'job-event-store'), false);
+
+  const records = (await fs.readFile(path.join(adminDir, 'jobs', 'events.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(records.filter(event => event.id === logEvent.id).length, 1);
+  assert.equal(records.filter(event => event.id === completedEvent.id).length, 1);
+  assert.equal(store.diagnostics().pendingEventCount, 0);
+  assert.deepEqual(store.diagnostics().warnings, []);
+});
+
+test('same event ID with different content rejects without changing history', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-event-id-conflict-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const store = new JobEventStore({ adminDir });
+  const jobId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const eventId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const original = createJobEvent({ id: eventId, type: 'job.queued', jobId, timestamp: '2026-07-10T10:30:00.000Z', data: { repository: 'alice/original', pullNumber: 11 } });
+  await store.append(original);
+  const eventsPath = path.join(adminDir, 'jobs', 'events.jsonl');
+  const before = await fs.readFile(eventsPath, 'utf8');
+  const conflict = createJobEvent({ id: eventId, type: 'job.queued', jobId, timestamp: '2026-07-10T10:30:00.000Z', data: { repository: 'alice/changed', pullNumber: 11 } });
+
+  await assert.rejects(() => store.append(conflict), /conflicts with different persisted content/);
+  assert.equal(await fs.readFile(eventsPath, 'utf8'), before);
+  assert.equal(store.diagnostics().pendingEventCount, 0);
+  const replayed = await store.replay({ force: true });
+  assert.equal(replayed.jobs.find(job => job.id === jobId).repository.fullName, 'alice/original');
+});
+
+test('event identity reconciliation reloads rewritten history and normalizes UUID case', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-event-identity-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const store = new JobEventStore({ adminDir });
+  const jobId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const event = createJobEvent({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', type: 'job.queued', jobId, timestamp: '2026-07-10T10:40:00.000Z', data: { repository: 'alice/reloaded', pullNumber: 12 } });
+  const eventsPath = path.join(adminDir, 'jobs', 'events.jsonl');
+  await store.append(event);
+
+  await fs.writeFile(eventsPath, '', 'utf8');
+  await store.append(event);
+  assert.equal((await fs.readFile(eventsPath, 'utf8')).trim().split('\n').length, 1);
+
+  const upperLogId = 'FFFFFFFF-FFFF-4FFF-8FFF-FFFFFFFFFFFF';
+  const upperLog = { id: upperLogId, type: 'job.log', jobId: jobId.toUpperCase(), timestamp: '2026-07-10T10:41:00.000Z', data: { level: 'info' } };
+  const lowerLog = { ...upperLog, id: upperLogId.toLowerCase(), jobId };
+  await fs.appendFile(eventsPath, `${JSON.stringify(upperLog)}\n${JSON.stringify(lowerLog)}\n`, 'utf8');
+  const replayed = await store.replay({ force: true });
+  assert.equal(replayed.jobs.find(job => job.id === jobId).logCount, 1);
+  assert.equal(replayed.invalidEvents.length, 0);
+});
+
+test('event submitted before an initial store read failure remains pending for flush', async (t) => {
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-initial-read-outbox-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const eventsPath = path.join(adminDir, 'jobs', 'events.jsonl');
+  const readFile = fs.readFile.bind(fs);
+  let readsBlocked = true;
+  t.mock.method(fs, 'readFile', async (target, ...args) => {
+    if (target === eventsPath && readsBlocked) {
+      const error = new Error('event history cannot be read');
+      error.code = 'EACCES';
+      throw error;
+    }
+    return readFile(target, ...args);
+  });
+  const store = new JobEventStore({ adminDir });
+  const jobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const event = createJobEvent({ type: 'job.queued', jobId, timestamp: '2026-07-10T10:00:00.000Z', data: { repository: 'alice/read-recovery', pullNumber: 10 } });
+
+  await assert.rejects(() => store.append(event), /event history cannot be read/);
+  assert.equal(store.diagnostics().pendingEventCount, 1);
+  assert.equal(store.diagnostics().warnings[0].affectsWritability, true);
+  const invalid = createJobEvent({ type: 'job.completed', jobId, timestamp: '2026-07-10T10:01:00.000Z', data: { status: 'running' } });
+  await assert.rejects(() => store.append(invalid), /job.completed requires terminal status: running/);
+  assert.equal(store.diagnostics().pendingEventCount, 1);
+  assert.equal(store.diagnostics().integrityFailureCount, 0);
+
+  readsBlocked = false;
+  await store.flushPending();
+  const replayed = await store.replay({ force: true });
+  assert.equal(replayed.jobs.find(job => job.id === jobId).status, 'queued');
+  assert.equal(store.diagnostics().pendingEventCount, 0);
+});
+
+test('event store repair failure remains a writability diagnostic until the repair succeeds', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-event-repair-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const store = new JobEventStore({ adminDir });
+  const jobId = '12121212-1212-4212-8212-121212121212';
+  await store.append(createJobEvent({ type: 'job.queued', jobId, timestamp: '2026-07-10T10:50:00.000Z', data: { repository: 'alice/repair', pullNumber: 13 } }));
+  const eventsPath = path.join(adminDir, 'jobs', 'events.jsonl');
+  await fs.appendFile(eventsPath, '{"truncated":', 'utf8');
+  await store.replay({ force: true });
+  const rename = fs.rename.bind(fs);
+  let repairsBlocked = true;
+  t.mock.method(fs, 'rename', async (source, target) => {
+    if (target === eventsPath && repairsBlocked) {
+      const error = new Error('event history repair denied');
+      error.code = 'EACCES';
+      throw error;
+    }
+    return rename(source, target);
+  });
+  const runtime = new AdminRuntime({ adminDir, eventStore: store, configProvider: () => ({ version: 'test', port: 3007 }) });
+
+  const failed = await runtime.dashboard();
+  assertPersistenceFailureSnapshot(failed, 'job-event-store', 0);
+  assert.equal(store.diagnostics().writeFailure, 'event history repair denied');
+
+  repairsBlocked = false;
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.serviceStatus.storage.writable, true);
+  assert.equal(recovered.diagnostics.some(item => item.id === 'job-event-store'), false);
+});
+
+test('startup retries interrupted recovery after event replay access returns', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-deferred-recovery-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const jobId = '13131313-1313-4313-8313-131313131313';
+  const seedStore = new JobEventStore({ adminDir });
+  await seedStore.appendMany([
+    createJobEvent({ type: 'job.queued', jobId, timestamp: '2026-07-10T11:00:00.000Z', data: { repository: 'alice/deferred', pullNumber: 14 } }),
+    createJobEvent({ type: 'job.started', jobId, timestamp: '2026-07-10T11:01:00.000Z', data: { startedAt: '2026-07-10T11:01:00.000Z' } }),
+  ]);
+  const eventsPath = path.join(adminDir, 'jobs', 'events.jsonl');
+  const readFile = fs.readFile.bind(fs);
+  let readsBlocked = true;
+  t.mock.method(fs, 'readFile', async (target, ...args) => {
+    if (target === eventsPath && readsBlocked) {
+      const error = new Error('startup replay denied');
+      error.code = 'EACCES';
+      throw error;
+    }
+    return readFile(target, ...args);
+  });
+  const runtime = new AdminRuntime({ adminDir, eventStore: new JobEventStore({ adminDir }), configProvider: () => ({ version: 'test', port: 3007 }) });
+
+  await runtime.initialize();
+  assert.equal(runtime.interruptedRecoveryPending, true);
+  readsBlocked = false;
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.recentJobs.find(job => job.id === jobId).status, 'interrupted');
+  assert.equal(runtime.interruptedRecoveryPending, false);
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.serviceStatus.storage.writable, true);
+});
+
+test('failed event compaction remains visible until compaction itself succeeds', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const adminDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocr-admin-compact-recovery-'));
+  t.after(() => fs.rm(adminDir, { recursive: true, force: true }));
+  const store = new JobEventStore({ adminDir });
+  const jobId = '14141414-1414-4414-8414-141414141414';
+  await store.append(createJobEvent({ type: 'job.queued', jobId, timestamp: '2026-07-10T11:10:00.000Z', data: { repository: 'alice/compact', pullNumber: 15 } }));
+  const eventsPath = path.join(adminDir, 'jobs', 'events.jsonl');
+  const rename = fs.rename.bind(fs);
+  let compactionBlocked = true;
+  t.mock.method(fs, 'rename', async (source, target) => {
+    if (target === eventsPath && compactionBlocked) {
+      const error = new Error('event compaction denied');
+      error.code = 'EACCES';
+      throw error;
+    }
+    return rename(source, target);
+  });
+  const runtime = new AdminRuntime({ adminDir, eventStore: store, configProvider: () => ({ version: 'test', port: 3007 }) });
+
+  await assert.rejects(() => store.compact(), /event compaction denied/);
+  const failed = await runtime.dashboard();
+  assertPersistenceFailureSnapshot(failed, 'job-event-store', 0);
+  assert.equal(store.diagnostics().writeFailure, 'event compaction denied');
+
+  compactionBlocked = false;
+  await store.compact();
+  const recovered = await runtime.dashboard();
+  assert.equal(recovered.diagnostics.some(item => item.id === 'job-event-store'), false);
+  assert.equal(recovered.serviceStatus.health, 'healthy');
+  assert.equal(recovered.serviceStatus.storage.writable, true);
 });
 
 test('queue log persistence diagnostic clears after the next successful append', async (t) => {

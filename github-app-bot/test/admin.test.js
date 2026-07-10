@@ -652,6 +652,7 @@ test('job completed events reject active statuses', async () => {
     () => store.append(createJobEvent({ type: 'job.completed', jobId, data: { status: 'running' } })),
     /job.completed requires terminal status: running/,
   );
+  assert.equal(store.diagnostics().pendingEventCount, 0);
   const replayed = await store.replay({ force: true });
   assert.equal(replayed.jobs[0].status, 'queued');
 });

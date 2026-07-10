@@ -1,4 +1,7 @@
 import { createUuid, redactSensitiveString, sanitizeForAdminStorage, normalizeIsoTimestamp } from './utils.js';
+import { PendingEventWriteError } from './event-store.js';
+
+const COMPLETED_OUTCOMES = new Set(['succeeded', 'succeeded_with_warnings', 'skipped', 'stale']);
 
 export class AdminJobQueue {
   constructor({ handler, store = null, logger = null, configProvider = null, startSnapshotProvider = null } = {}) {
@@ -107,6 +110,9 @@ export class AdminJobQueue {
             continue;
           }
           const status = result?.outcome ?? 'succeeded';
+          if (status !== 'failed' && !COMPLETED_OUTCOMES.has(status)) {
+            throw new TypeError(`job handler returned unsupported outcome: ${status}`);
+          }
           const eventType = status === 'failed' ? 'job.failed' : 'job.completed';
           await this.#record(eventType, this.runningJob, {
             ...queueMetadata(this.runningJob),
@@ -166,16 +172,13 @@ export class AdminJobQueue {
   }
 
   async #record(type, job, data) {
-    if (!this.store) {
-      this.#clearDiagnostic('job-event-store');
-      return;
-    }
+    if (!this.store) return;
     try {
       await this.store.append({ type, jobId: job.jobId, data });
-      this.#clearDiagnostic('job-event-store');
     } catch (error) {
-      this.#noteDiagnostic('job-event-store', 'Admin job event persistence failed', error, { affectsWritability: true });
       console.error('admin job event persistence failed', safeErrorMessage(error));
+      if (error instanceof PendingEventWriteError) return;
+      throw error;
     }
   }
 
