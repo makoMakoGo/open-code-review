@@ -129,7 +129,7 @@ ${bodyScript(cspNonce)}
 </html>`;
 }
 
-export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], diagnostics = [], serviceStatus = null, metrics = null, stats = null, retention = null, cspNonce = '' } = {}) {
+export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [], serviceStatus = null, retention = null, cspNonce = '' } = {}) {
   const dash = (n) => escapeHtml(numberOrDash(n));
   const svc = serviceStatus || {};
   const storage = svc.storage || {};
@@ -764,129 +764,10 @@ function jobsPageUrl(filters, page, size) {
   return query ? `/admin/jobs?${query}` : '/admin/jobs';
 }
 
-function renderServiceStatus(status, retention) {
-  if (!status) return '';
-  const storage = status.storage ?? {};
-  const running = status.runningJob ?? status.running ?? null;
-  const queued = status.queued ?? { count: status.queuedCount, items: [] };
-  return `<section class="card"><h2 data-i18n="h2_service_status">Status</h2>
-${renderDefinitionList([
-    ['Uptime', safeDisplay(formatDuration(status.uptimeMs)), 'ss_uptime'],
-    ['Started', safeDisplay(formatDate(status.startedAt)), 'ss_started'],
-    ['Version', safeDisplay(status.version), 'ss_version'],
-    ['Config revision', safeDisplay(status.configRevision), 'ss_config_revision'],
-    ['Actual listening port', safeDisplay(status.actualListeningPort ?? status.listeningPort), 'ss_actual_port'],
-    ['Configured port', safeDisplay(status.configuredPort ?? status.port), 'ss_configured_port'],
-    ['Desired pending port', safeDisplay(status.desiredPendingPort ?? status.pendingPort), 'ss_pending_port'],
-    ['Storage writable/degraded', safeDisplay(`${storage.writable ? 'writable' : 'not writable'} / ${storage.degraded ? 'degraded' : 'healthy'}`), 'ss_storage_health'],
-    ['Storage size / budget', safeDisplay(`${formatBytes(storage.sizeBytes ?? storage.dirSizeBytes)} / ${formatBytes(storage.budgetBytes)}`), 'ss_storage_size'],
-    ['Last retention', safeDisplay(formatDate(status.lastRetention?.finishedAt ?? status.lastRetention?.startedAt ?? retention?.lastRun?.finishedAt)), 'ss_last_retention'],
-    ['Corrupt/truncated diagnostics', safeDisplay(formatDiagnosticCounts(status.diagnostics)), 'ss_diag_counts'],
-  ])}
-<h3 data-i18n="ss_running_job">Current running job</h3>${running ? renderJobsTable([runningJobAsListItem(running)]) : '<p class="empty" data-i18n="empty_running">No running job.</p>'}
-<h3 data-i18n="ss_queued">Queued summaries</h3>${renderQueuedSummary(queued)}
-<h3 data-i18n="ss_last_sf">Last success/failure</h3>${renderJobsTable([status.lastSuccess, status.lastFailure].filter(Boolean))}</section>`;
-}
-
-function renderQueuedSummary(queued) {
-  const items = queued.items ?? [];
-  if (items.length === 0) return `<p class="empty">${safeDisplay(queued.count ?? 0)} queued.</p>`;
-  return renderJobsTable(items.map(item => ({ ...item, id: item.jobId, status: item.phase ?? 'queued', repo: item.repository })));
-}
-
-function runningJobAsListItem(job) {
-  return { ...job, id: job.jobId ?? job.id, status: job.phase ?? 'running', repo: job.repository ?? job.repo };
-}
-
-function renderMetricsTrends(metrics) {
-  const stats = metrics?.total || metrics?.windows ? metrics : { windows: metrics };
-  const windows = stats.windows ?? {};
-  if (!stats.total && Object.keys(windows).length === 0) return '';
-  const rows = ['24h', '7d', '30d'].map((name) => renderMetricsWindowRow(name, windows[name] ?? {})).join('');
-  return `<section class="card"><h2 data-i18n="h2_metrics">Metrics and trends</h2>${renderMetricsSummary(stats.total)}<div class="table-scroll"><table><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="m_repo_rate">Repository success rate</th><th data-i18n="th_trend">Trend</th></tr></thead><tbody>${rows}</tbody></table></div>${renderDailyTrend(stats.dailyTrend ?? [])}</section>`;
-}
-
-function renderMetricsWindowRow(name, bucket) {
-  return `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(numberOrDash(bucket.jobs))}</td><td>${safeDisplay(formatPercent(bucket.successRate))}</td><td>${safeDisplay(formatDuration(bucket.durationP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.durationP95Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP95Ms))}</td><td>${safeDisplay(numberOrDash(averageComment(bucket, 'generated')))}</td><td>${safeDisplay(numberOrDash(averageComment(bucket, 'posted')))}</td><td>${safeDisplay(numberOrDash(bucket.stale))}</td><td>${safeDisplay(numberOrDash(bucket.skipped))}</td><td>${safeDisplay(numberOrDash(bucket.interrupted))}</td><td>${renderFailureKinds(bucket.failureKinds)}</td><td>${renderRepositoryRates(bucket.repositories ?? bucket.repoSuccessRates ?? bucket.repos)}</td><td>${renderTrendBar(bucket)}</td></tr>`;
-}
-
-function renderMetricsSummary(bucket) {
-  if (!bucket) return '';
-  return renderDefinitionList([
-    ['Duration p50', safeDisplay(formatDuration(bucket.durationP50Ms)), 'm_dur_p50'],
-    ['Duration p95', safeDisplay(formatDuration(bucket.durationP95Ms)), 'm_dur_p95'],
-    ['Queue wait p50', safeDisplay(formatDuration(bucket.queueWaitP50Ms)), 'm_qw_p50'],
-    ['Queue wait p95', safeDisplay(formatDuration(bucket.queueWaitP95Ms)), 'm_qw_p95'],
-    ['Avg comments generated', safeDisplay(numberOrDash(averageComment(bucket, 'generated'))), 'm_avg_gen'],
-    ['Avg comments posted', safeDisplay(numberOrDash(averageComment(bucket, 'posted'))), 'm_avg_post'],
-    ['Stale', safeDisplay(numberOrDash(bucket.stale)), 'm_stale'],
-    ['Skipped', safeDisplay(numberOrDash(bucket.skipped)), 'm_skipped'],
-    ['Interrupted', safeDisplay(numberOrDash(bucket.interrupted)), 'm_interrupted'],
-    ['Failure classification', renderFailureKinds(bucket.failureKinds), 'm_fail_class'],
-    ['Repository success rate', renderRepositoryRates(bucket.repositories ?? bucket.repoSuccessRates ?? bucket.repos), 'm_repo_rate'],
-  ]);
-}
-
-function renderDailyTrend(dailyTrend) {
-  if (!Array.isArray(dailyTrend) || dailyTrend.length === 0) return '<h3 data-i18n="m_daily_trend">Daily trend</h3><p class="empty" data-i18n="empty_daily">No daily trend data.</p>';
-  const rows = dailyTrend.map(day => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(averageComment(day, 'generated')))}</td><td>${safeDisplay(numberOrDash(averageComment(day, 'posted')))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('');
-  return `<h3 data-i18n="m_daily_trend">Daily trend</h3><div class="table-scroll"><table><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
-function averageComment(bucket, kind) {
-  const average = kind === 'generated' ? bucket.averageCommentsGenerated : bucket.averageCommentsPosted;
-  if (Number.isFinite(average)) return average;
-  const total = commentTotal(bucket, kind);
-  return Number.isFinite(total) && Number.isFinite(bucket.commentSamples) && bucket.commentSamples > 0 ? total / bucket.commentSamples : null;
-}
-
-function commentTotal(bucket, kind) {
-  const direct = kind === 'generated' ? bucket.commentsGeneratedTotal : bucket.commentsPostedTotal;
-  if (Number.isFinite(direct)) return direct;
-  const average = kind === 'generated' ? bucket.averageCommentsGenerated : bucket.averageCommentsPosted;
-  if (Number.isFinite(average) && Number.isFinite(bucket.commentSamples)) return Math.round(average * bucket.commentSamples);
-  return null;
-}
-
-function renderFailureKinds(failureKinds) {
-  const entries = Object.entries(objectValue(failureKinds));
-  if (entries.length === 0) return '<span class="empty">—</span>';
-  return entries.sort(([a], [b]) => a.localeCompare(b)).map(([kind, count]) => `${safeDisplay(kind)} (${safeDisplay(numberOrDash(count))})`).join(', ');
-}
-
-function renderRepositoryRates(repositories) {
-  const entries = Object.entries(objectValue(repositories));
-  if (entries.length === 0) return '<span class="empty">—</span>';
-  return entries.sort(([a], [b]) => a.localeCompare(b)).map(([name, value]) => {
-    const details = objectValue(value);
-    const successRate = details.successRate ?? repositorySuccessRateFromCount(details, value);
-    const count = Number.isFinite(details.jobs) ? ` (${details.jobs})` : Number.isFinite(value) ? ` (${value})` : '';
-    const rate = Number.isFinite(successRate) ? ` ${formatPercent(successRate)}` : '';
-    return `${safeDisplay(name)}${safeDisplay(count)}${safeDisplay(rate)}`;
-  }).join(', ');
-}
-
-function repositorySuccessRateFromCount(details, value) {
-  if (!details && !Number.isFinite(value)) return null;
-  const succeeded = Number(details?.succeeded ?? 0) + Number(details?.succeeded_with_warnings ?? 0);
-  const failed = Number(details?.failed ?? 0);
-  const denominator = succeeded + failed;
-  return denominator > 0 ? succeeded / denominator : null;
-}
-
 function renderPhaseTimeline(timeline) {
   if (!Array.isArray(timeline) || timeline.length === 0) return '<p class="empty" data-i18n="empty_phase_timeline">No phase timeline.</p>';
   const rows = timeline.map(item => `<tr><td>${safeDisplay(formatDate(item.timestamp))}</td><td>${safeDisplay(item.label ?? item.phase ?? '')}</td><td>${safeDisplay(item.phase ?? '')}</td><td>${safeDisplay(item.message ?? '')}</td><td>${safeDisplay(item.source ?? '')}</td></tr>`).join('');
   return `<div class="table-scroll"><table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_event">Event</th><th data-i18n="th_phase">Phase</th><th data-i18n="th_message">Message</th><th data-i18n="th_source">Source</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
-function renderTrendBar(bucket) {
-  const total = Math.max(0, Number(bucket.jobs) || 0);
-  const succeeded = Math.max(0, Number(bucket.succeeded) || 0);
-  const failed = Math.max(0, Number(bucket.failed) || 0);
-  const successWidth = total > 0 ? Math.round((succeeded / total) * 100) : 0;
-  const failureWidth = total > 0 ? Math.round((failed / total) * 100) : 0;
-  return `<svg width="120" height="10" viewBox="0 0 120 10" role="img" aria-label="${escapeAttribute(`${successWidth}% success ${failureWidth}% failed`)}"><rect width="120" height="10" fill="#1c2820"></rect><rect width="${successWidth * 1.2}" height="10" fill="#5fae68"></rect><rect x="${successWidth * 1.2}" width="${failureWidth * 1.2}" height="10" fill="#d8553e"></rect></svg>`;
 }
 
 function renderRepoPullLink(job, repository) {
@@ -894,10 +775,6 @@ function renderRepoPullLink(job, repository) {
   if (!repository) return safeDisplay(pullNumber ? `#${pullNumber}` : '');
   const label = pullNumber ? `${repository}#${pullNumber}` : repository;
   return pullNumber ? `<a href="https://github.com/${escapeAttribute(repository)}/pull/${escapeAttribute(pullNumber)}" rel="noreferrer">${safeDisplay(label)}</a>` : safeDisplay(label);
-}
-
-function renderDefinitionList(rows) {
-  return `<dl>${rows.map(([label, value, key]) => `<dt${key ? ` data-i18n="${escapeAttribute(key)}"` : ''}>${safeDisplay(label)}</dt><dd>${value == null || value === '' ? '<span class="empty">—</span>' : value}</dd>`).join('')}</dl>`;
 }
 
 function renderKeyValueTable(values) {
@@ -1120,7 +997,7 @@ export function safeScriptJson(value) {
     .replace(/\u2029/g, '\\u2029');
 }
 function bodyScript(nonce) {
-  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el){var k=el.getAttribute('data-i18n-placeholder');if(d[k]!==undefined)el.setAttribute('placeholder',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'').split('{visible}').join(el.getAttribute('data-visible')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){var light=document.documentElement.dataset.theme==='light';b.textContent=light?'☾':'☀';b.setAttribute('aria-label',light?d.toggle_theme_dark:d.toggle_theme_light);});document.querySelectorAll('[data-lang-target]').forEach(function(b){var zh=document.documentElement.lang==='zh';b.textContent=zh?'EN':'中文';b.setAttribute('aria-label',zh?d.toggle_lang_en:d.toggle_lang_zh);});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}function initConfigEditor(){var root=document.querySelector('[data-config-editor]');if(!root)return;var search=root.querySelector('[data-config-search]');var chips=[].slice.call(root.querySelectorAll('[data-config-chip]'));var rows=[].slice.call(root.querySelectorAll('[data-config-row]'));var groups=[].slice.call(root.querySelectorAll('[data-config-group]'));var tocLinks=[].slice.call(root.querySelectorAll('[data-config-toc]'));var empty=root.querySelector('[data-config-empty]');var status=root.querySelector('[data-config-filter-status]');var topBtn=root.querySelector('[data-config-top]');var sticky=root.querySelector('[data-config-sticky]');var activeChip='all';function stickyOffset(){var h=sticky?sticky.getBoundingClientRect().height:0;return Math.round(h+88);}function scrollToEl(el){if(!el)return;var y=window.scrollY+el.getBoundingClientRect().top-stickyOffset();window.scrollTo({top:Math.max(0,y),behavior:'smooth'});}function rowMatches(row,query,chip){var flags=(row.getAttribute('data-flags')||'').split(/\\s+/).filter(Boolean);var hay=(row.getAttribute('data-search')||'').toLowerCase();if(query&&hay.indexOf(query)===-1)return false;if(chip&&chip!=='all'&&flags.indexOf(chip)===-1)return false;return true;}function setActiveToc(id){tocLinks.forEach(function(link){link.classList.toggle('is-active',link.getAttribute('data-config-toc')===id);});}function applyFilter(){var query=((search&&search.value)||'').trim().toLowerCase();var visible=0;var groupVisible={};rows.forEach(function(row){var ok=rowMatches(row,query,activeChip);row.hidden=!ok;if(ok){visible+=1;var gid=row.getAttribute('data-group')||'service';groupVisible[gid]=(groupVisible[gid]||0)+1;}});groups.forEach(function(section){var gid=section.getAttribute('data-config-group');var count=groupVisible[gid]||0;section.hidden=count===0;var badges=root.querySelectorAll('[data-config-count="'+gid+'"]');badges.forEach(function(badge){badge.textContent=String(count);});});if(empty)empty.hidden=visible!==0;if(status){status.setAttribute('data-visible',String(visible));status.setAttribute('data-total',String(rows.length));var d=dict();var template=d.config_filter_status||'Showing {visible} / {total} fields';status.textContent=template.split('{visible}').join(String(visible)).split('{total}').join(String(rows.length));}}if(search)search.addEventListener('input',applyFilter);chips.forEach(function(chip){chip.addEventListener('click',function(){activeChip=chip.getAttribute('data-config-chip')||'all';chips.forEach(function(item){item.classList.toggle('is-active',item===chip);});applyFilter();});});tocLinks.forEach(function(link){link.addEventListener('click',function(e){e.preventDefault();var id=link.getAttribute('data-config-toc');var target=root.querySelector('[data-config-group="'+id+'"]');if(target&&!target.hidden){setActiveToc(id);scrollToEl(target);if(history&&history.replaceState)history.replaceState(null,'','#config-group-'+id);}});});if(topBtn)topBtn.addEventListener('click',function(){scrollToEl(root);if(history&&history.replaceState)history.replaceState(null,'',location.pathname+location.search);});if('IntersectionObserver' in window){var io=new IntersectionObserver(function(entries){var best=null;entries.forEach(function(entry){if(entry.isIntersecting){if(!best||entry.intersectionRatio>best.intersectionRatio)best=entry;}});if(best&&best.target)setActiveToc(best.target.getAttribute('data-config-group'));},{root:null,rootMargin:'-30% 0px -55% 0px',threshold:[0.1,0.25,0.5,0.75]});groups.forEach(function(section){io.observe(section);});}if(location.hash&&location.hash.indexOf('#config-field-')===0){var fieldTarget=document.getElementById(location.hash.slice(1));if(fieldTarget)scrollToEl(fieldTarget);}else if(location.hash&&location.hash.indexOf('#config-group-')===0){var groupTarget=document.getElementById(location.hash.slice(1));if(groupTarget){setActiveToc(groupTarget.getAttribute('data-config-group'));scrollToEl(groupTarget);}}applyFilter();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
+  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el){var k=el.getAttribute('data-i18n-placeholder');if(d[k]!==undefined)el.setAttribute('placeholder',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'').split('{visible}').join(el.getAttribute('data-visible')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){var light=document.documentElement.dataset.theme==='light';b.textContent=light?'☾':'☀';b.setAttribute('aria-label',light?d.toggle_theme_dark:d.toggle_theme_light);});document.querySelectorAll('[data-lang-target]').forEach(function(b){var zh=document.documentElement.lang==='zh';b.textContent=zh?'EN':'中文';b.setAttribute('aria-label',zh?d.toggle_lang_en:d.toggle_lang_zh);});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
 }
 
 function fontLinks() {
