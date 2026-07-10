@@ -176,27 +176,45 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
   }).join('');
 
   const running = svc.runningJob || svc.running || null;
-  const runningHtml = running
-    ? `<div class="dcard"><div class="bd">
-<div class="kv"><span class="k">Repository</span><span class="v">${escapeHtml(formatRepository(running.repo ?? running.repository))}</span></div>
-<div class="kv"><span class="k">Pull request</span><span class="v">#${escapeHtml(String(running.pullNumber ?? running.pullRequest ?? '—'))}</span></div>
-<div class="kv"><span class="k">Actor</span><span class="v">${escapeHtml(running.actor ?? '—')}</span></div>
-<div class="kv"><span class="k">Phase</span><span class="v">${jobStatusPill(running.status ?? running.phase ?? 'running')}</span></div>
-</div></div>`
-    : `<div class="dcard"><div class="bd"><p class="empty" data-i18n="empty_running">No running job.</p></div></div>`;
+  const runningBody = running
+    ? `<div class="kv-list">
+<div class="kv"><span class="k" data-i18n="th_repo">Repository</span><span class="v">${escapeHtml(formatRepository(running.repo ?? running.repository))}</span></div>
+<div class="kv"><span class="k" data-i18n="th_pr">Pull request</span><span class="v">#${escapeHtml(String(running.pullNumber ?? running.pullRequest ?? '—'))}</span></div>
+<div class="kv"><span class="k" data-i18n="th_actor">Actor</span><span class="v">${escapeHtml(running.actor ?? '—')}</span></div>
+<div class="kv"><span class="k" data-i18n="th_status">Phase</span><span class="v">${jobStatusPill(running.status ?? running.phase ?? 'running')}</span></div>
+${running.jobId || running.id ? `<div class="kv"><span class="k" data-i18n="th_job">Job</span><span class="v"><code>${escapeHtml(running.jobId ?? running.id)}</code></span></div>` : ''}
+</div>`
+    : `<p class="empty" data-i18n="empty_running">No running job.</p>`;
 
   const qitems = svc.queued?.items ?? [];
-  const queuedHtml = qitems.length
+  const queuedBody = qitems.length
     ? `<div class="qlist">${qitems.map((it) => `<div class="qrow"><span class="dpill queued"><i class="dot idle" aria-hidden="true"></i>queued</span><span class="repo">${escapeHtml(formatRepository(it.repository ?? it.repo))}</span><code>${escapeHtml(it.jobId ?? it.id ?? '')}</code></div>`).join('')}</div>`
     : `<p class="empty">${dash(svc.queued?.count ?? summary.queued)} queued.</p>`;
 
-  const sfCard = (job, tone, label) => job
-    ? `<div class="dcard"><div class="bd">
-<div class="big"><span class="dpill ${tone}">${label}</span> ${escapeHtml(formatRepository(job.repo ?? job.repository))}</div>
-<div class="meta">#${escapeHtml(String(job.pullNumber ?? '—'))} · ${escapeHtml(job.actor ?? '')} · <code>${escapeHtml(job.diagnosticId ?? '')}</code></div>
-</div></div>`
+  const activityBox = (titleKey, title, body) => `<div class="box">
+  <div class="box-header"><strong data-i18n="${titleKey}">${escapeHtml(title)}</strong></div>
+  <div class="box-body">${body}</div>
+</div>`;
+
+  const sfBox = (job, tone, titleKey, title, label) => job
+    ? `<div class="box">
+  <div class="box-header">
+    <strong data-i18n="${titleKey}">${escapeHtml(title)}</strong>
+    <span class="dpill ${tone}"><i class="dot ${tone === 'ok' ? 'ok' : 'err'}" aria-hidden="true"></i>${escapeHtml(label)}</span>
+  </div>
+  <div class="box-body">
+    <div class="kv-list">
+      <div class="kv"><span class="k" data-i18n="th_repo">Repository</span><span class="v">${escapeHtml(formatRepository(job.repo ?? job.repository))}</span></div>
+      <div class="kv"><span class="k" data-i18n="th_pr">Pull request</span><span class="v">#${escapeHtml(String(job.pullNumber ?? '—'))}</span></div>
+      <div class="kv"><span class="k" data-i18n="th_actor">Actor</span><span class="v">${escapeHtml(job.actor ?? '—')}</span></div>
+      <div class="kv"><span class="k" data-i18n="th_diag">Diagnostic</span><span class="v"><code>${escapeHtml(job.diagnosticId ?? '—')}</code></span></div>
+    </div>
+  </div>
+</div>`
     : '';
-  const sflHtml = `${sfCard(svc.lastSuccess, 'ok', 'success')}${sfCard(svc.lastFailure, 'fail', 'failed')}`;
+  const lastSuccessHtml = sfBox(svc.lastSuccess, 'ok', 'ss_last_success', 'Last success', 'success');
+  const lastFailureHtml = sfBox(svc.lastFailure, 'fail', 'ss_last_failure', 'Last failure', 'failed');
+  const sflHtml = `${lastSuccessHtml}${lastFailureHtml}`;
 
   const body = `<div class="dashboard">
 <div class="page-header">
@@ -209,11 +227,13 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
   <div class="status-details">${statusDetails}</div>
 </div>
 <div class="sect">
-  <h3 data-i18n="ss_running_job">Current running job</h3>
-  <div class="twocol">${runningHtml}<div class="dcard"><div class="bd"><div class="subhead" data-i18n="ss_queued">Queued summaries</div>${queuedHtml}</div></div></div>
+  <div class="box-grid twocol">
+    ${activityBox('ss_running_job', 'Current running job', runningBody)}
+    ${activityBox('ss_queued', 'Queued', queuedBody)}
+  </div>
 </div>
-${sflHtml ? `<div class="sect"><h3 data-i18n="ss_last_sf">Last success / failure</h3><div class="sfl">${sflHtml}</div></div>` : ''}
-${Array.isArray(diagnostics) && diagnostics.length ? `<div class="sect"><h2 data-i18n="h2_diagnostics">Diagnostics</h2>${renderDiagnosticsList(diagnostics)}</div>` : ''}
+${sflHtml ? `<div class="sect"><div class="box-grid sfl">${sflHtml}</div></div>` : ''}
+${Array.isArray(diagnostics) && diagnostics.length ? `<div class="sect"><div class="box"><div class="box-header"><strong data-i18n="h2_diagnostics">Diagnostics</strong></div><div class="box-body">${renderDiagnosticsList(diagnostics)}</div></div></div>` : ''}
 </div>`;
   return renderLayout({ title: 'Status', active: 'dashboard', csrfToken, body, titleKey: 'page_dashboard', cspNonce });
 }
@@ -1021,7 +1041,7 @@ const I18N = {
     h2_service_status: 'Status', h2_overview: 'Service status', ss_uptime: 'Uptime', ss_started: 'Started', ss_version: 'Version', ss_config_revision: 'Config revision',
     ss_actual_port: 'Actual listening port', ss_configured_port: 'Configured port', ss_pending_port: 'Desired pending port',
     ss_storage_health: 'Storage writable/degraded', ss_storage_size: 'Storage size / budget', ss_last_retention: 'Last retention', ss_diag_counts: 'Corrupt/truncated diagnostics',
-    ss_running_job: 'Current running job', empty_running: 'No running job.', ss_queued: 'Queued summaries', ss_last_sf: 'Last success/failure',
+    ss_running_job: 'Current running job', empty_running: 'No running job.', ss_queued: 'Queued', ss_last_sf: 'Last success/failure', ss_last_success: 'Last success', ss_last_failure: 'Last failure', th_diag: 'Diagnostic',
     h2_metrics: 'Metrics and trends', m_dur_p50: 'Duration p50', m_dur_p95: 'Duration p95', m_qw_p50: 'Queue wait p50', m_qw_p95: 'Queue wait p95',
     m_avg_gen: 'Avg comments generated', m_avg_post: 'Avg comments posted', m_stale: 'Stale', m_skipped: 'Skipped', m_interrupted: 'Interrupted',
     m_fail_class: 'Failure classification', m_repo_rate: 'Repository success rate', m_daily_trend: 'Daily trend', empty_daily: 'No daily trend data.',
@@ -1059,7 +1079,7 @@ const I18N = {
     h2_service_status: '状态', h2_overview: '服务状态', ss_uptime: '运行时长', ss_started: '启动时间', ss_version: '版本', ss_config_revision: '配置版本',
     ss_actual_port: '实际监听端口', ss_configured_port: '配置端口', ss_pending_port: '待生效端口',
     ss_storage_health: '存储可写/降级', ss_storage_size: '存储用量 / 配额', ss_last_retention: '上次清理', ss_diag_counts: '损坏/截断的诊断',
-    ss_running_job: '当前运行中任务', empty_running: '无运行中任务。', ss_queued: '排队摘要', ss_last_sf: '上次成功/失败',
+    ss_running_job: '当前运行中任务', empty_running: '无运行中任务。', ss_queued: '排队中', ss_last_sf: '上次成功/失败', ss_last_success: '上次成功', ss_last_failure: '上次失败', th_diag: '诊断 ID',
     h2_metrics: '指标与趋势', m_dur_p50: '耗时 p50', m_dur_p95: '耗时 p95', m_qw_p50: '排队等待 p50', m_qw_p95: '排队等待 p95',
     m_avg_gen: '平均生成评论', m_avg_post: '平均发表评论', m_stale: '过期', m_skipped: '跳过', m_interrupted: '中断',
     m_fail_class: '失败分类', m_repo_rate: '仓库成功率', m_daily_trend: '每日趋势', empty_daily: '暂无每日趋势数据。',
@@ -1524,6 +1544,14 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .box-header strong { font-size: 14px; font-weight: 600; }
 .box-header-meta { font-size: 12px; }
 .box-body { padding: 12px 16px; }
+.box-grid { display: grid; gap: 16px; }
+.box-grid.twocol, .box-grid.sfl { grid-template-columns: 1fr 1fr; }
+.kv-list { display: grid; gap: 0; }
+.kv-list .kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.kv-list .kv:last-child { border-bottom: 0; padding-bottom: 0; }
+.kv-list .kv:first-child { padding-top: 0; }
+.kv-list .k { color: var(--muted); font-weight: 600; flex: none; }
+.kv-list .v { color: var(--text); text-align: right; word-break: break-word; }
 .box-footer { padding: 10px 16px; border-top: 1px solid var(--border); background: var(--surface); }
 .filter-body { background: var(--surface); border-bottom: 1px solid var(--border); }
 .gh-filter { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin: 0; padding: 0; background: transparent; border: 0; }
@@ -1672,7 +1700,7 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
 .dashboard .dpill.warn { background: var(--attention-subtle); color: var(--attention); border-color: var(--attention-border); }
 .dashboard .dpill.fail { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
 .dashboard .dpill.skip { background: var(--done-subtle); color: var(--done); }
-.dashboard .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.dashboard .twocol, .dashboard .box-grid.twocol, .dashboard .box-grid.sfl { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .dashboard .dcard { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-flat); }
 .dashboard .dcard .bd { padding: 14px 16px; }
 .dashboard .status-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
@@ -1722,7 +1750,7 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
 .dashboard .empty { color: var(--fg-muted); font-style: italic; font-size: 13px; }
 @media (max-width: 860px) {
   .dashboard .status-grid { grid-template-columns: repeat(2, 1fr); }
-  .dashboard .twocol, .dashboard .sfl { grid-template-columns: 1fr; }
+  .dashboard .twocol, .dashboard .sfl, .dashboard .box-grid.twocol, .dashboard .box-grid.sfl, .box-grid.twocol, .box-grid.sfl { grid-template-columns: 1fr; }
   .dashboard .metric-row, .metrics-page .metric-row { grid-template-columns: repeat(2, 1fr); }
 }
 
