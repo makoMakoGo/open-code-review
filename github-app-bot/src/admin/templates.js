@@ -84,7 +84,7 @@ ${fontLinks()}${themeInitScript(cspNonce)}<style>${baseStyles()}</style>
   </aside>
   <div class="main">
     <header class="topbar">
-      <div class="crumb"><span class="muted">ocr-admin</span><span class="sep" aria-hidden="true">/</span><b${titleAttr}>${escapeHtml(title)}</b></div>
+      <div class="crumb"><span class="muted">ocr-admin</span><span class="sep" aria-hidden="true">/</span><span class="crumb-current"${titleAttr}>${escapeHtml(title)}</span></div>
       <div class="topbar-actions">${togglesHtml()}${logoutForm}</div>
     </header>
     <main id="main" class="content" tabindex="-1"><h1 class="page-title"${titleAttr}>${escapeHtml(title)}</h1>${body}</main>
@@ -100,12 +100,11 @@ export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '
   const message = disabled
     ? `<p class="alert">${escapeHtml(disabledReason)}</p>`
     : error ? `<p class="alert">${escapeHtml(error)}</p>` : '';
-  const form = disabled ? '' : `<form method="post" action="/admin/login" class="login-box">
-<p class="login-prompt" data-i18n="login_prompt">// admin auth — enter password</p>
-<label for="password" data-i18n="label_password">password</label>
+  const form = disabled ? '' : `<form method="post" action="/admin/login" class="login-form">
+<label for="password" data-i18n="label_password">Password</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
 <input type="hidden" name="_csrf" value="${escapeAttribute(csrfToken)}">
-<button type="submit" class="primary" data-i18n="sign_in">[ sign in ]</button>
+<button type="submit" class="primary" data-i18n="sign_in">Sign in</button>
 </form>`;
   return `<!doctype html>
 <html lang="en">
@@ -115,13 +114,16 @@ export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '
 <title>Sign in · Open Code Review Admin</title>
 ${fontLinks()}${themeInitScript(cspNonce)}<style>${baseStyles()}</style>
 </head>
-<body>
-<main class="login">
-${togglesHtml()}
-<h1 class="login-head"><span class="mark">ocr</span>-admin<span class="cursor" aria-hidden="true">▍</span></h1>
-<p class="login-sub" data-i18n="login_sub">open code review · github app bot</p>
-${message}${form}
-</main>
+<body class="login-body">
+<div class="login-shell">
+  <div class="login-toolbar">${togglesHtml()}</div>
+  <main class="login-card">
+    <div class="login-brand"><span class="mark">ocr</span><span class="login-brand-name">ocr-admin</span></div>
+    <h1 class="login-title" data-i18n="login_title">Sign in</h1>
+    <p class="login-sub muted" data-i18n="login_sub">Open Code Review admin console</p>
+    ${message}${form}
+  </main>
+</div>
 ${bodyScript(cspNonce)}
 </body>
 </html>`;
@@ -197,10 +199,10 @@ export function renderDashboardPage({ csrfToken, summary = {}, recentJobs = [], 
   const sflHtml = `${sfCard(svc.lastSuccess, 'ok', 'success')}${sfCard(svc.lastFailure, 'fail', 'failed')}`;
 
   const body = `<div class="dashboard">
-<p class="page-desc muted" data-i18n="overview_page_desc">Service health, queue, and current activity.</p>
-<div class="page-toolbar page-toolbar--end">
-  <a class="bar-link" href="/admin/metrics" data-i18n="btn_view_metrics">Open metrics →</a>
- </div>
+<div class="page-header">
+  <p class="page-desc muted" data-i18n="overview_page_desc">Service health, queue, and current activity.</p>
+  <a class="page-header-link" href="/admin/metrics" data-i18n="btn_view_metrics">Open metrics →</a>
+</div>
 <div class="sect">
   <h2 class="vh" data-i18n="h2_overview">Service status</h2>
   <div class="status-grid">${tiles}</div>
@@ -256,19 +258,19 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
   const body = `<div class="metrics-page">
 <p class="page-desc muted" data-i18n="metrics_page_desc">Latency, comment volume, failure classification, and repository success trends.</p>
 <div class="metric-row">${metricTiles}</div>
-<div class="box" style="margin-top:16px">
+<div class="box">
   <div class="box-header"><strong data-i18n="th_window">Window</strong></div>
   <div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th></tr></thead><tbody>${windowRows}</tbody></table></div>
 </div>
-<div class="box" style="margin-top:16px">
+<div class="box">
   <div class="box-header"><strong data-i18n="m_fail_class">Failure classification</strong></div>
   <div class="box-body">${failureHtml}</div>
 </div>
-<div class="box" style="margin-top:16px">
+<div class="box">
   <div class="box-header"><strong data-i18n="m_repo_rate">Repository success rate</strong></div>
   <div class="box-body">${repoHtml}</div>
 </div>
-<div class="box" style="margin-top:16px">
+<div class="box">
   <div class="box-header"><strong data-i18n="m_daily_trend">Daily trend</strong></div>
   <div class="box-body">${dailyHtml}</div>
 </div>
@@ -393,15 +395,14 @@ export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/ad
 
   const rows = activeGroup.fields.map(renderSettingsField).join('');
   const body = `<div class="settings" data-config-editor data-settings-section="${escapeAttribute(activeId)}">
-  <div class="settings-head">
-    <div>
-      <p class="settings-sub muted"><span data-i18n="admin_storage_root">Admin storage root:</span> <code>${escapeHtml(adminRoot)}</code>
-      · <span data-i18n="revision">Revision:</span> <code>${escapeHtml(revision)}</code>
-      · <span data-i18n="config_field_total">fields</span> <code>${fields.length}</code>
-      · <span data-i18n="config_override_count">overrides</span> <code>${counts.overrides}</code>
-      · <span data-i18n="config_secret_count">secrets</span> <code>${counts.secrets}</code>
-      · <span data-i18n="config_restart_count">restart required</span> <code>${counts.restartRequired}</code></p>
-    </div>
+  <p class="page-desc muted" data-i18n="config_page_desc">Runtime configuration with audit trail. High-risk fields require confirmation.</p>
+  <div class="settings-meta muted">
+    <span><span data-i18n="admin_storage_root">Storage</span> <code>${escapeHtml(adminRoot)}</code></span>
+    <span><span data-i18n="revision">Revision</span> <code>${escapeHtml(revision)}</code></span>
+    <span><span data-i18n="config_field_total">fields</span> <code>${fields.length}</code></span>
+    <span><span data-i18n="config_override_count">overrides</span> <code>${counts.overrides}</code></span>
+    <span><span data-i18n="config_secret_count">secrets</span> <code>${counts.secrets}</code></span>
+    <span><span data-i18n="config_restart_count">restart required</span> <code>${counts.restartRequired}</code></span>
   </div>
   ${flashHtml}${pendingHtml}
   <div class="settings-layout">
@@ -413,14 +414,15 @@ export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/ad
         <input type="hidden" name="section" value="${escapeAttribute(activeId)}">
         <header class="settings-panel-head">
           <div>
+            <h2 class="settings-panel-title" data-i18n="${escapeAttribute(activeGroup.labelKey)}">${escapeHtml(activeGroup.label)}</h2>
             <p class="muted settings-panel-desc" data-i18n="${escapeAttribute(activeGroup.descriptionKey || '')}">${escapeHtml(activeGroup.description || '')}</p>
-            <p class="muted settings-panel-count"><span class="settings-count">${activeGroup.fields.length}</span> <span data-i18n="config_field_total">fields</span></p>
           </div>
-          <button type="submit" class="primary" data-i18n="btn_save_config">save configuration</button>
+          <button type="submit" class="primary" data-i18n="btn_save_config">Save changes</button>
         </header>
         <div class="settings-list" data-config-group="${escapeAttribute(activeId)}" id="config-group-${escapeAttribute(activeId)}">${rows || '<p class="empty" data-i18n="config_no_matches">No matching configuration fields.</p>'}</div>
         <footer class="settings-panel-foot">
-          <button type="submit" class="primary" data-i18n="btn_save_config">save configuration</button>
+          <span class="muted settings-panel-count"><span class="settings-count">${activeGroup.fields.length}</span> <span data-i18n="config_field_total">fields</span></span>
+          <button type="submit" class="primary" data-i18n="btn_save_config">Save changes</button>
         </footer>
       </form>
     </section>
@@ -475,35 +477,6 @@ function summarizeConfigFieldCounts(fields) {
   };
 }
 
-function renderConfigGroupSection(group) {
-  const rows = group.fields.map(renderConfigEditorRow).join('');
-  return `<section class="config-group" id="config-group-${escapeAttribute(group.id)}" data-config-group="${escapeAttribute(group.id)}">
-  <header class="config-group-head">
-    <h3 data-i18n="${escapeAttribute(group.labelKey)}">${escapeHtml(group.label)}</h3>
-    <span class="config-count" data-config-count="${escapeAttribute(group.id)}">${group.fields.length}</span>
-  </header>
-  <div class="table-scroll">
-    <table class="config-table">
-      <thead><tr><th data-i18n="th_field">Field</th><th data-i18n="th_effective">Effective value</th><th data-i18n="th_edit">Edit</th><th data-i18n="th_state">State</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  </div>
-</section>`;
-}
-
-function renderConfigEditorRow(field) {
-  const envKey = field.envKey ?? field.name ?? '';
-  const label = field.label ?? envKey;
-  const description = field.description ?? '';
-  const searchText = [label, envKey, description].join(' ').toLowerCase();
-  const flags = [
-    field.secret ? 'secret' : '',
-    field.highRisk ? 'highRisk' : '',
-    field.restartRequired || field.pendingRestart ? 'restart' : '',
-    field.overridden ? 'override' : '',
-  ].filter(Boolean).join(' ');
-  return `<tr id="config-field-${escapeAttribute(envKey)}" data-config-row data-env-key="${escapeAttribute(envKey)}" data-group="${escapeAttribute(field.group || 'service')}" data-search="${escapeAttribute(searchText)}" data-flags="${escapeAttribute(flags)}"><th scope="row" id="config-label-${escapeAttribute(envKey)}"><strong>${escapeHtml(label)}</strong><br><code>${escapeHtml(envKey)}</code>${description ? `<p class="muted config-desc">${escapeHtml(description)}</p>` : ''}</th><td>${renderConfigFieldValue(field)}</td><td>${renderConfigEditorControl(field)}</td><td>${renderConfigBadges(field)}${renderConfigReset(field)}${renderHighRiskConfirm(field)}</td></tr>`;
-}
 
 function renderConfigFieldValue(field) {
   if (field.envKey === 'ADMIN_PASSWORD') return renderAdminPasswordFieldValue(field);
@@ -1020,16 +993,6 @@ function numberOrDash(value) {
   return Number.isFinite(value) ? String(value) : '—';
 }
 
-function statusDot(status) {
-  const normalized = String(status ?? '').toLowerCase();
-  let kind = 'idle';
-  if (normalized === 'succeeded') kind = 'ok';
-  else if (normalized === 'succeeded_with_warnings') kind = 'warn';
-  else if (normalized === 'running') kind = 'run';
-  else if (normalized === 'failed') kind = 'fail';
-  else if (normalized === 'queued') kind = 'queued';
-  return `<span class="dot dot--${kind}" aria-hidden="true"></span>`;
-}
 function jobStatusTone(status) {
   const s = String(status ?? '').toLowerCase();
   if (s === 'succeeded') return { tone: 'ok', dot: 'ok', label: 'success' };
@@ -1050,9 +1013,9 @@ const I18N = {
     nav_dashboard: 'Status', nav_jobs: 'Jobs', nav_metrics: 'Metrics', nav_config: 'Settings', nav_brand_tag: 'self-hosted', nav_side_foot: 'Open Code Review', signout: 'Sign out',
     toggle_theme: 'Toggle theme', toggle_theme_dark: 'Switch to dark theme', toggle_theme_light: 'Switch to light theme',
     toggle_lang: 'Switch language', toggle_lang_en: 'Switch to English', toggle_lang_zh: 'Switch to Chinese',
-    page_dashboard: 'Status', page_jobs: 'Jobs', page_metrics: 'Metrics', page_config: 'Settings', jobs_page_desc: 'Review queue history, filter failures, and open job detail logs.', overview_page_desc: 'Service health, queue, and current activity.', metrics_page_desc: 'Latency, comment volume, failure classification, and repository success trends.', btn_view_metrics: 'Open metrics →',
-    login_sub: 'open code review · github app bot', login_prompt: '// admin auth — enter password',
-    label_password: 'password', sign_in: '[ sign in ]',
+    page_dashboard: 'Status', page_jobs: 'Jobs', page_metrics: 'Metrics', page_config: 'Settings', jobs_page_desc: 'Review queue history, filter failures, and open job detail logs.', overview_page_desc: 'Service health, queue, and current activity.', metrics_page_desc: 'Latency, comment volume, failure classification, and repository success trends.', config_page_desc: 'Runtime configuration with audit trail. High-risk fields require confirmation.', btn_view_metrics: 'Open metrics →',
+    login_title: 'Sign in', login_sub: 'Open Code Review admin console', login_prompt: 'Enter the admin password',
+    label_password: 'Password', sign_in: 'Sign in',
     strip_queued: 'Queued', strip_running: 'Running', strip_succeeded: 'Succeeded', strip_warnings: 'Warnings', strip_failed: 'Failed',
     h2_diagnostics: 'Diagnostics', empty_jobs: 'No jobs found.', empty_diagnostics: 'No diagnostics.',
     h2_service_status: 'Status', h2_overview: 'Service status', ss_uptime: 'Uptime', ss_started: 'Started', ss_version: 'Version', ss_config_revision: 'Config revision',
@@ -1073,8 +1036,8 @@ const I18N = {
     jd_generated: 'Generated', jd_selected: 'Selected', jd_posted: 'Posted', jd_omitted: 'Omitted', jd_warnings_count: 'Warnings',
     empty_none: 'None.', empty_runtime: 'No runtime settings.', empty_phase_timeline: 'No phase timeline.', empty_logs: 'No retained logs.',
     th_time: 'Time', th_event: 'Event', th_phase: 'Phase', th_message: 'Message', th_source: 'Source', th_level: 'Level', th_fields: 'Fields',
-    h2_configuration: 'Configuration', admin_storage_root: 'Admin storage root:', revision: 'Revision:', h2_edit_config: 'Edit configuration',
-    th_field: 'Field', th_effective: 'Effective value', th_edit: 'Edit', th_state: 'State', btn_save_config: 'save configuration',
+    h2_configuration: 'Configuration', admin_storage_root: 'Storage', revision: 'Revision', h2_edit_config: 'Edit configuration',
+    th_field: 'Field', th_effective: 'Effective value', th_edit: 'Edit', th_state: 'State', btn_save_config: 'Save changes',
     keep_secret: 'Keep current secret', clear_secret: 'Clear secret', replace_with: 'Replace with', reset_override: 'Reset override', confirm_high_risk: 'Confirm high-risk change',
     not_editable: 'Not editable from dashboard.', secret_set: 'secret set', not_set: 'not set', admin_dashboard_enabled: 'dashboard enabled', admin_dashboard_disabled: 'dashboard disabled',
     config_group_service: 'Service', config_group_access: 'Triggers & Access', config_group_github: 'GitHub App', config_group_ocr: 'OCR Engine', config_group_proxy: 'LLM Proxy', config_group_admin: 'Admin Dashboard', config_group_retention: 'Retention & Storage', config_group_service_desc: 'Core runtime process, ports, and workdir behavior.', config_group_access_desc: 'Who can trigger reviews and which repositories are allowed.', config_group_github_desc: 'GitHub App identity, private key path, and webhook secret.', config_group_ocr_desc: 'OpenCodeReview provider endpoint, model, and concurrency.', config_group_proxy_desc: 'Internal LLM proxy routing and upstream authentication.', config_group_admin_desc: 'Dashboard access, host allowlist, cookies, and data root.', config_group_retention_desc: 'How long jobs, logs, stats, and audits are kept.',
@@ -1088,9 +1051,9 @@ const I18N = {
     nav_dashboard: '状态', nav_jobs: '任务', nav_metrics: '指标', nav_config: '设置', nav_brand_tag: '自托管', nav_side_foot: 'Open Code Review', signout: '退出',
     toggle_theme: '切换主题', toggle_theme_dark: '切换到深色主题', toggle_theme_light: '切换到浅色主题',
     toggle_lang: '切换语言', toggle_lang_en: '切换到英文', toggle_lang_zh: '切换到中文',
-    page_dashboard: '状态', page_jobs: '任务', page_metrics: '指标', page_config: '设置', metrics_page_desc: '耗时、评论量、失败分类与仓库成功率趋势。', btn_view_metrics: '打开指标 →', jobs_page_desc: '查看任务历史、筛选失败并打开任务日志。', overview_page_desc: '服务健康、队列与当前动态。',
-    login_sub: 'open code review · github app 机器人', login_prompt: '// 管理员认证 — 输入密码',
-    label_password: '密码', sign_in: '[ 登录 ]',
+    page_dashboard: '状态', page_jobs: '任务', page_metrics: '指标', page_config: '设置', metrics_page_desc: '耗时、评论量、失败分类与仓库成功率趋势。', btn_view_metrics: '打开指标 →', jobs_page_desc: '查看任务历史、筛选失败并打开任务日志。', overview_page_desc: '服务健康、队列与当前动态。', config_page_desc: '运行时配置带审计记录。高风险字段需确认。',
+    login_title: '登录', login_sub: 'Open Code Review 管理控制台', login_prompt: '输入管理员密码',
+    label_password: '密码', sign_in: '登录',
     strip_queued: '排队', strip_running: '运行中', strip_succeeded: '成功', strip_warnings: '带警告', strip_failed: '失败',
     h2_diagnostics: '诊断', empty_jobs: '暂无任务。', empty_diagnostics: '暂无诊断。',
     h2_service_status: '状态', h2_overview: '服务状态', ss_uptime: '运行时长', ss_started: '启动时间', ss_version: '版本', ss_config_revision: '配置版本',
@@ -1111,8 +1074,8 @@ const I18N = {
     jd_generated: '已生成', jd_selected: '已选中', jd_posted: '已发表', jd_omitted: '已省略', jd_warnings_count: '警告',
     empty_none: '无。', empty_runtime: '无运行时设置。', empty_phase_timeline: '无阶段时间线。', empty_logs: '无保留日志。',
     th_time: '时间', th_event: '事件', th_phase: '阶段', th_message: '消息', th_source: '来源', th_level: '级别', th_fields: '字段',
-    h2_configuration: '配置', admin_storage_root: '管理存储根目录：', revision: '版本：', h2_edit_config: '编辑配置',
-    th_field: '字段', th_effective: '生效值', th_edit: '编辑', th_state: '状态', btn_save_config: '保存配置',
+    h2_configuration: '配置', admin_storage_root: '存储', revision: '版本', h2_edit_config: '编辑配置',
+    th_field: '字段', th_effective: '生效值', th_edit: '编辑', th_state: '状态', btn_save_config: '保存更改',
     keep_secret: '保留当前密钥', clear_secret: '清除密钥', replace_with: '替换为', reset_override: '重置覆盖', confirm_high_risk: '确认高风险变更',
     not_editable: '控制台不可编辑。', secret_set: '密钥已设', not_set: '未设置', admin_dashboard_enabled: '控制台已启用', admin_dashboard_disabled: '控制台已禁用',
     config_group_service: '服务', config_group_access: '触发与权限', config_group_github: 'GitHub App', config_group_ocr: 'OCR 引擎', config_group_proxy: 'LLM 代理', config_group_admin: '管理控制台', config_group_retention: '保留与存储', config_group_service_desc: '核心运行时、端口与工作目录行为。', config_group_access_desc: '谁可以触发审查，以及允许哪些仓库。', config_group_github_desc: 'GitHub App 身份、私钥路径与 webhook 密钥。', config_group_ocr_desc: 'OpenCodeReview 供应商地址、模型与并发。', config_group_proxy_desc: '内部 LLM 代理路由与上游鉴权。', config_group_admin_desc: '控制台访问、Host 白名单、Cookie 与数据目录。', config_group_retention_desc: '任务、日志、统计与审计的保留时长。',
@@ -1176,7 +1139,7 @@ function baseStyles() {
   --primary-bg: #1f883d; --primary-bg-hover: #1a7f37;
   --brand-gradient: var(--cyan);
   /* radii, motion, elevation — Primer-ish */
-  --radius: 12px; --radius-sm: 6px; --radius-pill: 999px;
+  --radius: 6px; --radius-sm: 6px; --radius-pill: 999px;
   --lift-1: 1px; --lift-2: 2px;
   --t-fast: 120ms; --t-med: 160ms; --t-slow: 220ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
@@ -1229,7 +1192,7 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
 .skip-link { position: absolute; left: -9999px; top: 0; z-index: 100; background: var(--accent); color: #04121b; padding: 0.65rem 1.1rem; border-radius: var(--radius-sm); font-weight: 600; font-size: 13px; box-shadow: var(--shadow-pop); }
 .skip-link:focus { left: 1rem; top: 1rem; }
 .vh { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-@media (pointer: coarse) { button, .toggle-btn, .signout button, .chip, nav.pagination a, .filter-reset, .login-box button { min-height: 44px; } }
+@media (pointer: coarse) { button, .toggle-btn, .signout button, .chip, nav.pagination a, .filter-reset, .login-form button { min-height: 44px; } }
 
 .app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
 .side {
@@ -1271,10 +1234,10 @@ header.topbar {
   position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 16px;
   padding: 12px 28px; background: var(--bg); border-bottom: 1px solid var(--border);
 }
-.topbar .crumb { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.topbar .crumb { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
 .topbar .crumb .muted { color: var(--muted); }
 .topbar .crumb .sep { color: var(--faint); }
-.topbar .crumb b { font-weight: 650; }
+.topbar .crumb .crumb-current { color: var(--text); font-weight: 600; }
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .toggles { display: inline-flex; align-items: center; gap: 8px; }
 .toggle-btn, .signout button {
@@ -1290,9 +1253,9 @@ header.topbar {
 }
 .signout { margin: 0; }
 .signout button:hover { color: var(--danger); border-color: var(--danger-border); background: var(--danger-subtle); }
-h1.page-title { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 8px; color: var(--text); }
+h1.page-title { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 4px; color: var(--text); line-height: 1.25; }
 
-.content { padding: 24px 28px 56px; max-width: 1180px; width: 100%; }
+.content { padding: 24px 32px 64px; max-width: 1216px; width: 100%; }
 main.centered { max-width: 500px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; }
 .back { margin: 0 0 1.5rem; }
 .back a { color: var(--muted); font-weight: 500; padding: 0.4rem 0.8rem; background: var(--surface); border-radius: var(--radius-sm); border: 1px solid var(--border); transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
@@ -1354,14 +1317,10 @@ tbody tr { transition: background var(--t-fast) var(--ease); }
 tbody tr:hover { background: var(--surface); }
 tbody tr:last-child td { border-bottom: 0; }
 
-.status { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.75rem; border-radius: var(--radius-pill); background: var(--surface-2); border: 1px solid var(--border); font-size: 12px; font-weight: 500; }
-.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); box-shadow: 0 0 0 2px var(--bg); }
-.dot--ok { background: var(--ok); box-shadow: 0 0 0 2px var(--bg), 0 0 10px var(--green-glow); }
-.dot--warn { background: var(--warn); box-shadow: 0 0 0 2px var(--bg), 0 0 10px var(--amber-glow); }
-.dot--run { background: var(--run); box-shadow: 0 0 0 2px var(--bg), 0 0 10px var(--cyan-glow); animation: pulse 1.5s infinite; }
-.dot--fail { background: var(--fail); box-shadow: 0 0 0 2px var(--bg), 0 0 10px var(--red-glow); }
-
-@keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 2px var(--bg), 0 0 0 0 var(--cyan-glow); } 70% { transform: scale(1); box-shadow: 0 0 0 2px var(--bg), 0 0 0 6px rgba(0, 0, 0, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 2px var(--bg), 0 0 0 0 rgba(0, 0, 0, 0); } }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
 
 button, input, select { font-family: var(--font-sans); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 13.5px; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
 button { cursor: pointer; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; }
@@ -1418,9 +1377,10 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 
 /* GitHub-style settings */
 .settings { display: grid; gap: 16px; }
-.settings-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.settings-title { margin: 0 0 6px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
-.settings-sub { margin: 0; font-size: 13px; line-height: 1.5; }
+.settings-meta {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; margin: -4px 0 4px; font-size: 12px; align-items: center;
+}
+.settings-meta code { font-size: 11px; padding: 0.1em 0.35em; }
 .settings-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
 .settings-subnav { position: sticky; top: 4.5rem; display: grid; gap: 2px; }
 .settings-subnav-link {
@@ -1441,12 +1401,12 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 }
 .settings-panel-head, .settings-panel-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 14px 16px; background: var(--bg);
+  padding: 16px; background: var(--bg);
 }
-.settings-panel-head { border-bottom: 1px solid var(--border); }
+.settings-panel-head { border-bottom: 1px solid var(--border); align-items: flex-start; }
 .settings-panel-foot { border-top: 1px solid var(--border); }
-.settings-panel-head h3 { margin: 0; font-size: 16px; font-weight: 650; }
-.settings-panel-count { margin: 4px 0 0; font-size: 12px; }
+.settings-panel-title { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.settings-panel-count { margin: 0; font-size: 12px; }
 .settings-list { display: grid; }
 .settings-item { padding: 16px; border-bottom: 1px solid var(--border); }
 .settings-item:last-child { border-bottom: 0; }
@@ -1480,17 +1440,29 @@ nav.pagination a:hover { border-color: var(--accent); color: var(--accent); back
 nav.pagination span { font-size: 13px; color: var(--muted); }
 nav.pagination span[aria-disabled=true] { opacity: 0.5; }
 
-main.login { max-width: 440px; margin: 10vh auto; padding: 0 1.5rem; perspective: 1000px; }
-.login-head { font-size: 2.25rem; font-weight: 800; text-align: center; margin-bottom: 0.5rem; color: var(--text); }
-.login-head .mark { color: var(--accent); }
-.login-head .cursor { color: var(--accent); animation: blink 1.2s steps(2, start) infinite; display: inline-block; }
-.login-sub { text-align: center; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 2.5rem; font-weight: 600; }
-.login-box { display: grid; gap: 1.2rem; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 2.5rem; box-shadow: var(--shadow-pop); }
-.login-box .login-prompt { margin: 0; color: var(--muted); font-size: 12px; font-weight: 500; text-align: center; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.08em; }
-.login-box label { color: var(--text); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
-.login-box input { width: 100%; padding: 0.75rem 1rem; background: var(--bg); border: 1px solid var(--border); font-size: 15px; border-radius: var(--radius-sm); transition: border-color var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease); }
-.login-box input:focus { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
-.login-box button { width: 100%; padding: 0.8rem; font-size: 14px; margin-top: 0.5rem; border-radius: var(--radius-sm); justify-self: stretch; }
+.login-body { min-height: 100vh; background: var(--bg-subtle); }
+.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 32px 16px 48px; }
+.login-toolbar { position: absolute; top: 16px; right: 16px; }
+.login-card {
+  width: min(100%, 360px); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 12px; padding: 28px 28px 24px; box-shadow: var(--shadow-flat);
+}
+.login-brand { display: flex; align-items: center; gap: 10px; margin: 0 0 18px; }
+.login-brand .mark {
+  width: 28px; height: 28px; border-radius: 7px; background: var(--text); color: #fff;
+  display: grid; place-items: center; font-weight: 700; font-size: 13px;
+}
+.login-brand-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.login-title { margin: 0 0 4px; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+.login-sub { margin: 0 0 20px; font-size: 14px; }
+.login-form { display: grid; gap: 8px; }
+.login-form label { font-size: 14px; font-weight: 600; color: var(--text); }
+.login-form input {
+  width: 100%; min-height: 32px; padding: 5px 12px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px;
+}
+.login-form input:focus { border-color: var(--accent); outline: 2px solid var(--accent-subtle); outline-offset: -1px; }
+.login-form button.primary { width: 100%; margin-top: 8px; justify-self: stretch; }
 
 main > *:first-child { margin-top: 0; }
 
@@ -1507,8 +1479,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 
 .toggles { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
 .toggle-btn { font-size: 13px; font-weight: 600; min-width: 36px; padding: 0.4rem 0.55rem; line-height: 1; }
-.toggle-btn:hover { color: var(--accent); border-color: var(--accent); transform: translateY(calc(-1 * var(--lift-1))); }
-.login .toggles { justify-content: center; margin: 0 auto 1.5rem; }
+.toggle-btn:hover { color: var(--accent); border-color: var(--accent); transform: none; }
 
 /* Tablet: tighten the topbar so brand + nav + actions stay on one row. */
 @media (max-width: 1024px) {
@@ -1542,10 +1513,13 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 
 
 /* Primer polish */
-.page-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 0 0 16px; }
-.page-toolbar--end { justify-content: flex-end; }
-.page-desc { margin: 0 0 16px; font-size: 14px; max-width: 62ch; }
-.box { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); box-shadow: var(--shadow-flat); overflow: hidden; margin-bottom: 16px; }
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 0 0 16px; }
+.page-header-link { flex: none; margin-top: 2px; font-size: 13px; font-weight: 500; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.page-header-link:hover { text-decoration: underline; }
+.page-desc { margin: 0; font-size: 14px; max-width: 62ch; line-height: 1.5; color: var(--muted); }
+.metrics-page, .jobs-page { display: grid; gap: 16px; }
+.metrics-page > .page-desc, .jobs-page > .page-desc { margin: 0; }
+.box { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); box-shadow: var(--shadow-flat); overflow: hidden; margin: 0; }
 .box-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg); }
 .box-header strong { font-size: 14px; font-weight: 600; }
 .box-header-meta { font-size: 12px; }
@@ -1603,13 +1577,13 @@ button { background: var(--surface); border: 1px solid var(--btn-border); min-he
 button:hover { transform: none; box-shadow: none; background: var(--surface-2); border-color: var(--border-bright); }
 .dashboard .status-grid { margin-bottom: 12px; }
 .dashboard .sect { margin-top: 24px; }
-.dashboard .sect:first-child { margin-top: 8px; }
-.dashboard .sect > h2 { font-size: 16px; font-weight: 650; margin: 0 0 12px; letter-spacing: -0.01em; text-transform: none; }
-.dashboard .sect > h3 { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 10px; }
+.dashboard .sect:first-child { margin-top: 0; }
+.dashboard .sect > h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; letter-spacing: -0.01em; text-transform: none; }
+.dashboard .sect > h3 { font-size: 14px; font-weight: 600; text-transform: none; letter-spacing: -0.01em; color: var(--text); margin: 0 0 10px; }
 .dashboard .metric-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.settings-title { font-size: 20px; }
-.settings-panel-head .primary, .settings-panel-foot .primary { min-width: 148px; }
-.settings-item:hover { background: #fcfcfd; }
+.settings-panel-head .primary, .settings-panel-foot .primary { min-width: 132px; }
+.settings-item:hover { background: var(--bg-subtle); }
+.settings-panel-desc { margin: 4px 0 0; font-size: 13px; line-height: 1.45; max-width: 62ch; }
 .pill { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 500; padding: 2px 8px; margin: 0 4px 4px 0; }
 .card { box-shadow: var(--shadow-flat); }
 .inline { background: transparent; border: 0; padding: 0; margin: 0; }
@@ -1677,7 +1651,6 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
   --shadow-pop: 0 6px 16px rgba(0, 0, 0, 0.45);
 }
 
-.dot--queued { background: var(--muted); }
 .muted { color: var(--muted); }
 .field-meta { margin-bottom: 0.5rem; }
 /* ===== Dashboard — probe design system, scoped under .dashboard ===== */
@@ -1700,11 +1673,11 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
 .dashboard .dpill.fail { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
 .dashboard .dpill.skip { background: var(--done-subtle); color: var(--done); }
 .dashboard .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.dashboard .dcard { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-flat); }
+.dashboard .dcard { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-flat); }
 .dashboard .dcard .bd { padding: 14px 16px; }
 .dashboard .status-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
-.dashboard .status-group { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-flat); }
-.dashboard .status-group-label { padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); }
+.dashboard .status-group { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-flat); }
+.dashboard .status-group-label { padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; font-weight: 600; color: var(--fg-muted); }
 .dashboard .status-group .kv { padding: 7px 14px; }
 .dashboard .dcard .hd { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg); font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .dashboard .subhead { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
