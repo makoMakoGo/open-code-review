@@ -980,25 +980,33 @@ test('metrics repository table keeps numeric columns content-sized and right-ali
           'makoMakoGo/oh-my-pi-coding-agent-with-a-very-long-name': { jobs: 1, successRate: 1 },
           'alice/monorepo': { jobs: 3, successRate: 0.5 },
         },
-        failureKinds: {},
+        failureKinds: { provider_unavailable: 2 },
       },
-      windows: {},
-      dailyTrend: [],
+      windows: {
+        '24h': { jobs: 1, successRate: 1, durationP50Ms: 1, durationP95Ms: 1, queueWaitP50Ms: 1, queueWaitP95Ms: 1, averageCommentsGenerated: 1, averageCommentsPosted: 1 },
+      },
+      dailyTrend: [
+        { day: '2026-07-05', jobs: 2, successRate: 1, averageCommentsGenerated: 3, averageCommentsPosted: 2, stale: 0, skipped: 0, interrupted: 0 },
+      ],
     },
   });
   const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
-  assert.match(markup, /class="gh-table metrics-table"/);
   assert.match(markup, /data-i18n="th_repository">Repository</);
 
-  const metricsCss = html.match(/\/\* Metrics summary[\s\S]*?\.empty-state/)?.[0] ?? '';
+  // Compact only for narrow summary tables; wide window/daily stay full-width metrics tables.
+  assert.match(markup, /class="gh-table metrics-table metrics-table--compact"[\s\S]*?data-i18n="m_fail_class"/);
+  assert.match(markup, /class="gh-table metrics-table metrics-table--compact"[\s\S]*?data-i18n="th_repository"/);
+  assert.match(markup, /class="gh-table metrics-table"><thead><tr><th data-i18n="th_window"/);
+  assert.match(markup, /class="gh-table metrics-table"><thead><tr><th data-i18n="th_day"/);
+  assert.equal((markup.match(/class="gh-table metrics-table metrics-table--compact"/g) || []).length, 2);
+
+  const metricsCss = html.match(/\/\* Metrics[\s\S]*?\.empty-state/)?.[0] ?? '';
   assert.ok(metricsCss, 'expected metrics table CSS block');
-  // width:auto still fills the box; fit-content shrink-wraps. width:1% dumps free space into the label col.
-  assert.match(metricsCss, /\.metrics-table\s*\{[^}]*width:\s*fit-content;[^}]*max-width:\s*100%;/);
-  assert.match(metricsCss, /\.metrics-table thead th:not\(:first-child\),\s*\.metrics-table td\s*\{[\s\S]*?text-align:\s*right;/);
+  assert.match(metricsCss, /\.gh-table\.metrics-table--compact\s*\{[^}]*width:\s*fit-content;[^}]*max-width:\s*100%;/);
+  assert.match(metricsCss, /\.metrics-table thead th:not\(:first-child\),\s*\.metrics-table td\s*\{[\s\S]*?width:\s*1%;[\s\S]*?text-align:\s*right;/);
   assert.match(metricsCss, /\.metrics-table th\[scope="row"\]\s*\{[\s\S]*?text-overflow:\s*ellipsis;/);
   assert.match(metricsCss, /\.metrics-table th\[scope="row"\]\s*\{[\s\S]*?max-width:\s*28rem;/);
-  assert.doesNotMatch(metricsCss, /width:\s*1%;/);
-  assert.doesNotMatch(metricsCss, /(?<!max-)width:\s*100%;/);
+  assert.doesNotMatch(metricsCss, /\.metrics-table\s*\{\s*width:\s*fit-content/);
   assert.doesNotMatch(html, /\.gh-table th:nth-child\(3\)/);
 });
 test('Status last-completed cards compact diagnostic and job ids', () => {

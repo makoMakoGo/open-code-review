@@ -287,12 +287,12 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
 
   const failureKinds = Object.entries(total.failureKinds || {});
   const failureHtml = failureKinds.length
-    ? `<div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="th_jobs">Jobs</th></tr></thead><tbody>${failureKinds.map(([kind, count]) => `<tr><th scope="row">${safeDisplay(kind)}</th><td>${safeDisplay(count)}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table metrics-table--compact"><thead><tr><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="th_jobs">Jobs</th></tr></thead><tbody>${failureKinds.map(([kind, count]) => `<tr><th scope="row">${safeDisplay(kind)}</th><td>${safeDisplay(count)}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_none">None.</p>';
 
   const repos = Object.entries(total.repositories || {});
   const repoHtml = repos.length
-    ? `<div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="th_repository">Repository</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th></tr></thead><tbody>${repos.map(([name, info]) => `<tr><th scope="row" title="${escapeAttribute(name)}">${safeDisplay(name)}</th><td>${safeDisplay(info.jobs)}</td><td>${safeDisplay(formatPercent(info.successRate))}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table metrics-table--compact"><thead><tr><th data-i18n="th_repository">Repository</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th></tr></thead><tbody>${repos.map(([name, info]) => `<tr><th scope="row" title="${escapeAttribute(name)}">${safeDisplay(name)}</th><td>${safeDisplay(info.jobs)}</td><td>${safeDisplay(formatPercent(info.successRate))}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_none">None.</p>';
 
   const daily = Array.isArray(mstats.dailyTrend) ? mstats.dailyTrend : [];
@@ -1567,11 +1567,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   text-overflow: ellipsis;
   font-weight: 500;
 }
-/* Metrics summary: width:auto still fills the box; fit-content shrink-wraps. No width:1% (that dumps free space into the label column). */
-.metrics-table {
-  width: fit-content;
-  max-width: 100%;
-}
+/* Metrics: label caps/ellipsizes; numeric columns hug and right-align. */
 .metrics-table thead th:first-child,
 .metrics-table th[scope="row"] {
   max-width: 28rem;
@@ -1582,9 +1578,15 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 }
 .metrics-table thead th:not(:first-child),
 .metrics-table td {
+  width: 1%;
   white-space: nowrap;
   text-align: right;
   padding-left: 1.25rem;
+}
+/* Narrow summary tables only: width:auto still fills the box; fit-content packs columns. */
+.gh-table.metrics-table--compact {
+  width: fit-content;
+  max-width: 100%;
 }
 .empty-state { padding: 28px 16px; text-align: center; color: var(--muted); font-style: normal; }
 .jobs-page .tablewrap { margin-bottom: 16px; }
