@@ -1481,9 +1481,6 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .danger { color: var(--fail); }
 .nowrap { display: block; white-space: nowrap; margin-top: 0.35rem; }
 
-.toggles { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
-.toggle-btn { font-size: 13px; font-weight: 600; min-width: 36px; padding: 0.4rem 0.55rem; line-height: 1; }
-.toggle-btn:hover { color: var(--accent); border-color: var(--accent); transform: none; }
 
 /* Tablet: tighten the topbar so brand + nav + actions stay on one row. */
 @media (max-width: 1024px) {

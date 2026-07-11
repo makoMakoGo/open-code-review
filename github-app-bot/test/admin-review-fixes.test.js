@@ -1417,6 +1417,29 @@ test('advanced and login focus rules use the solid accent ring', () => {
   assert.match(html, /\.login-form input:focus \{[^}]*outline: 2px solid var\(--accent\);[^}]*outline-offset: 2px;/);
 });
 
+test('theme language toggles keep one neutral Primer style cascade', () => {
+  const html = renderDashboardPage({ csrfToken: 'csrf', summary: {}, diagnostics: [], serviceStatus: null });
+  const style = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '';
+  assert.ok(style, 'expected embedded admin stylesheet');
+
+  assert.match(
+    style,
+    /\.toggle-btn,\s*\.signout button\s*\{[\s\S]*?font-weight:\s*500;[\s\S]*?padding:\s*5px 12px;/,
+    'toggle base style should use the Primer control chrome',
+  );
+  assert.match(
+    style,
+    /\.toggle-btn:hover,\s*\.signout button:hover\s*\{[\s\S]*?background:\s*var\(--surface-2\);[\s\S]*?border-color:\s*var\(--border-bright\);[\s\S]*?color:\s*var\(--text\);/,
+    'toggle hover should stay neutral surface chrome',
+  );
+  assert.match(style, /\.toggles\s*\{\s*display:\s*inline-flex;\s*align-items:\s*center;\s*gap:\s*8px;\s*\}/);
+
+  // Later same-specificity rules would override the Primer-light intent above.
+  assert.doesNotMatch(style, /\.toggle-btn:hover\s*\{\s*color:\s*var\(--accent\);/);
+  assert.doesNotMatch(style, /\.toggles\s*\{\s*display:\s*flex;\s*gap:\s*0\.4rem;/);
+  assert.doesNotMatch(style, /\.toggle-btn\s*\{\s*font-size:\s*13px;\s*font-weight:\s*600;/);
+});
+
 test('dark status pill text meets WCAG AA on page and hover surfaces', () => {
   const html = renderDashboardPage({ csrfToken: 'csrf', summary: {}, diagnostics: [], serviceStatus: null });
   const rootBlock = html.match(/:root \{([\s\S]*?)\n\}/)?.[1];
