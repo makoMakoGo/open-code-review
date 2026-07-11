@@ -1116,7 +1116,7 @@ function baseStyles() {
   --success: var(--green); --success-subtle: #dafbe1; --success-border: rgba(26, 127, 55, .35);
   --attention: var(--amber); --attention-subtle: #fff8c5; --attention-border: rgba(154, 103, 0, .35);
   --danger: var(--red); --danger-subtle: #ffebe9; --danger-border: rgba(207, 34, 46, .35);
-  --done: #8250df; --done-subtle: #fbefff;
+  --done: #8250df; --done-subtle: #fbefff; --done-border: rgba(130, 80, 223, 0.35);
   --neutral-fg: var(--muted); --neutral-subtle: #eaeef2;
   --btn-border: rgba(31, 35, 40, .15);
   --r: var(--radius-sm); --r-lg: var(--radius);
@@ -1322,10 +1322,10 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 .dpill .dot { width: 7px; height: 7px; }
 .dpill.ok { background: var(--success-subtle); color: var(--success); border-color: var(--success-border); }
 .dpill.run { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); }
-.dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); }
+.dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); border-color: var(--border); }
 .dpill.warn { background: var(--attention-subtle); color: var(--attention); border-color: var(--attention-border); }
 .dpill.fail { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
-.dpill.skip { background: var(--done-subtle); color: var(--done); }
+.dpill.skip { background: var(--done-subtle); color: var(--done); border-color: var(--done-border); }
 
 /* filter chips + list-card shell — GitHub Primer */
 .chip { font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1.4; padding: 4px 11px; border-radius: 20px; border: 1px solid var(--border); color: var(--fg-muted); background: var(--bg); cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; text-decoration: none; appearance: none; -webkit-appearance: none; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease); }
@@ -1620,7 +1620,7 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
   --success: var(--green); --success-subtle: rgba(86, 211, 100, 0.12); --success-border: rgba(86, 211, 100, 0.40);
   --attention: var(--amber); --attention-subtle: rgba(242, 204, 96, 0.12); --attention-border: rgba(242, 204, 96, 0.40);
   --danger: var(--red); --danger-subtle: rgba(255, 123, 114, 0.12); --danger-border: rgba(255, 123, 114, 0.40);
-  --done: #d2a8ff; --done-subtle: rgba(210, 168, 255, 0.12);
+  --done: #d2a8ff; --done-subtle: rgba(210, 168, 255, 0.12); --done-border: rgba(210, 168, 255, 0.40);
   --neutral-subtle: rgba(148, 161, 173, 0.16); --neutral-fg: #c9d1d9;
   --accent-subtle: var(--cyan-soft); --accent-border: rgba(88, 166, 255, 0.40);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30);
@@ -1645,10 +1645,10 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
 .dashboard .dpill .dot { width: 7px; height: 7px; }
 .dashboard .dpill.ok { background: var(--success-subtle); color: var(--success); border-color: var(--success-border); }
 .dashboard .dpill.run { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); }
-.dashboard .dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); }
+.dashboard .dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); border-color: var(--border); }
 .dashboard .dpill.warn { background: var(--attention-subtle); color: var(--attention); border-color: var(--attention-border); }
 .dashboard .dpill.fail { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
-.dashboard .dpill.skip { background: var(--done-subtle); color: var(--done); }
+.dashboard .dpill.skip { background: var(--done-subtle); color: var(--done); border-color: var(--done-border); }
 .dashboard .twocol, .dashboard .box-grid.twocol, .dashboard .box-grid.sfl { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .dashboard .dcard { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-flat); }
 .dashboard .dcard .bd { padding: 14px 16px; }
