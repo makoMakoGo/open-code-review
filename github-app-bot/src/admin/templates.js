@@ -428,7 +428,7 @@ export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/ad
     : '';
   const pending = config.pendingRestart;
   const pendingHtml = pending?.required
-    ? renderAlert(`<span data-i18n="config_restart_required_for">Restart required for</span>: ${escapeHtml((pending.keys ?? []).join(', '))}`)
+    ? renderAlert(`<span data-i18n="config_restart_required_for">Restart required for</span>: ${escapeHtml((pending.keys ?? []).join(', '))}`, { tone: 'warning' })
     : '';
   const groups = groupConfigFields(fields);
   const counts = summarizeConfigFieldCounts(fields);
@@ -607,13 +607,19 @@ function formatEditorValue(value) {
 }
 
 function renderAlert(messageHtml, { tone = 'error', list = false } = {}) {
-  const success = tone === 'success';
-  const labelKey = success ? 'alert_success' : 'alert_error';
-  const labelText = success ? 'Success' : 'Error';
+  const tones = {
+    error: { className: 'error', labelKey: 'alert_error', labelText: 'Error' },
+    warning: { className: 'warning', labelKey: 'alert_warning', labelText: 'Warning' },
+    success: { className: 'success', labelKey: 'alert_success', labelText: 'Success' },
+  };
+  if (!Object.hasOwn(tones, tone)) {
+    throw new Error(`unsupported alert tone: ${tone}`);
+  }
+  const meta = tones[tone];
   const body = list
     ? `<ul>${messageHtml}</ul>`
     : `<div class="alert-body">${messageHtml}</div>`;
-  return `<div class="alert${success ? ' success' : ''}"><strong class="alert-label" data-i18n="${labelKey}">${labelText}</strong>${body}</div>`;
+  return `<div class="alert ${meta.className}"><strong class="alert-label" data-i18n="${meta.labelKey}">${meta.labelText}</strong>${body}</div>`;
 }
 
 export function renderErrorPage({ csrfToken = '', status = 500, title = 'Error', message = 'Something went wrong', cspNonce = '' } = {}) {
@@ -775,7 +781,7 @@ function renderJobsFilterBar(filters, pagination) {
     + `<label><span data-i18n="f_state">State/outcome</span>${renderFilterSelect('state', state, STATE_OPTIONS, 'f_all')}</label>`
     + `<label><span data-i18n="f_failure_kind">Failure kind</span>${renderFilterSelect('failureKind', advanced.failureKind, FAILURE_KIND_OPTIONS, 'f_all')}</label>`
     + `<label><span data-i18n="f_diag_id">Diagnostic ID</span><input name="diagnosticId" value="${escapeAttribute(advanced.diagnosticId)}" placeholder="repo#12@commentId"></label>`
-    + `<div class="adv-field-group" role="group" aria-label="Date range">`
+    + `<div class="adv-field-group" role="group" aria-label="Date range" data-i18n-aria-label="aria_date_range">`
     + `<label><span data-i18n="f_from">From</span><input name="from" type="date" value="${escapeAttribute(advanced.from)}"></label>`
     + `<label><span data-i18n="f_to">To</span><input name="to" type="date" value="${escapeAttribute(advanced.to)}"></label>`
     + `</div>`;
@@ -855,7 +861,7 @@ function renderObjectBlock(value) {
 function renderLogs(logs) {
   if (!logs || !Array.isArray(logs.entries) || logs.entries.length === 0) return '<p class="empty" data-i18n="empty_logs">No retained logs.</p>';
   const rows = logs.entries.map(entry => `<tr><td>${safeDisplay(formatDate(entry.timestamp))}</td><td>${safeDisplay(entry.level)}</td><td>${safeDisplay(entry.message)}</td><td>${safeDisplay(formatDisplayValue(entry.fields ?? {}))}</td></tr>`).join('');
-  const note = logs.degraded ? renderAlert('<span data-i18n="logs_degraded">Log history is degraded.</span>') : '';
+  const note = logs.degraded ? renderAlert('<span data-i18n="logs_degraded">Log history is degraded.</span>', { tone: 'warning' }) : '';
   return `${note}<div class="table-scroll"><table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_level">Level</th><th data-i18n="th_message">Message</th><th data-i18n="th_fields">Fields</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -1040,8 +1046,8 @@ const I18N = {
     config_field_total: 'fields', config_override_count: 'overrides', config_secret_count: 'secrets', config_restart_count: 'restart required',
     config_no_matches: 'No matching configuration fields.',
     aria_config_filters: 'Field filters', aria_config_groups: 'Config groups',
-    aria_sections: 'Sections', aria_job_summary: 'Job summary', aria_jobs_pages: 'Jobs pages', skip_to_main: 'Skip to main',
-    alert_error: 'Error', alert_success: 'Success', config_restart_required_for: 'Restart required for',
+    aria_sections: 'Sections', aria_job_summary: 'Job summary', aria_jobs_pages: 'Jobs pages', skip_to_main: 'Skip to main', aria_date_range: 'Date range',
+    alert_error: 'Error', alert_warning: 'Warning', alert_success: 'Success', config_restart_required_for: 'Restart required for',
     logs_degraded: 'Log history is degraded.', pagination_summary: 'page {page} / {total-pages} · {total} jobs',
   },
   zh: {
@@ -1080,8 +1086,8 @@ const I18N = {
     config_field_total: '字段', config_override_count: '覆盖项', config_secret_count: '密钥', config_restart_count: '需重启',
     config_no_matches: '没有匹配的配置项。',
     aria_config_filters: '配置筛选', aria_config_groups: '配置分组',
-    aria_sections: '区块导航', aria_job_summary: '任务概览', aria_jobs_pages: '任务分页', skip_to_main: '跳到主内容',
-    alert_error: '错误', alert_success: '成功', config_restart_required_for: '需重启的项',
+    aria_sections: '区块导航', aria_job_summary: '任务概览', aria_jobs_pages: '任务分页', skip_to_main: '跳到主内容', aria_date_range: '日期范围',
+    alert_error: '错误', alert_warning: '警告', alert_success: '成功', config_restart_required_for: '需重启的项',
     logs_degraded: '日志历史已降级。', pagination_summary: '第 {page} / {total-pages} 页 · {total} 个任务',
   },
 };
@@ -1334,10 +1340,13 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 .inline .field-group { display: flex; gap: 1rem; }
 
 .alert { display: flex; gap: 0.75rem; align-items: flex-start; background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--danger); color: var(--text); padding: 0.85rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; }
+.alert.error { border-left-color: var(--danger); }
+.alert.warning { border-left-color: var(--attention); }
 .alert.success { border-left-color: var(--success); }
 .alert-label { flex: none; font-size: 12px; font-weight: 650; line-height: 1.4; min-width: 3.5rem; }
+.alert.error .alert-label { color: var(--danger); }
+.alert.warning .alert-label { color: var(--attention); }
 .alert.success .alert-label { color: var(--success); }
-.alert:not(.success) .alert-label { color: var(--danger); }
 .alert-body, .alert ul { margin: 0; flex: 1 1 auto; min-width: 0; }
 .alert ul { padding-left: 1.25rem; width: auto; }
 
@@ -1540,7 +1549,7 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   text-decoration: none;
 }
 .filter-reset:hover { color: var(--text); border-color: var(--border-bright); background: var(--surface-2); transform: none; box-shadow: none; text-decoration: none; }
-.gh-table-wrap { margin: 0; overflow-x: hidden; }
+.gh-table-wrap { margin: 0; overflow-x: auto; }
 .gh-table { width: 100%; table-layout: auto; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 .gh-table th, .gh-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; white-space: nowrap; }
 .gh-table thead th {

@@ -922,10 +922,13 @@ test('jobs advanced filters keep From/To as one field group before actions', () 
   const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
   assert.match(
     markup,
-    /class="adv-field-group"[^>]*>[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/div>\s*<div class="adv-actions"/,
+    /class="adv-field-group"[^>]*data-i18n-aria-label="aria_date_range"[^>]*>[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/div>\s*<div class="adv-actions"/,
   );
   assert.match(html, /\.adv-grid \.adv-field-group \{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;/);
   assert.match(html, /\.adv-grid \.adv-actions \{[^}]*flex:\s*1\s+1\s+100%;/);
+  const dictionaries = extractI18nDictionaries(html);
+  assert.equal(dictionaries.en.aria_date_range, 'Date range');
+  assert.equal(dictionaries.zh.aria_date_range, '日期范围');
   assert.doesNotMatch(
     markup,
     /class="adv-grid">[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/label>\s*<div class="adv-actions"/,
@@ -961,6 +964,7 @@ test('jobs table compacts long job and diagnostic ids without wrapping strategy'
   assert.match(html, /class="gh-table jobs-table"/);
   assert.match(html, /\.jobs-table td\.repo \{[^}]*text-overflow:\s*ellipsis;/);
   assert.match(html, /\.jobs-table \.col-repo \{[^}]*width:\s*100%;/);
+  assert.match(html, /\.gh-table-wrap \{[^}]*overflow-x:\s*auto;/);
   assert.doesNotMatch(html, /\.gh-table \{[^}]*table-layout:\s*fixed;/);
   assert.doesNotMatch(html, /11\.75rem|7\.5rem|9\.5rem|6\.5rem/);
   assert.match(markup, /placeholder="repo#12@commentId"/);
@@ -1038,8 +1042,9 @@ test('settings subnav keeps count after i18n init', () => {
   runApplyLangOnSettingsNav(html);
 });
 
-test('alerts expose localized Error/Success labels without badge icons', () => {
+test('alerts use closed semantic tones with localized labels', () => {
   const login = renderLoginPage({ error: 'Invalid password.' });
+  assert.match(login, /class="alert error"/);
   assert.match(login, /class="alert-label"[^>]*data-i18n="alert_error"[^>]*>Error</);
   assert.doesNotMatch(login, /alert::before|content: "!"/);
 
@@ -1050,6 +1055,7 @@ test('alerts expose localized Error/Success labels without badge icons', () => {
     validationMessages: ['from must be a date'],
     pagination: { page: 1, totalPages: 1, total: 0, pageSize: 50, hasPrev: false, hasNext: false },
   });
+  assert.match(jobs, /class="alert error"/);
   assert.match(jobs, /data-i18n="alert_error"/);
   assert.match(jobs, /<ul><li>from must be a date<\/li><\/ul>/);
   assert.match(jobs, /\.alert-body, \.alert ul \{[^}]*flex:\s*1\s+1\s+auto;/);
@@ -1058,16 +1064,48 @@ test('alerts expose localized Error/Success labels without badge icons', () => {
     csrfToken: 'csrf',
     adminRoot: '/tmp/admin',
     flash: { type: 'success', message: 'Saved' },
-    config: { revision: 1, fields: [] },
+    config: {
+      revision: 1,
+      fields: [],
+      pendingRestart: { required: true, keys: ['PORT'] },
+    },
   });
-  assert.match(config, /data-i18n="alert_success"[^>]*>Success</);
   assert.match(config, /class="alert success"/);
+  assert.match(config, /data-i18n="alert_success"[^>]*>Success</);
+  assert.match(config, /class="alert warning"/);
+  assert.match(config, /data-i18n="alert_warning"[^>]*>Warning</);
+  assert.doesNotMatch(config, /class="alert warning"[\s\S]*data-i18n="alert_error"/);
 
   const dictionaries = extractI18nDictionaries(config);
   assert.equal(dictionaries.en.alert_error, 'Error');
   assert.equal(dictionaries.zh.alert_error, '错误');
   assert.equal(dictionaries.en.alert_success, 'Success');
   assert.equal(dictionaries.zh.alert_success, '成功');
+  assert.equal(dictionaries.en.alert_warning, 'Warning');
+  assert.equal(dictionaries.zh.alert_warning, '警告');
+  assert.equal(dictionaries.en.aria_date_range, 'Date range');
+  assert.equal(dictionaries.zh.aria_date_range, '日期范围');
+});
+
+test('degraded logs alert uses warning tone not error', () => {
+  const html = renderJobDetailPage({
+    csrfToken: 'csrf',
+    job: {
+      id: '11111111-1111-4111-8111-111111111111',
+      status: 'succeeded',
+      repository: 'alice/repo',
+      pullNumber: 1,
+      diagnosticId: 'alice/repo#1@1',
+      logs: {
+        entries: [{ timestamp: '2026-07-11T00:00:00.000Z', level: 'info', message: 'ok', fields: {} }],
+        degraded: true,
+      },
+    },
+  });
+  assert.match(html, /class="alert warning"/);
+  assert.match(html, /data-i18n="alert_warning"/);
+  assert.match(html, /data-i18n="logs_degraded"/);
+  assert.doesNotMatch(html, /class="alert warning"[\s\S]*data-i18n="alert_error"/);
 });
 
 test('config POST redirects back to submitted section on success and error', async () => {
