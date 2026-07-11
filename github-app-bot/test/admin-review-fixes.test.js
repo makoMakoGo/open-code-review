@@ -13,6 +13,7 @@ import {
   renderDashboardPage,
   renderJobsPage,
   renderJobDetailPage,
+  renderLoginPage,
   renderMetricsPage,
 } from '../src/admin/index.js';
 import { AdminJobQueue, createJobEvent, JobEventStore } from '../src/jobs/index.js';
@@ -1035,6 +1036,38 @@ test('settings subnav keeps count after i18n init', () => {
   assert.match(html, /<span class="settings-count">1<\/span>/);
   assert.doesNotMatch(html, /<a class="settings-subnav-link[^"]*" href="\/admin\/config\?section=ocr" data-i18n="config_group_ocr">/);
   runApplyLangOnSettingsNav(html);
+});
+
+test('alerts expose localized Error/Success labels without badge icons', () => {
+  const login = renderLoginPage({ error: 'Invalid password.' });
+  assert.match(login, /class="alert-label"[^>]*data-i18n="alert_error"[^>]*>Error</);
+  assert.doesNotMatch(login, /alert::before|content: "!"/);
+
+  const jobs = renderJobsPage({
+    csrfToken: 'csrf',
+    jobs: [],
+    filters: {},
+    validationMessages: ['from must be a date'],
+    pagination: { page: 1, totalPages: 1, total: 0, pageSize: 50, hasPrev: false, hasNext: false },
+  });
+  assert.match(jobs, /data-i18n="alert_error"/);
+  assert.match(jobs, /<ul><li>from must be a date<\/li><\/ul>/);
+  assert.match(jobs, /\.alert-body, \.alert ul \{[^}]*flex:\s*1\s+1\s+auto;/);
+
+  const config = renderConfigPage({
+    csrfToken: 'csrf',
+    adminRoot: '/tmp/admin',
+    flash: { type: 'success', message: 'Saved' },
+    config: { revision: 1, fields: [] },
+  });
+  assert.match(config, /data-i18n="alert_success"[^>]*>Success</);
+  assert.match(config, /class="alert success"/);
+
+  const dictionaries = extractI18nDictionaries(config);
+  assert.equal(dictionaries.en.alert_error, 'Error');
+  assert.equal(dictionaries.zh.alert_error, '错误');
+  assert.equal(dictionaries.en.alert_success, 'Success');
+  assert.equal(dictionaries.zh.alert_success, '成功');
 });
 
 test('config POST redirects back to submitted section on success and error', async () => {

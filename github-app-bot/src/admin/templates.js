@@ -98,8 +98,8 @@ ${bodyScript(cspNonce)}
 export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '', cspNonce = '' } = {}) {
   const disabled = disabledReason !== '';
   const message = disabled
-    ? `<p class="alert">${escapeHtml(disabledReason)}</p>`
-    : error ? `<p class="alert">${escapeHtml(error)}</p>` : '';
+    ? renderAlert(escapeHtml(disabledReason))
+    : error ? renderAlert(escapeHtml(error)) : '';
   const form = disabled ? '' : `<form method="post" action="/admin/login" class="login-form">
 <label for="password" data-i18n="label_password">Password</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
@@ -328,7 +328,7 @@ export function renderJobsPage({ csrfToken, jobs = [], filters = {}, pagination 
   const normalizedFilters = { ...filters };
   if (filter && !normalizedFilters.diagnosticId) normalizedFilters.diagnosticId = filter;
   const alerts = validationMessages.length > 0
-    ? `<section class="alert"><ul>${validationMessages.map(message => `<li>${safeDisplay(message)}</li>`).join('')}</ul></section>`
+    ? renderAlert(validationMessages.map(message => `<li>${safeDisplay(message)}</li>`).join(''), { list: true })
     : '';
   const paginationBar = pagination ? `<div class="bar bar-foot">${renderPagination(normalizedFilters, pagination)}</div>` : '';
   const body = `<div class="jobs-page">
@@ -423,10 +423,12 @@ ${job?.diagnostics ? `<div class="box"><div class="box-header"><strong data-i18n
 export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/admin', flash = null, cspNonce = '', section = 'service' } = {}) {
   const fields = Array.isArray(config.fields) ? config.fields : legacyConfigFields(config);
   const revision = config.revision ?? '';
-  const flashHtml = flash ? `<div class="alert ${flash.type === 'success' ? 'success' : ''}">${escapeHtml(flash.message)}</div>` : '';
+  const flashHtml = flash
+    ? renderAlert(escapeHtml(flash.message), { tone: flash.type === 'success' ? 'success' : 'error' })
+    : '';
   const pending = config.pendingRestart;
   const pendingHtml = pending?.required
-    ? `<div class="alert">Restart required for: ${escapeHtml((pending.keys ?? []).join(', '))}</div>`
+    ? renderAlert(`<span data-i18n="config_restart_required_for">Restart required for</span>: ${escapeHtml((pending.keys ?? []).join(', '))}`)
     : '';
   const groups = groupConfigFields(fields);
   const counts = summarizeConfigFieldCounts(fields);
@@ -602,6 +604,16 @@ function formatEditorValue(value) {
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (value == null) return '';
   return String(value);
+}
+
+function renderAlert(messageHtml, { tone = 'error', list = false } = {}) {
+  const success = tone === 'success';
+  const labelKey = success ? 'alert_success' : 'alert_error';
+  const labelText = success ? 'Success' : 'Error';
+  const body = list
+    ? `<ul>${messageHtml}</ul>`
+    : `<div class="alert-body">${messageHtml}</div>`;
+  return `<div class="alert${success ? ' success' : ''}"><strong class="alert-label" data-i18n="${labelKey}">${labelText}</strong>${body}</div>`;
 }
 
 export function renderErrorPage({ csrfToken = '', status = 500, title = 'Error', message = 'Something went wrong', cspNonce = '' } = {}) {
@@ -843,7 +855,7 @@ function renderObjectBlock(value) {
 function renderLogs(logs) {
   if (!logs || !Array.isArray(logs.entries) || logs.entries.length === 0) return '<p class="empty" data-i18n="empty_logs">No retained logs.</p>';
   const rows = logs.entries.map(entry => `<tr><td>${safeDisplay(formatDate(entry.timestamp))}</td><td>${safeDisplay(entry.level)}</td><td>${safeDisplay(entry.message)}</td><td>${safeDisplay(formatDisplayValue(entry.fields ?? {}))}</td></tr>`).join('');
-  const note = logs.degraded ? '<p class="alert" data-i18n="logs_degraded">Log history is degraded.</p>' : '';
+  const note = logs.degraded ? renderAlert('<span data-i18n="logs_degraded">Log history is degraded.</span>') : '';
   return `${note}<div class="table-scroll"><table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_level">Level</th><th data-i18n="th_message">Message</th><th data-i18n="th_fields">Fields</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -1029,6 +1041,7 @@ const I18N = {
     config_no_matches: 'No matching configuration fields.',
     aria_config_filters: 'Field filters', aria_config_groups: 'Config groups',
     aria_sections: 'Sections', aria_job_summary: 'Job summary', aria_jobs_pages: 'Jobs pages', skip_to_main: 'Skip to main',
+    alert_error: 'Error', alert_success: 'Success', config_restart_required_for: 'Restart required for',
     logs_degraded: 'Log history is degraded.', pagination_summary: 'page {page} / {total-pages} · {total} jobs',
   },
   zh: {
@@ -1068,6 +1081,7 @@ const I18N = {
     config_no_matches: '没有匹配的配置项。',
     aria_config_filters: '配置筛选', aria_config_groups: '配置分组',
     aria_sections: '区块导航', aria_job_summary: '任务概览', aria_jobs_pages: '任务分页', skip_to_main: '跳到主内容',
+    alert_error: '错误', alert_success: '成功', config_restart_required_for: '需重启的项',
     logs_degraded: '日志历史已降级。', pagination_summary: '第 {page} / {total-pages} 页 · {total} 个任务',
   },
 };
@@ -1114,8 +1128,6 @@ function baseStyles() {
   --faint: #636c76;
   /* accent + status — calmer and accessible; soft = fills */
   --cyan: #0969da; --cyan-soft: rgba(9, 105, 218, 0.10);
-  --indigo: #6f5ed6; --indigo-soft: rgba(111, 94, 214, 0.10);
-  --magenta: #bf3989; --magenta-soft: rgba(191, 57, 137, 0.08);
   --green: #1a7f37; --green-soft: rgba(26, 127, 55, 0.10);
   --amber: #9a6700; --amber-soft: rgba(154, 103, 0, 0.12);
   --red: #cf222e; --red-soft: rgba(207, 34, 46, 0.08);
@@ -1123,15 +1135,11 @@ function baseStyles() {
   --ok: var(--green); --warn: var(--amber); --fail: var(--red); --run: var(--cyan); --queued: var(--faint);
   --accent: var(--cyan); --link: var(--cyan); --link-hover: #0550ae; --link-shadow: none;
   --primary-bg: #1f883d; --primary-bg-hover: #1a7f37;
-  --brand-gradient: var(--cyan);
   /* radii, motion, elevation — Primer-ish */
   --radius: 6px; --radius-sm: 6px; --radius-pill: 999px;
-  --lift-1: 1px; --lift-2: 2px;
   --t-fast: 120ms; --t-med: 160ms; --t-slow: 220ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --shadow-card: 0 1px 2px rgba(31, 35, 40, 0.06);
-  --shadow-card-hover: 0 4px 12px rgba(31, 35, 40, 0.10);
-  --shadow-pop: 0 4px 12px rgba(31, 35, 40, 0.12);
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   /* probe design-system aliases (GitHub Primer light) — dashboard + shared components */
@@ -1175,7 +1183,7 @@ pre { margin: 0.8rem 0; padding: 1rem; white-space: pre-wrap; word-break: break-
 h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
-.skip-link { position: absolute; left: -9999px; top: 0; z-index: 100; background: var(--accent); color: #04121b; padding: 0.65rem 1.1rem; border-radius: var(--radius-sm); font-weight: 600; font-size: 13px; box-shadow: var(--shadow-pop); }
+.skip-link { position: absolute; left: -9999px; top: 0; z-index: 100; background: var(--accent); color: #04121b; padding: 0.65rem 1.1rem; border-radius: var(--radius-sm); font-weight: 600; font-size: 13px; box-shadow: var(--shadow-flat); }
 .skip-link:focus { left: 1rem; top: 1rem; }
 .vh { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (pointer: coarse) { button, .toggle-btn, .signout button, .chip, nav.pagination a, .filter-reset, .login-form button { min-height: 44px; } }
@@ -1307,20 +1315,15 @@ tbody tr { transition: background var(--t-fast) var(--ease); }
 tbody tr:hover { background: var(--surface); }
 tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-
-button, input, select { font-family: var(--font-sans); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 13.5px; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
-button { cursor: pointer; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; }
-button:hover { border-color: var(--accent); background: var(--cyan-soft); transform: translateY(calc(-1 * var(--lift-1))); box-shadow: var(--shadow-pop); }
+button, input, select { font-family: var(--font-sans); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 13.5px; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
+button { cursor: pointer; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; text-transform: none; letter-spacing: 0; font-size: 13px; }
+button:hover { border-color: var(--border-bright); background: var(--surface-2); }
 button.primary { background: var(--primary-bg); color: #fff; border: 1px solid rgba(31, 35, 40, 0.15); font-weight: 600; padding: 0.45rem 0.95rem; box-shadow: var(--shadow-flat); text-transform: none; letter-spacing: 0; min-height: 32px; }
-button.primary:hover { background: var(--primary-bg-hover); opacity: 1; transform: none; box-shadow: var(--shadow-flat); }
+button.primary:hover { background: var(--primary-bg-hover); opacity: 1; }
 button.primary:active { background: var(--primary-bg-hover); }
-.filter-reset { font-family: var(--font-sans); font-size: 11px; font-weight: 600; line-height: normal; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 0.6rem 1.2rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
-.filter-reset:hover { color: var(--text); border-color: var(--accent); background: var(--cyan-soft); transform: translateY(calc(-1 * var(--lift-2))); box-shadow: var(--shadow-pop); }
-.filter-reset:active { transform: translateY(0); box-shadow: none; }
+.filter-reset { font-family: var(--font-sans); font-size: 13px; font-weight: 500; line-height: normal; color: var(--text); text-transform: none; letter-spacing: 0; padding: 5px 12px; border: 1px solid var(--btn-border); border-radius: var(--radius-sm); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
+.filter-reset:hover { color: var(--text); border-color: var(--border-bright); background: var(--surface-2); text-decoration: none; }
+.filter-reset:active { background: var(--surface-2); }
 
 input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.2em; height: 1.2em; cursor: pointer; }
@@ -1330,20 +1333,22 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 .inline input, .inline select { min-width: 140px; }
 .inline .field-group { display: flex; gap: 1rem; }
 
-.alert { display: flex; gap: 0.75rem; background: var(--red-soft); border: 1px solid var(--red); color: var(--text); padding: 0.85rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; }
-.alert::before { content: "!"; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: var(--fail); color: #0b0b0b; font-weight: bold; border-radius: 50%; font-size: 12px; flex-shrink: 0; }
-.alert.success { background: var(--green-soft); border-color: var(--green); }
-.alert.success::before { content: "\\2713"; background: var(--ok); }
-.alert ul { margin: 0; padding-left: 1.5rem; width: 100%; }
+.alert { display: flex; gap: 0.75rem; align-items: flex-start; background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--danger); color: var(--text); padding: 0.85rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; }
+.alert.success { border-left-color: var(--success); }
+.alert-label { flex: none; font-size: 12px; font-weight: 650; line-height: 1.4; min-width: 3.5rem; }
+.alert.success .alert-label { color: var(--success); }
+.alert:not(.success) .alert-label { color: var(--danger); }
+.alert-body, .alert ul { margin: 0; flex: 1 1 auto; min-width: 0; }
+.alert ul { padding-left: 1.25rem; width: auto; }
 
-.pill { display: inline-flex; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 0.2rem 0.6rem; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text); margin: 0.2rem; transition: background var(--t-fast) var(--ease); }
-.pill--ok { color: var(--ok); border-color: var(--green); background: var(--green-soft); }
-.pill--warn { color: var(--warn); border-color: var(--amber); background: var(--amber-soft); }
-.pill--err { color: var(--fail); border-color: var(--red); background: var(--red-soft); }
+.pill { display: inline-flex; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 8px; font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text); margin: 0 4px 4px 0; }
+.pill--ok { color: var(--success); border-color: var(--success-border); background: var(--success-subtle); }
+.pill--warn { color: var(--attention); border-color: var(--attention-border); background: var(--attention-subtle); }
+.pill--err { color: var(--danger); border-color: var(--danger-border); background: var(--danger-subtle); }
 
 /* status dot + pill — GitHub Primer, global (shared by dashboard, jobs, job detail) */
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; background: var(--fg-subtle); box-shadow: none; }
-.dot.ok { background: var(--success); } .dot.run { background: var(--accent); animation: pulse 1.6s var(--ease) infinite; }
+.dot.ok { background: var(--success); } .dot.run { background: var(--accent); }
 .dot.warn { background: var(--attention); } .dot.err { background: var(--danger); } .dot.idle { background: var(--fg-subtle); }
 .dpill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; line-height: 1; padding: 4px 10px; border-radius: 20px; border: 1px solid transparent; white-space: nowrap; }
 .dpill .dot { width: 7px; height: 7px; }
@@ -1383,7 +1388,7 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 .settings-count {
   display: inline-flex; min-width: 1.4rem; justify-content: center; padding: 1px 7px;
   border-radius: 20px; border: 1px solid var(--border); background: var(--surface);
-  color: var(--muted); font-size: 11px; font-family: var(--font-mono);
+  color: var(--muted); font-size: 11px; font-family: var(--font-sans);
 }
 .settings-panel {
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
@@ -1425,8 +1430,8 @@ ul.diagnostics li:last-child { border-bottom: 0; }
 ul.diagnostics .diag-msg { flex: 1; min-width: 200px; color: var(--muted); }
 
 nav.pagination { display: flex; gap: 1rem; align-items: center; justify-content: center; padding: 1.5rem 0 0; border-top: 1px solid var(--border); margin-top: 1.5rem; }
-nav.pagination a { padding: 0.4rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-weight: 500; font-size: 13px; background: var(--surface-2); transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease), text-decoration var(--t-fast) var(--ease); }
-nav.pagination a:hover { border-color: var(--accent); color: var(--accent); background: var(--cyan-soft); transform: translateY(calc(-1 * var(--lift-1))); text-decoration: none; }
+nav.pagination a { padding: 0.4rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-weight: 500; font-size: 13px; background: var(--surface-2); transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), text-decoration var(--t-fast) var(--ease); }
+nav.pagination a:hover { border-color: var(--border-bright); color: var(--text); background: var(--surface); text-decoration: none; }
 nav.pagination span { font-size: 13px; color: var(--muted); }
 nav.pagination span[aria-disabled=true] { opacity: 0.5; }
 
@@ -1660,8 +1665,6 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
   --muted: #94a1ad;
   --faint: #7a8794;
   --cyan: #58a6ff; --cyan-soft: rgba(88, 166, 255, 0.14);
-  --indigo: #8a7ff0; --indigo-soft: rgba(138, 127, 240, 0.14);
-  --magenta: #c66fb0; --magenta-soft: rgba(198, 111, 176, 0.10);
   --green: #56d364; --green-soft: rgba(86, 211, 100, 0.12);
   --amber: #f2cc60; --amber-soft: rgba(242, 204, 96, 0.12);
   --red: #ff7b72; --red-soft: rgba(255, 123, 114, 0.12);
@@ -1674,8 +1677,6 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
   --neutral-subtle: rgba(148, 161, 173, 0.16); --neutral-fg: #c9d1d9;
   --accent-subtle: var(--cyan-soft); --accent-border: rgba(88, 166, 255, 0.40);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.40);
-  --shadow-pop: 0 6px 16px rgba(0, 0, 0, 0.45);
 }
 
 .muted { color: var(--muted); }
