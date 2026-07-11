@@ -94,6 +94,22 @@ func ResolveEndpointWithModelOverride(configPath, modelOverride string) (Resolve
 			if ok {
 				ep.Timeout = envTimeout
 			}
+			// OCR_LLM_EXTRA_HEADERS is a global override: merges into
+			// extra headers regardless of which strategy resolved the
+			// endpoint. Env values take precedence over config-file values.
+			if raw := os.Getenv(envOCRLLMExtraHeaders); raw != "" {
+				envHeaders, err := ParseExtraHeaders(raw)
+				if err != nil {
+					return ResolvedEndpoint{}, fmt.Errorf("resolve %s: %w", s.name, err)
+				}
+				if ep.ExtraHeaders == nil {
+					ep.ExtraHeaders = envHeaders
+				} else {
+					for k, v := range envHeaders {
+						ep.ExtraHeaders[k] = v
+					}
+				}
+			}
 			return ep, nil
 		}
 	}
@@ -173,16 +189,7 @@ func tryOCREnv(modelOverride string) (ResolvedEndpoint, bool, error) {
 		}
 	}
 
-	var extraHeaders map[string]string
-	if extraHeadersRaw := os.Getenv(envOCRLLMExtraHeaders); extraHeadersRaw != "" {
-		var err error
-		extraHeaders, err = ParseExtraHeaders(extraHeadersRaw)
-		if err != nil {
-			return ResolvedEndpoint{}, false, fmt.Errorf("OCR environment: %w", err)
-		}
-	}
-
-	return ResolvedEndpoint{URL: url, Token: token, Model: model, Protocol: protocol, AuthHeader: authHeader, Source: "OCR environment", ExtraHeaders: extraHeaders}, true, nil
+	return ResolvedEndpoint{URL: url, Token: token, Model: model, Protocol: protocol, AuthHeader: authHeader, Source: "OCR environment"}, true, nil
 }
 
 // llmFileConfig represents the llm section in config.json.
@@ -311,7 +318,7 @@ func tryProviderConfig(cfg configFile, modelOverride string) (ResolvedEndpoint, 
 	// Apply model override with validation.
 	if modelOverride != "" {
 		if len(availableModels) > 0 {
-			if !modelListContains(availableModels, modelOverride) {
+			if !ModelListContains(availableModels, modelOverride) {
 				return ResolvedEndpoint{}, false, fmt.Errorf(
 					"model %q is not available for provider %q; available models: %s",
 					modelOverride,
@@ -524,8 +531,8 @@ func defaultAuthHeader(protocol string) string {
 	return ""
 }
 
-// modelListContains checks if a model exists in the available models list.
-func modelListContains(models []string, target string) bool {
+// ModelListContains reports whether target matches any entry in models (trimmed).
+func ModelListContains(models []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, model := range models {
 		if strings.TrimSpace(model) == target {

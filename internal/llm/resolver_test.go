@@ -104,7 +104,9 @@ func TestResolveEndpoint_ConfigFileStripsModelSuffix(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -137,7 +139,9 @@ func TestResolveEndpoint_ConfigAnthropicDefaultsToAuthorization(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -168,7 +172,9 @@ func TestResolveEndpoint_ConfigAuthHeaderOverrideToXAPIKey(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -199,7 +205,9 @@ func TestResolveEndpoint_ConfigOpenAIIgnoresAuthHeader(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -271,7 +279,9 @@ func TestResolveEndpoint_ProviderAnthropic(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -305,7 +315,9 @@ func TestResolveEndpoint_ProviderOpenAI(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -334,7 +346,9 @@ func TestResolveEndpoint_ProviderModelOverride(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -356,7 +370,9 @@ func TestResolveEndpoint_ProviderEntryModelOverridesDefault(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -383,7 +399,9 @@ func TestResolveEndpointWithModelOverride_CustomProviderWithoutConfiguredModel(t
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpointWithModelOverride(cfgPath, "llama-3-8b")
 	if err != nil {
@@ -409,7 +427,9 @@ func TestResolveEndpoint_ProviderAPIKeyEnvFallback(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -431,7 +451,9 @@ func TestResolveEndpoint_ProviderMissingAPIKey(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpoint(cfgPath)
 	if err == nil {
@@ -448,7 +470,9 @@ func TestResolveEndpoint_ProviderNotConfigured(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpoint(cfgPath)
 	if err == nil {
@@ -472,7 +496,9 @@ func TestResolveEndpoint_CustomProvider(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -508,7 +534,9 @@ func TestResolveEndpoint_CustomProviderInvalidProtocol(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpoint(cfgPath)
 	if err == nil {
@@ -531,7 +559,9 @@ func TestResolveEndpoint_CustomProviderMissingFields(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpoint(cfgPath)
 	if err == nil {
@@ -555,7 +585,9 @@ func TestResolveEndpoint_CustomProviderModelFromTopLevel(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -578,7 +610,9 @@ func TestResolveEndpoint_LegacyLlmStillWorks(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -603,7 +637,9 @@ func TestResolveEndpoint_ProviderAnthropicURLHasMessagesSuffix(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -629,7 +665,9 @@ func TestResolveEndpoint_ProviderExtraBody(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -654,7 +692,9 @@ func TestResolveEndpointWithModelOverride_ValidModelInPresetList(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpointWithModelOverride(cfgPath, "claude-opus-4-8")
 	if err != nil {
@@ -676,7 +716,9 @@ func TestResolveEndpointWithModelOverride_InvalidModelInPresetList(t *testing.T)
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpointWithModelOverride(cfgPath, "claude-opsu-4-6")
 	if err == nil {
@@ -706,7 +748,9 @@ func TestResolveEndpointWithModelOverride_ValidModelInCustomProviderList(t *test
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpointWithModelOverride(cfgPath, "llama-3-8b")
 	if err != nil {
@@ -733,7 +777,9 @@ func TestResolveEndpointWithModelOverride_InvalidModelInCustomProviderList(t *te
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpointWithModelOverride(cfgPath, "gpt-4")
 	if err == nil {
@@ -760,7 +806,9 @@ func TestResolveEndpointWithModelOverride_NoValidationWhenNoModelList(t *testing
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpointWithModelOverride(cfgPath, "any-model-name")
 	if err != nil {
@@ -785,7 +833,9 @@ func TestResolveEndpointWithModelOverride_MergesPresetAndEntryModels(t *testing.
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	// Should accept both preset models and entry models.
 	ep1, err := ResolveEndpointWithModelOverride(cfgPath, "claude-opus-4-8")
@@ -823,7 +873,9 @@ func TestResolveEndpointWithModelOverride_LegacyConfigNoValidation(t *testing.T)
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	// Legacy config has no model list, so any override should be accepted.
 	ep, err := ResolveEndpointWithModelOverride(cfgPath, "any-override-model")
@@ -1087,7 +1139,9 @@ func TestResolveEndpoint_ProviderExtraHeaders(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -1098,6 +1152,41 @@ func TestResolveEndpoint_ProviderExtraHeaders(t *testing.T) {
 	}
 	if v, ok := ep.ExtraHeaders["X-Org-ID"]; !ok || v != "org-123" {
 		t.Errorf("ExtraHeaders[\"X-Org-ID\"] = %q, want %q", v, "org-123")
+	}
+}
+
+func TestResolveEndpoint_EnvExtraHeadersMergedWithConfigFile(t *testing.T) {
+	clearAllEnv(t)
+	t.Setenv("OCR_LLM_EXTRA_HEADERS", "EagleEye-TraceId=trace-from-env,X-New=from-env")
+
+	cfg := configFile{
+		Provider: "anthropic",
+		Providers: map[string]providerEntryConfig{
+			"anthropic": {
+				APIKey:       "sk-ant-test",
+				Model:        "claude-sonnet-4-6",
+				ExtraHeaders: map[string]string{"X-Org-ID": "org-123"},
+			},
+		},
+	}
+	data, _ := json.Marshal(cfg)
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	ep, err := ResolveEndpoint(cfgPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v, ok := ep.ExtraHeaders["X-Org-ID"]; !ok || v != "org-123" {
+		t.Errorf("config file header preserved: ExtraHeaders[\"X-Org-ID\"] = %q, want %q", v, "org-123")
+	}
+	if v, ok := ep.ExtraHeaders["EagleEye-TraceId"]; !ok || v != "trace-from-env" {
+		t.Errorf("env header merged: ExtraHeaders[\"EagleEye-TraceId\"] = %q, want %q", v, "trace-from-env")
+	}
+	if v, ok := ep.ExtraHeaders["X-New"]; !ok || v != "from-env" {
+		t.Errorf("env header merged: ExtraHeaders[\"X-New\"] = %q, want %q", v, "from-env")
 	}
 }
 
@@ -1114,7 +1203,9 @@ func TestResolveEndpoint_LegacyLlmExtraHeaders(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -1218,7 +1309,9 @@ func TestResolveEndpoint_ConfigTimeoutSec(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -1242,7 +1335,9 @@ func TestResolveEndpoint_NegativeConfigTimeoutSec(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpoint(cfgPath)
 	if err == nil {
@@ -1308,7 +1403,9 @@ func TestResolveEndpoint_ProviderConfigTimeoutSec(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -1334,7 +1431,9 @@ func TestResolveEndpoint_ProviderConfigNegativeTimeoutSec(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpoint(cfgPath)
 	if err == nil {
@@ -1359,7 +1458,9 @@ func TestResolveEndpoint_EnvTimeoutOverridesConfigTimeout(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -1387,7 +1488,9 @@ func TestResolveEndpoint_EnvTimeoutOverridesProviderTimeout(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	ep, err := ResolveEndpoint(cfgPath)
 	if err != nil {
@@ -1412,7 +1515,9 @@ func TestResolveEndpoint_InvalidEnvTimeoutWithConfig(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpoint(cfgPath)
 	if err == nil {
@@ -1436,7 +1541,9 @@ func TestResolveEndpoint_NegativeEnvTimeoutWithConfig(t *testing.T) {
 	}
 	data, _ := json.Marshal(cfg)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	_, err := ResolveEndpoint(cfgPath)
 	if err == nil {
