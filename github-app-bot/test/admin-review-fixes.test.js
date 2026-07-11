@@ -13,6 +13,8 @@ import {
   renderDashboardPage,
   renderJobsPage,
   renderJobDetailPage,
+  renderLoginPage,
+  renderMetricsPage,
 } from '../src/admin/index.js';
 import { AdminJobQueue, createJobEvent, JobEventStore } from '../src/jobs/index.js';
 
@@ -910,6 +912,133 @@ test('jobs advanced filters expose all eight states', () => {
   }
 });
 
+test('jobs advanced filters keep From/To as one field group before actions', () => {
+  const html = renderJobsPage({
+    csrfToken: 'csrf',
+    jobs: [],
+    filters: {},
+    pagination: { page: 1, totalPages: 1, total: 0, pageSize: 50, hasPrev: false, hasNext: false },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(
+    markup,
+    /class="adv-field-group"[^>]*data-i18n-aria-label="aria_date_range"[^>]*>[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/div>\s*<div class="adv-actions"/,
+  );
+  assert.match(html, /\.adv-grid \.adv-field-group \{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;/);
+  assert.match(html, /\.adv-grid \.adv-actions \{[^}]*flex:\s*1\s+1\s+100%;/);
+  const dictionaries = extractI18nDictionaries(html);
+  assert.equal(dictionaries.en.aria_date_range, 'Date range');
+  assert.equal(dictionaries.zh.aria_date_range, '日期范围');
+  assert.doesNotMatch(
+    markup,
+    /class="adv-grid">[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/label>\s*<div class="adv-actions"/,
+  );
+});
+
+test('jobs table compacts long job and diagnostic ids without wrapping strategy', () => {
+  const jobId = 'b7877599-af77-4489-86dd-c0cbc869e75c';
+  const diagnosticId = 'makoMakoGo/code-dispatcher-toolkit#64@4943807673';
+  const html = renderJobsPage({
+    csrfToken: 'csrf',
+    jobs: [{
+      id: jobId,
+      status: 'succeeded',
+      repository: 'makoMakoGo/code-dispatcher-toolkit',
+      pullNumber: 64,
+      actor: 'makoMakoGo',
+      diagnosticId,
+      queuedAt: '2026-07-11T08:15:45.000Z',
+    }],
+    filters: {},
+    pagination: { page: 1, totalPages: 1, total: 1, pageSize: 50, hasPrev: false, hasNext: false },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(markup, new RegExp(`href="/admin/jobs/${jobId}"`));
+  assert.match(markup, new RegExp(`title="${jobId}"`));
+  assert.match(markup, /b7877599…e75c/);
+  assert.doesNotMatch(markup, new RegExp(`<code>${jobId}</code>`));
+  assert.match(markup, new RegExp(`title="${diagnosticId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+  assert.match(markup, /#64@4943807673/);
+  assert.doesNotMatch(markup, /code-dispatcher-toolkit#64@4943807673<\/code>/);
+  assert.match(html, /\.gh-table \{[^}]*table-layout:\s*auto;/);
+  assert.match(html, /class="gh-table jobs-table"/);
+  assert.match(html, /\.jobs-table td\.repo \{[^}]*text-overflow:\s*ellipsis;/);
+  assert.match(html, /\.jobs-table \.col-repo \{[^}]*width:\s*100%;/);
+  assert.match(html, /\.gh-table-wrap \{[^}]*overflow-x:\s*auto;/);
+  assert.doesNotMatch(html, /\.gh-table \{[^}]*table-layout:\s*fixed;/);
+  assert.doesNotMatch(html, /11\.75rem|7\.5rem|9\.5rem|6\.5rem/);
+  assert.match(markup, /placeholder="repo#12@commentId"/);
+});
+
+
+test('metrics repository table keeps numeric columns content-sized and right-aligned', () => {
+  const html = renderMetricsPage({
+    csrfToken: 'csrf',
+    stats: {
+      total: {
+        repositories: {
+          'makoMakoGo/oh-my-pi-coding-agent-with-a-very-long-name': { jobs: 1, successRate: 1 },
+          'alice/monorepo': { jobs: 3, successRate: 0.5 },
+        },
+        failureKinds: { provider_unavailable: 2 },
+      },
+      windows: {
+        '24h': { jobs: 1, successRate: 1, durationP50Ms: 1, durationP95Ms: 1, queueWaitP50Ms: 1, queueWaitP95Ms: 1, averageCommentsGenerated: 1, averageCommentsPosted: 1 },
+      },
+      dailyTrend: [
+        { day: '2026-07-05', jobs: 2, successRate: 1, averageCommentsGenerated: 3, averageCommentsPosted: 2, stale: 0, skipped: 0, interrupted: 0 },
+      ],
+    },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(markup, /data-i18n="th_repository">Repository</);
+
+  // Compact only for narrow summary tables; wide window/daily stay full-width metrics tables.
+  assert.match(markup, /class="gh-table metrics-table metrics-table--compact"[\s\S]*?data-i18n="m_fail_class"/);
+  assert.match(markup, /class="gh-table metrics-table metrics-table--compact"[\s\S]*?data-i18n="th_repository"/);
+  assert.match(markup, /class="gh-table metrics-table"><thead><tr><th data-i18n="th_window"/);
+  assert.match(markup, /class="gh-table metrics-table"><thead><tr><th data-i18n="th_day"/);
+  assert.equal((markup.match(/class="gh-table metrics-table metrics-table--compact"/g) || []).length, 2);
+
+  const metricsCss = html.match(/\/\* Metrics[\s\S]*?\.empty-state/)?.[0] ?? '';
+  assert.ok(metricsCss, 'expected metrics table CSS block');
+  assert.match(metricsCss, /\.gh-table\.metrics-table--compact\s*\{[^}]*width:\s*fit-content;[^}]*max-width:\s*100%;/);
+  assert.match(metricsCss, /\.metrics-table thead th:not\(:first-child\),\s*\.metrics-table td\s*\{[\s\S]*?width:\s*1%;[\s\S]*?text-align:\s*right;/);
+  assert.match(metricsCss, /\.metrics-table th\[scope="row"\]\s*\{[\s\S]*?text-overflow:\s*ellipsis;/);
+  assert.match(metricsCss, /\.metrics-table th\[scope="row"\]\s*\{[\s\S]*?max-width:\s*28rem;/);
+  assert.doesNotMatch(metricsCss, /\.metrics-table\s*\{\s*width:\s*fit-content/);
+  assert.doesNotMatch(html, /\.gh-table th:nth-child\(3\)/);
+});
+test('Status last-completed cards compact diagnostic and job ids', () => {
+  const jobId = '101b9f19-89e9-468f-b16e-19ed0800213a';
+  const diagnosticId = 'makoMakoGo/oh-my-pi-coding-agent-with-a-very-long-name#350@4999999999';
+  const html = renderDashboardPage({
+    csrfToken: 'csrf',
+    summary: {},
+    diagnostics: [],
+    serviceStatus: {
+      health: 'healthy',
+      storage: { writable: true, degraded: false },
+      diagnostics: {},
+      lastSuccess: {
+        id: jobId,
+        status: 'succeeded',
+        repository: 'makoMakoGo/oh-my-pi-coding-agent-with-a-very-long-name',
+        pullNumber: 350,
+        actor: 'makoMakoGo',
+        diagnosticId,
+      },
+    },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(markup, /data-i18n="ss_last_completed"/);
+  assert.match(markup, /#350@4999999999/);
+  assert.match(markup, new RegExp(`title="${diagnosticId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+  assert.doesNotMatch(markup, /oh-my-pi-coding-agent-with-a-very-long-name#350@4999999999<\/code>/);
+  assert.match(markup, /101b9f19…213a/);
+  assert.match(markup, new RegExp(`title="${jobId}"`));
+});
+
 test('settings subnav keeps count after i18n init', () => {
   const html = renderConfigPage({
     csrfToken: 'csrf',
@@ -927,6 +1056,72 @@ test('settings subnav keeps count after i18n init', () => {
   assert.match(html, /<span class="settings-count">1<\/span>/);
   assert.doesNotMatch(html, /<a class="settings-subnav-link[^"]*" href="\/admin\/config\?section=ocr" data-i18n="config_group_ocr">/);
   runApplyLangOnSettingsNav(html);
+});
+
+test('alerts use closed semantic tones with localized labels', () => {
+  const login = renderLoginPage({ error: 'Invalid password.' });
+  assert.match(login, /class="alert error"/);
+  assert.match(login, /class="alert-label"[^>]*data-i18n="alert_error"[^>]*>Error</);
+  assert.doesNotMatch(login, /alert::before|content: "!"/);
+
+  const jobs = renderJobsPage({
+    csrfToken: 'csrf',
+    jobs: [],
+    filters: {},
+    validationMessages: ['from must be a date'],
+    pagination: { page: 1, totalPages: 1, total: 0, pageSize: 50, hasPrev: false, hasNext: false },
+  });
+  assert.match(jobs, /class="alert error"/);
+  assert.match(jobs, /data-i18n="alert_error"/);
+  assert.match(jobs, /<ul><li>from must be a date<\/li><\/ul>/);
+  assert.match(jobs, /\.alert-body, \.alert ul \{[^}]*flex:\s*1\s+1\s+auto;/);
+
+  const config = renderConfigPage({
+    csrfToken: 'csrf',
+    adminRoot: '/tmp/admin',
+    flash: { type: 'success', message: 'Saved' },
+    config: {
+      revision: 1,
+      fields: [],
+      pendingRestart: { required: true, keys: ['PORT'] },
+    },
+  });
+  assert.match(config, /class="alert success"/);
+  assert.match(config, /data-i18n="alert_success"[^>]*>Success</);
+  assert.match(config, /class="alert warning"/);
+  assert.match(config, /data-i18n="alert_warning"[^>]*>Warning</);
+  assert.doesNotMatch(config, /class="alert warning"[\s\S]*data-i18n="alert_error"/);
+
+  const dictionaries = extractI18nDictionaries(config);
+  assert.equal(dictionaries.en.alert_error, 'Error');
+  assert.equal(dictionaries.zh.alert_error, '错误');
+  assert.equal(dictionaries.en.alert_success, 'Success');
+  assert.equal(dictionaries.zh.alert_success, '成功');
+  assert.equal(dictionaries.en.alert_warning, 'Warning');
+  assert.equal(dictionaries.zh.alert_warning, '警告');
+  assert.equal(dictionaries.en.aria_date_range, 'Date range');
+  assert.equal(dictionaries.zh.aria_date_range, '日期范围');
+});
+
+test('degraded logs alert uses warning tone not error', () => {
+  const html = renderJobDetailPage({
+    csrfToken: 'csrf',
+    job: {
+      id: '11111111-1111-4111-8111-111111111111',
+      status: 'succeeded',
+      repository: 'alice/repo',
+      pullNumber: 1,
+      diagnosticId: 'alice/repo#1@1',
+      logs: {
+        entries: [{ timestamp: '2026-07-11T00:00:00.000Z', level: 'info', message: 'ok', fields: {} }],
+        degraded: true,
+      },
+    },
+  });
+  assert.match(html, /class="alert warning"/);
+  assert.match(html, /data-i18n="alert_warning"/);
+  assert.match(html, /data-i18n="logs_degraded"/);
+  assert.doesNotMatch(html, /class="alert warning"[\s\S]*data-i18n="alert_error"/);
 });
 
 test('config POST redirects back to submitted section on success and error', async () => {
@@ -1180,6 +1375,38 @@ test('Status i18n keys are complete in English and Chinese', () => {
   assert.match(html, /data-i18n="diag_corrupt"[\s\S]*data-i18n="diag_invalid"[\s\S]*data-i18n="diag_truncated"/);
 });
 
+test('Status details split diagnostics and keep short storage labels', () => {
+  const html = renderDashboardPage({
+    csrfToken: 'csrf',
+    summary: {},
+    diagnostics: [],
+    serviceStatus: {
+      health: 'healthy',
+      actualListeningPort: 3008,
+      configuredPort: 3008,
+      storage: { writable: true, degraded: false, dirSizeBytes: 16384, budgetBytes: 512 * 1024 * 1024 },
+      diagnostics: { corruptEvents: 0, invalidEvents: 0, truncatedTail: false, runtimeWarnings: 0 },
+    },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(markup, /data-i18n="ssg_runtime"[\s\S]*data-i18n="ss_port"/);
+  assert.doesNotMatch(markup, /data-i18n="ssg_network"/);
+  assert.match(markup, /data-i18n="diag_corrupt"[^>]*>[\s\S]*?<\/span>\s*<span class="v">0<\/span>/);
+  assert.match(markup, /data-i18n="diag_invalid"[^>]*>[\s\S]*?<\/span>\s*<span class="v">0<\/span>/);
+  assert.match(markup, /data-i18n="diag_truncated"[^>]*>[\s\S]*?<\/span>\s*<span class="v">[\s\S]*data-i18n="word_no"/);
+  assert.match(markup, /data-i18n="diag_runtime_warnings"[^>]*>[\s\S]*?<\/span>\s*<span class="v">0<\/span>/);
+  assert.doesNotMatch(markup, /data-i18n="ss_diag_counts"/);
+  assert.doesNotMatch(html, /corrupt 0, invalid 0/);
+
+  const dictionaries = extractI18nDictionaries(html);
+  assert.equal(dictionaries.en.ss_storage_health, 'State');
+  assert.equal(dictionaries.en.ss_storage_size, 'Usage');
+  assert.equal(dictionaries.zh.ss_storage_health, '状态');
+  assert.equal(dictionaries.zh.ss_storage_size, '用量');
+  assert.match(html, /\.dashboard \.status-details \{[^}]*minmax\(260px, 1fr\)/);
+  assert.match(html, /\.dashboard \.kv \.v \{[^}]*min-width:\s*0;/);
+});
+
 test('runtime running job and dashboard pill remain running across inner phases', async () => {
   const runtime = new AdminRuntime({ configProvider: () => ({ version: 'test', port: 3007 }) });
   runtime.replay = { jobs: [], degraded: false, corruptions: [], invalidEvents: [], truncatedTail: null };
@@ -1204,6 +1431,29 @@ test('advanced and login focus rules use the solid accent ring', () => {
   });
   assert.match(html, /\.adv-grid input:focus, \.adv-grid select:focus \{[^}]*outline: 2px solid var\(--accent\);[^}]*outline-offset: 2px;/);
   assert.match(html, /\.login-form input:focus \{[^}]*outline: 2px solid var\(--accent\);[^}]*outline-offset: 2px;/);
+});
+
+test('theme language toggles keep one neutral Primer style cascade', () => {
+  const html = renderDashboardPage({ csrfToken: 'csrf', summary: {}, diagnostics: [], serviceStatus: null });
+  const style = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '';
+  assert.ok(style, 'expected embedded admin stylesheet');
+
+  assert.match(
+    style,
+    /\.toggle-btn,\s*\.signout button\s*\{[\s\S]*?font-weight:\s*500;[\s\S]*?padding:\s*5px 12px;/,
+    'toggle base style should use the Primer control chrome',
+  );
+  assert.match(
+    style,
+    /\.toggle-btn:hover,\s*\.signout button:hover\s*\{[\s\S]*?background:\s*var\(--surface-2\);[\s\S]*?border-color:\s*var\(--border-bright\);[\s\S]*?color:\s*var\(--text\);/,
+    'toggle hover should stay neutral surface chrome',
+  );
+  assert.match(style, /\.toggles\s*\{\s*display:\s*inline-flex;\s*align-items:\s*center;\s*gap:\s*8px;\s*\}/);
+
+  // Later same-specificity rules would override the Primer-light intent above.
+  assert.doesNotMatch(style, /\.toggle-btn:hover\s*\{\s*color:\s*var\(--accent\);/);
+  assert.doesNotMatch(style, /\.toggles\s*\{\s*display:\s*flex;\s*gap:\s*0\.4rem;/);
+  assert.doesNotMatch(style, /\.toggle-btn\s*\{\s*font-size:\s*13px;\s*font-weight:\s*600;/);
 });
 
 test('dark status pill text meets WCAG AA on page and hover surfaces', () => {

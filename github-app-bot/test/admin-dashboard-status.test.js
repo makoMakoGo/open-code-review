@@ -80,7 +80,7 @@ test('metrics page renders latency percentiles comments failure repository and d
   assert.match(html, /Interrupted/);
   assert.match(html, /Failure classification/);
   assert.match(html, /provider_unavailable/);
-  assert.match(html, /Repository success rate/);
+  assert.match(html, /data-i18n="th_repository">Repository</);
   assert.match(html, /alice\/repo/);
   assert.match(html, /50%/);
   assert.match(html, /Daily trend/);

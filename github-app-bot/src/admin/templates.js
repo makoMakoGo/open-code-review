@@ -98,8 +98,8 @@ ${bodyScript(cspNonce)}
 export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '', cspNonce = '' } = {}) {
   const disabled = disabledReason !== '';
   const message = disabled
-    ? `<p class="alert">${escapeHtml(disabledReason)}</p>`
-    : error ? `<p class="alert">${escapeHtml(error)}</p>` : '';
+    ? renderAlert(escapeHtml(disabledReason))
+    : error ? renderAlert(escapeHtml(error)) : '';
   const form = disabled ? '' : `<form method="post" action="/admin/login" class="login-form">
 <label for="password" data-i18n="label_password">Password</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
@@ -178,20 +178,12 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
       ? word('storage_healthy', 'healthy')
       : word('storage_unknown', 'unknown');
   const statusDiagnostics = svc?.diagnostics && typeof svc.diagnostics === 'object' ? svc.diagnostics : {};
-  const diagnosticCountsHtml = [
-    `${word('diag_corrupt', 'corrupt')} ${safeDisplay(statusDiagnostics.corruptEvents ?? 0)}`,
-    `${word('diag_invalid', 'invalid')} ${safeDisplay(statusDiagnostics.invalidEvents ?? 0)}`,
-    `${word('diag_truncated', 'truncated')} ${word(statusDiagnostics.truncatedTail ? 'word_yes' : 'word_no', statusDiagnostics.truncatedTail ? 'yes' : 'no')}`,
-    `${word('diag_runtime_warnings', 'runtime warnings')} ${safeDisplay(statusDiagnostics.runtimeWarnings ?? 0)}`,
-  ].join(', ');
   const statusGroups = [
     { label: 'Runtime', key: 'ssg_runtime', rows: [
       ['Uptime', formatDuration(svc?.uptimeMs), 'ss_uptime'],
       ['Started', formatDate(svc?.startedAt), 'ss_started'],
       ['Version', svc?.version, 'ss_version'],
       ['Config revision', svc?.configRevision, 'ss_config_revision'],
-    ] },
-    { label: 'Network', key: 'ssg_network', rows: [
       ['Port', portValue.value, 'ss_port', portValue.raw],
     ] },
     { label: 'Storage', key: 'ssg_storage', rows: [
@@ -200,7 +192,10 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
       ['Last retention', formatDate(svc?.lastRetention?.finishedAt ?? svc?.lastRetention?.startedAt ?? retention?.lastRun?.finishedAt), 'ss_last_retention'],
     ] },
     { label: 'Diagnostics', key: 'ssg_diagnostics', rows: [
-      ['Events', diagnosticCountsHtml, 'ss_diag_counts', true],
+      ['Corrupt', safeDisplay(statusDiagnostics.corruptEvents ?? 0), 'diag_corrupt'],
+      ['Invalid', safeDisplay(statusDiagnostics.invalidEvents ?? 0), 'diag_invalid'],
+      ['Truncated', word(statusDiagnostics.truncatedTail ? 'word_yes' : 'word_no', statusDiagnostics.truncatedTail ? 'yes' : 'no'), 'diag_truncated', true],
+      ['Runtime warnings', safeDisplay(statusDiagnostics.runtimeWarnings ?? 0), 'diag_runtime_warnings'],
     ] },
   ];
   const statusDetails = statusGroups.map((g) => {
@@ -241,7 +236,7 @@ ${jobIdRow(running)}
       <div class="kv"><span class="k" data-i18n="th_repository">Repository</span><span class="v">${escapeHtml(formatRepository(job.repo ?? job.repository))}</span></div>
       <div class="kv"><span class="k" data-i18n="th_pr">Pull request</span><span class="v">#${escapeHtml(String(job.pullNumber ?? '—'))}</span></div>
       <div class="kv"><span class="k" data-i18n="th_actor">Actor</span><span class="v">${escapeHtml(job.actor ?? '—')}</span></div>
-      <div class="kv"><span class="k" data-i18n="th_diag">Diagnostic</span><span class="v"><code>${escapeHtml(job.diagnosticId ?? '—')}</code></span></div>
+      <div class="kv"><span class="k" data-i18n="th_diag">Diagnostic</span><span class="v">${diagnosticCode(job.diagnosticId)}</span></div>
       ${jobIdRow(job)}
     </div>
   </div>
@@ -292,17 +287,17 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
 
   const failureKinds = Object.entries(total.failureKinds || {});
   const failureHtml = failureKinds.length
-    ? `<div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="th_jobs">Jobs</th></tr></thead><tbody>${failureKinds.map(([kind, count]) => `<tr><th scope="row">${safeDisplay(kind)}</th><td>${safeDisplay(count)}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table metrics-table--compact"><thead><tr><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="th_jobs">Jobs</th></tr></thead><tbody>${failureKinds.map(([kind, count]) => `<tr><th scope="row">${safeDisplay(kind)}</th><td>${safeDisplay(count)}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_none">None.</p>';
 
   const repos = Object.entries(total.repositories || {});
   const repoHtml = repos.length
-    ? `<div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="m_repo_rate">Repository success rate</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th></tr></thead><tbody>${repos.map(([name, info]) => `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(info.jobs)}</td><td>${safeDisplay(formatPercent(info.successRate))}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table metrics-table--compact"><thead><tr><th data-i18n="th_repository">Repository</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th></tr></thead><tbody>${repos.map(([name, info]) => `<tr><th scope="row" title="${escapeAttribute(name)}">${safeDisplay(name)}</th><td>${safeDisplay(info.jobs)}</td><td>${safeDisplay(formatPercent(info.successRate))}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_none">None.</p>';
 
   const daily = Array.isArray(mstats.dailyTrend) ? mstats.dailyTrend : [];
   const dailyHtml = daily.length
-    ? `<div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${daily.map((day) => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsGenerated))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsPosted))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${daily.map((day) => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsGenerated))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsPosted))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_daily">No daily trend data.</p>';
 
   const windowRows = ['24h', '7d', '30d'].map((name) => {
@@ -314,7 +309,7 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
 <p class="page-desc muted" data-i18n="metrics_page_desc">Latency, comment volume, failure classification, and repository success trends.</p>
 <div class="metric-row">${metricTiles}</div>
 <div class="box">
-  <div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th></tr></thead><tbody>${windowRows}</tbody></table></div>
+  <div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th></tr></thead><tbody>${windowRows}</tbody></table></div>
 </div>
 <div class="box">
   ${failureHtml}
@@ -333,7 +328,7 @@ export function renderJobsPage({ csrfToken, jobs = [], filters = {}, pagination 
   const normalizedFilters = { ...filters };
   if (filter && !normalizedFilters.diagnosticId) normalizedFilters.diagnosticId = filter;
   const alerts = validationMessages.length > 0
-    ? `<section class="alert"><ul>${validationMessages.map(message => `<li>${safeDisplay(message)}</li>`).join('')}</ul></section>`
+    ? renderAlert(validationMessages.map(message => `<li>${safeDisplay(message)}</li>`).join(''), { list: true })
     : '';
   const paginationBar = pagination ? `<div class="bar bar-foot">${renderPagination(normalizedFilters, pagination)}</div>` : '';
   const body = `<div class="jobs-page">
@@ -428,10 +423,12 @@ ${job?.diagnostics ? `<div class="box"><div class="box-header"><strong data-i18n
 export function renderConfigPage({ csrfToken, config = {}, adminRoot = '/data/admin', flash = null, cspNonce = '', section = 'service' } = {}) {
   const fields = Array.isArray(config.fields) ? config.fields : legacyConfigFields(config);
   const revision = config.revision ?? '';
-  const flashHtml = flash ? `<div class="alert ${flash.type === 'success' ? 'success' : ''}">${escapeHtml(flash.message)}</div>` : '';
+  const flashHtml = flash
+    ? renderAlert(escapeHtml(flash.message), { tone: flash.type === 'success' ? 'success' : 'error' })
+    : '';
   const pending = config.pendingRestart;
   const pendingHtml = pending?.required
-    ? `<div class="alert">Restart required for: ${escapeHtml((pending.keys ?? []).join(', '))}</div>`
+    ? renderAlert(`<span data-i18n="config_restart_required_for">Restart required for</span>: ${escapeHtml((pending.keys ?? []).join(', '))}`, { tone: 'warning' })
     : '';
   const groups = groupConfigFields(fields);
   const counts = summarizeConfigFieldCounts(fields);
@@ -609,6 +606,22 @@ function formatEditorValue(value) {
   return String(value);
 }
 
+function renderAlert(messageHtml, { tone = 'error', list = false } = {}) {
+  const tones = {
+    error: { className: 'error', labelKey: 'alert_error', labelText: 'Error' },
+    warning: { className: 'warning', labelKey: 'alert_warning', labelText: 'Warning' },
+    success: { className: 'success', labelKey: 'alert_success', labelText: 'Success' },
+  };
+  if (!Object.hasOwn(tones, tone)) {
+    throw new Error(`unsupported alert tone: ${tone}`);
+  }
+  const meta = tones[tone];
+  const body = list
+    ? `<ul>${messageHtml}</ul>`
+    : `<div class="alert-body">${messageHtml}</div>`;
+  return `<div class="alert ${meta.className}"><strong class="alert-label" data-i18n="${meta.labelKey}">${meta.labelText}</strong>${body}</div>`;
+}
+
 export function renderErrorPage({ csrfToken = '', status = 500, title = 'Error', message = 'Something went wrong', cspNonce = '' } = {}) {
   const body = `<section class="card"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><p class="muted">status ${escapeHtml(status)}</p></section>`;
   return csrfToken
@@ -625,19 +638,26 @@ export function renderJobsTable(jobs) {
     const actor = job?.actor ?? '';
     const diagnosticId = job?.diagnosticId ?? '';
     const queuedAt = job?.queuedAt ?? job?.createdAt ?? job?.startedAt;
-    const idCell = id ? `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}"><code>${safeDisplay(id)}</code></a>` : '';
+    const idLabel = id ? compactJobId(id) : '';
+    const diagLabel = diagnosticId ? compactDiagnosticId(diagnosticId) : '';
+    const idCell = id
+      ? `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}" title="${escapeAttribute(id)}"><code>${safeDisplay(idLabel)}</code></a>`
+      : '';
     const pr = job?.pullNumber != null && job?.pullNumber !== '' ? `#${safeDisplay(job.pullNumber)}` : '—';
+    const diagCell = diagnosticId
+      ? `<code class="subtle" title="${escapeAttribute(diagnosticId)}">${safeDisplay(diagLabel)}</code>`
+      : '—';
     return `<tr>
       <td>${idCell}</td>
       <td>${jobStatusPill(status)}</td>
-      <td class="repo">${safeDisplay(repo)}</td>
+      <td class="repo" title="${escapeAttribute(repo)}">${safeDisplay(repo)}</td>
       <td>${pr}</td>
-      <td>${safeDisplay(actor || '—')}</td>
-      <td><code class="subtle">${safeDisplay(diagnosticId || '—')}</code></td>
-      <td class="subtle nowrap-cell">${safeDisplay(formatDate(queuedAt) || '—')}</td>
+      <td title="${escapeAttribute(actor || '—')}">${safeDisplay(actor || '—')}</td>
+      <td title="${escapeAttribute(diagnosticId || '—')}">${diagCell}</td>
+      <td class="subtle">${safeDisplay(formatDate(queuedAt) || '—')}</td>
     </tr>`;
   }).join('');
-  return `<div class="table-scroll gh-table-wrap"><table class="gh-table"><thead><tr><th data-i18n="th_job_id">Job ID</th><th data-i18n="th_status">Status</th><th data-i18n="th_repository">Repository</th><th data-i18n="th_pr">PR</th><th data-i18n="th_actor">Actor</th><th data-i18n="th_diag_id">Diagnostic ID</th><th data-i18n="th_queued">Queued</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="gh-table-wrap"><table class="gh-table jobs-table"><colgroup><col class="col-job-id"><col class="col-status"><col class="col-repo"><col class="col-pr"><col class="col-actor"><col class="col-diag"><col class="col-queued"></colgroup><thead><tr><th data-i18n="th_job_id">Job ID</th><th data-i18n="th_status">Status</th><th data-i18n="th_repository">Repository</th><th data-i18n="th_pr">PR</th><th data-i18n="th_actor">Actor</th><th data-i18n="th_diag_id">Diagnostic ID</th><th data-i18n="th_queued">Queued</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function renderDiagnosticsList(diagnostics) {
@@ -760,9 +780,11 @@ function renderJobsFilterBar(filters, pagination) {
     + `<label><span data-i18n="f_repository">Repository</span><input name="repository" value="${escapeAttribute(advanced.repository)}" placeholder="name or owner/name"></label>`
     + `<label><span data-i18n="f_state">State/outcome</span>${renderFilterSelect('state', state, STATE_OPTIONS, 'f_all')}</label>`
     + `<label><span data-i18n="f_failure_kind">Failure kind</span>${renderFilterSelect('failureKind', advanced.failureKind, FAILURE_KIND_OPTIONS, 'f_all')}</label>`
-    + `<label><span data-i18n="f_diag_id">Diagnostic ID</span><input name="diagnosticId" value="${escapeAttribute(advanced.diagnosticId)}" placeholder="9c4ea7"></label>`
+    + `<label><span data-i18n="f_diag_id">Diagnostic ID</span><input name="diagnosticId" value="${escapeAttribute(advanced.diagnosticId)}" placeholder="repo#12@commentId"></label>`
+    + `<div class="adv-field-group" role="group" aria-label="Date range" data-i18n-aria-label="aria_date_range">`
     + `<label><span data-i18n="f_from">From</span><input name="from" type="date" value="${escapeAttribute(advanced.from)}"></label>`
-    + `<label><span data-i18n="f_to">To</span><input name="to" type="date" value="${escapeAttribute(advanced.to)}"></label>`;
+    + `<label><span data-i18n="f_to">To</span><input name="to" type="date" value="${escapeAttribute(advanced.to)}"></label>`
+    + `</div>`;
 
   return `<form class="job-filters" method="get" action="/admin/jobs">
   <input type="hidden" name="size" value="${escapeAttribute(size)}">
@@ -839,7 +861,7 @@ function renderObjectBlock(value) {
 function renderLogs(logs) {
   if (!logs || !Array.isArray(logs.entries) || logs.entries.length === 0) return '<p class="empty" data-i18n="empty_logs">No retained logs.</p>';
   const rows = logs.entries.map(entry => `<tr><td>${safeDisplay(formatDate(entry.timestamp))}</td><td>${safeDisplay(entry.level)}</td><td>${safeDisplay(entry.message)}</td><td>${safeDisplay(formatDisplayValue(entry.fields ?? {}))}</td></tr>`).join('');
-  const note = logs.degraded ? '<p class="alert" data-i18n="logs_degraded">Log history is degraded.</p>' : '';
+  const note = logs.degraded ? renderAlert('<span data-i18n="logs_degraded">Log history is degraded.</span>', { tone: 'warning' }) : '';
   return `${note}<div class="table-scroll"><table><thead><tr><th data-i18n="th_time">Time</th><th data-i18n="th_level">Level</th><th data-i18n="th_message">Message</th><th data-i18n="th_fields">Fields</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -876,6 +898,23 @@ function formatDisplayValue(value) {
 
 function safeDisplay(value) {
   return escapeHtml(redactInlineSecrets(value ?? ''));
+}
+
+function compactJobId(id) {
+  const value = String(id ?? '');
+  if (value.length <= 16) return value;
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+function compactDiagnosticId(id) {
+  const value = String(id ?? '');
+  if (!value) return '';
+  const hash = value.lastIndexOf('#');
+  if (hash >= 0) return value.slice(hash);
+  const at = value.lastIndexOf('@');
+  if (at >= 0) return value.slice(at);
+  if (value.length <= 24) return value;
+  return `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
 function durationBetween(start, end) {
@@ -935,7 +974,13 @@ function jobIdOf(job) {
 function jobIdCodeLink(job) {
   const id = jobIdOf(job);
   if (!id) return '<code>—</code>';
-  return `<a href="/admin/jobs/${escapeAttribute(id)}"><code>${escapeHtml(id)}</code></a>`;
+  return `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}" title="${escapeAttribute(id)}"><code>${safeDisplay(compactJobId(id))}</code></a>`;
+}
+
+function diagnosticCode(diagnosticId) {
+  const value = diagnosticId == null || diagnosticId === '' ? '' : String(diagnosticId);
+  if (!value) return '<code>—</code>';
+  return `<code class="subtle" title="${escapeAttribute(value)}">${safeDisplay(compactDiagnosticId(value))}</code>`;
 }
 
 function jobIdRow(job) {
@@ -976,12 +1021,12 @@ const I18N = {
     h2_diagnostics: 'Diagnostics', empty_jobs: 'No jobs found.', empty_diagnostics: 'No diagnostics.',
     h2_service_status: 'Status', h2_overview: 'Service status', ss_uptime: 'Uptime', ss_started: 'Started', ss_version: 'Version', ss_config_revision: 'Config revision',
     ss_actual_port: 'Actual listening port', ss_configured_port: 'Configured port', ss_pending_port: 'Desired pending port',
-    ss_storage_health: 'Storage writable/degraded', ss_storage_size: 'Storage size / budget', ss_last_retention: 'Last retention', ss_diag_counts: 'Corrupt/truncated diagnostics',
-    ssg_runtime: 'Runtime', ssg_network: 'Network', ssg_storage: 'Storage', ssg_diagnostics: 'Diagnostics', ss_port: 'Port',
+    ss_storage_health: 'State', ss_storage_size: 'Usage', ss_last_retention: 'Last retention',
+    ssg_runtime: 'Runtime', ssg_storage: 'Storage', ssg_diagnostics: 'Diagnostics', ss_port: 'Port',
     h2_metrics: 'Metrics and trends', m_dur_p50: 'Duration p50', m_dur_p95: 'Duration p95', m_qw_p50: 'Queue wait p50', m_qw_p95: 'Queue wait p95',
     ss_running_job: 'Current running job', empty_running: 'No running job.', ss_queued: 'Queued', ss_last_sf: 'Last completed / failure', ss_last_success: 'Last completed', ss_last_completed: 'Last completed', ss_last_failure: 'Last failure', th_diag: 'Diagnostic', th_job: 'Job', tile_health: 'Health', tile_queue: 'Queue depth', tile_reviewed: 'Reviewed', tile_warnings: 'Warnings', health_healthy: 'Healthy', health_degraded: 'Degraded', health_unavailable: 'Unavailable', pill_success: 'success', pill_warnings: 'warnings', pill_running: 'running', pill_failed: 'failed', pill_queued: 'queued', pill_interrupted: 'interrupted', pill_stale: 'stale', pill_skipped: 'skipped', word_ok: 'ok', storage_writable: 'writable', storage_not_writable: 'not writable', storage_degraded: 'degraded', storage_healthy: 'healthy', storage_unknown: 'unknown',
-    word_configured: 'configured', word_yes: 'yes', word_no: 'no', diag_corrupt: 'corrupt', diag_invalid: 'invalid', diag_truncated: 'truncated', diag_runtime_warnings: 'runtime warnings',
-    m_fail_class: 'Failure classification', m_repo_rate: 'Repository success rate', m_daily_trend: 'Daily trend', empty_daily: 'No daily trend data.',
+    word_configured: 'configured', word_yes: 'yes', word_no: 'no', diag_corrupt: 'Corrupt', diag_invalid: 'Invalid', diag_truncated: 'Truncated', diag_runtime_warnings: 'Runtime warnings',
+    m_fail_class: 'Failure classification', m_daily_trend: 'Daily trend', empty_daily: 'No daily trend data.',
     th_window: 'Window', th_jobs: 'Jobs', th_success_rate: 'Success rate', th_trend: 'Trend', th_day: 'Day',
     h2_jobs: 'Jobs', f_owner: 'Owner', f_repository: 'Repository', f_state: 'State/outcome', f_failure_kind: 'Failure kind', f_diag_id: 'Diagnostic ID', f_from: 'From', f_to: 'To', f_advanced: 'Advanced filters', btn_apply: 'apply', f_all: 'all', btn_reset: 'reset', st_succeeded: 'Succeeded', st_succeeded_with_warnings: 'Succeeded with warnings', st_failed: 'Failed', st_running: 'Running', st_queued: 'Queued', st_interrupted: 'Interrupted', st_stale: 'Stale', st_skipped: 'Skipped', fk_job_timeout: 'Job timeout', fk_ocr_config_error: 'OCR config error', fk_provider_rate_limited: 'Provider rate limited', fk_provider_auth_failed: 'Provider auth failed', fk_provider_unavailable: 'Provider unavailable', fk_ocr_runtime_error: 'OCR runtime error', fk_git_error: 'Git error', fk_github_rate_limited: 'GitHub rate limited', fk_github_api_error: 'GitHub API error', fk_bot_runtime_error: 'Bot runtime error', fk_invalid_ocr_output: 'Invalid OCR output',
     th_job_id: 'Job ID', th_status: 'Status', th_repository: 'Repository', th_pr: 'PR', th_actor: 'Actor', th_diag_id: 'Diagnostic ID', th_queued: 'Queued', btn_prev: 'prev', btn_next: 'next',
@@ -1001,7 +1046,8 @@ const I18N = {
     config_field_total: 'fields', config_override_count: 'overrides', config_secret_count: 'secrets', config_restart_count: 'restart required',
     config_no_matches: 'No matching configuration fields.',
     aria_config_filters: 'Field filters', aria_config_groups: 'Config groups',
-    aria_sections: 'Sections', aria_job_summary: 'Job summary', aria_jobs_pages: 'Jobs pages', skip_to_main: 'Skip to main',
+    aria_sections: 'Sections', aria_job_summary: 'Job summary', aria_jobs_pages: 'Jobs pages', skip_to_main: 'Skip to main', aria_date_range: 'Date range',
+    alert_error: 'Error', alert_warning: 'Warning', alert_success: 'Success', config_restart_required_for: 'Restart required for',
     logs_degraded: 'Log history is degraded.', pagination_summary: 'page {page} / {total-pages} · {total} jobs',
   },
   zh: {
@@ -1015,12 +1061,12 @@ const I18N = {
     h2_diagnostics: '诊断', empty_jobs: '暂无任务。', empty_diagnostics: '暂无诊断。',
     h2_service_status: '状态', h2_overview: '服务状态', ss_uptime: '运行时长', ss_started: '启动时间', ss_version: '版本', ss_config_revision: '配置版本',
     ss_actual_port: '实际监听端口', ss_configured_port: '配置端口', ss_pending_port: '待生效端口',
-    ss_storage_health: '存储可写/降级', ss_storage_size: '存储用量 / 配额', ss_last_retention: '上次清理', ss_diag_counts: '损坏/截断的诊断',
-    ssg_runtime: '运行时', ssg_network: '网络', ssg_storage: '存储', ssg_diagnostics: '诊断', ss_port: '端口',
+    ss_storage_health: '状态', ss_storage_size: '用量', ss_last_retention: '上次清理',
+    ssg_runtime: '运行时', ssg_storage: '存储', ssg_diagnostics: '诊断', ss_port: '端口',
     h2_metrics: '指标与趋势', m_dur_p50: '耗时 p50', m_dur_p95: '耗时 p95', m_qw_p50: '排队等待 p50', m_qw_p95: '排队等待 p95',
     ss_running_job: '当前运行中任务', empty_running: '无运行中任务。', ss_queued: '排队中', ss_last_sf: '上次完成/失败', ss_last_success: '上次完成', ss_last_completed: '上次完成', ss_last_failure: '上次失败', th_diag: '诊断 ID', th_job: '任务', tile_health: '健康', tile_queue: '队列深度', tile_reviewed: '审查结果', tile_warnings: '警告', health_healthy: '健康', health_degraded: '降级', health_unavailable: '不可用', pill_success: '成功', pill_warnings: '带警告', pill_running: '运行中', pill_failed: '失败', pill_queued: '排队', pill_interrupted: '中断', pill_stale: '过期', pill_skipped: '跳过', word_ok: '成功', storage_writable: '可写', storage_not_writable: '不可写', storage_degraded: '降级', storage_healthy: '健康', storage_unknown: '未知',
     word_configured: '配置', word_yes: '是', word_no: '否', diag_corrupt: '损坏', diag_invalid: '无效', diag_truncated: '截断', diag_runtime_warnings: '运行时警告',
-    m_fail_class: '失败分类', m_repo_rate: '仓库成功率', m_daily_trend: '每日趋势', empty_daily: '暂无每日趋势数据。',
+    m_fail_class: '失败分类', m_daily_trend: '每日趋势', empty_daily: '暂无每日趋势数据。',
     th_window: '时间窗', th_jobs: '任务数', th_success_rate: '成功率', th_trend: '趋势', th_day: '日期',
     h2_jobs: '任务', f_owner: '所有者', f_repository: '仓库', f_state: '状态/结果', f_failure_kind: '失败类型', f_diag_id: '诊断 ID', f_from: '起', f_to: '止', f_advanced: '高级筛选', btn_apply: '应用', f_all: '全部', btn_reset: '重置', st_succeeded: '成功', st_succeeded_with_warnings: '带警告成功', st_failed: '失败', st_running: '运行中', st_queued: '排队', st_interrupted: '中断', st_stale: '过期', st_skipped: '跳过', fk_job_timeout: '任务超时', fk_ocr_config_error: 'OCR 配置错误', fk_provider_rate_limited: '服务商限流', fk_provider_auth_failed: '服务商鉴权失败', fk_provider_unavailable: '服务商不可用', fk_ocr_runtime_error: 'OCR 运行错误', fk_git_error: 'Git 错误', fk_github_rate_limited: 'GitHub 限流', fk_github_api_error: 'GitHub API 错误', fk_bot_runtime_error: 'Bot 运行错误', fk_invalid_ocr_output: 'OCR 输出无效',
     th_job_id: '任务 ID', th_status: '状态', th_repository: '仓库', th_pr: 'PR', th_actor: '触发者', th_diag_id: '诊断 ID', th_queued: '入队时间', btn_prev: '上一页', btn_next: '下一页',
@@ -1040,7 +1086,8 @@ const I18N = {
     config_field_total: '字段', config_override_count: '覆盖项', config_secret_count: '密钥', config_restart_count: '需重启',
     config_no_matches: '没有匹配的配置项。',
     aria_config_filters: '配置筛选', aria_config_groups: '配置分组',
-    aria_sections: '区块导航', aria_job_summary: '任务概览', aria_jobs_pages: '任务分页', skip_to_main: '跳到主内容',
+    aria_sections: '区块导航', aria_job_summary: '任务概览', aria_jobs_pages: '任务分页', skip_to_main: '跳到主内容', aria_date_range: '日期范围',
+    alert_error: '错误', alert_warning: '警告', alert_success: '成功', config_restart_required_for: '需重启的项',
     logs_degraded: '日志历史已降级。', pagination_summary: '第 {page} / {total-pages} 页 · {total} 个任务',
   },
 };
@@ -1050,7 +1097,7 @@ function themeInitScript(nonce) {
 }
 
 function togglesHtml() {
-  return `<div class="toggles"><button type="button" class="toggle-btn" data-act="toggle-theme" data-theme-target aria-label="Toggle theme"><span aria-hidden="true">☾</span></button><button type="button" class="toggle-btn" data-act="toggle-lang" data-lang-target>中文</button></div>`;
+  return `<div class="toggles"><button type="button" class="toggle-btn" data-act="toggle-theme" data-theme-target aria-label="Toggle theme"><svg class="ic theme-moon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M9.598 1.591a.749.749 0 0 1 .785-.175 7.001 7.001 0 1 1-8.967 8.967.75.75 0 0 1 .961-.96 5.5 5.5 0 0 0 7.046-7.046.75.75 0 0 1 .175-.786Zm1.616 1.945a7 7 0 0 1-7.678 7.678 5.499 5.499 0 1 0 7.678-7.678Z"/></svg><svg class="ic theme-sun" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 12a4 4 0 1 1 0-8 4 4 0 0 1 0 8Zm0-1.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm5.657-8.157a.75.75 0 0 1 0 1.061l-1.061 1.06a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l1.06-1.06a.75.75 0 0 1 1.06 0Zm-9.193 9.193a.75.75 0 0 1 0 1.06l-1.06 1.061a.75.75 0 1 1-1.061-1.06l1.06-1.061a.75.75 0 0 1 1.061 0ZM8 0a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0ZM3 8a.75.75 0 0 1-.75.75H.75a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 3 8Zm13 0a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 16 8Zm-8 5a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 8 13Zm3.536-1.464a.75.75 0 0 1 1.06 0l1.061 1.06a.75.75 0 0 1-1.06 1.061l-1.061-1.06a.75.75 0 0 1 0-1.061ZM2.343 2.343a.75.75 0 0 1 1.061 0l1.06 1.061a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-1.06-1.06a.75.75 0 0 1 0-1.06Z"/></svg></button><button type="button" class="toggle-btn" data-act="toggle-lang" data-lang-target>中文</button></div>`;
 }
 
 export function safeScriptJson(value) {
@@ -1062,11 +1109,12 @@ export function safeScriptJson(value) {
     .replace(/\u2029/g, '\\u2029');
 }
 function bodyScript(nonce) {
-  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el){var k=el.getAttribute('data-i18n-placeholder');if(d[k]!==undefined)el.setAttribute('placeholder',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'').split('{visible}').join(el.getAttribute('data-visible')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){var light=document.documentElement.dataset.theme==='light';b.textContent=light?'☾':'☀';b.setAttribute('aria-label',light?d.toggle_theme_dark:d.toggle_theme_light);});document.querySelectorAll('[data-lang-target]').forEach(function(b){var zh=document.documentElement.lang==='zh';b.textContent=zh?'EN':'中文';b.setAttribute('aria-label',zh?d.toggle_lang_en:d.toggle_lang_zh);});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
+  return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el){var k=el.getAttribute('data-i18n-placeholder');if(d[k]!==undefined)el.setAttribute('placeholder',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'').split('{visible}').join(el.getAttribute('data-visible')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){var light=document.documentElement.dataset.theme==='light';b.setAttribute('aria-label',light?d.toggle_theme_dark:d.toggle_theme_light);});document.querySelectorAll('[data-lang-target]').forEach(function(b){var zh=document.documentElement.lang==='zh';b.textContent=zh?'EN':'中文';b.setAttribute('aria-label',zh?d.toggle_lang_en:d.toggle_lang_zh);});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
 }
 
 function fontLinks() {
-  return `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap">`;
+  // System font stacks only — no external webfont fetch (self-hosted, offline-friendly).
+  return '';
 }
 
 function baseStyles() {
@@ -1084,28 +1132,22 @@ function baseStyles() {
   --text: #1f2328;
   --muted: #57606a;
   --faint: #636c76;
-  /* accent + status — calmer and accessible; soft = fills, glow = unused (kept for compat) */
-  --cyan: #0969da; --cyan-soft: rgba(9, 105, 218, 0.10); --cyan-glow: transparent;
-  --indigo: #6f5ed6; --indigo-soft: rgba(111, 94, 214, 0.10); --indigo-glow: transparent;
-  --magenta: #bf3989; --magenta-soft: rgba(191, 57, 137, 0.08);
-  --green: #1a7f37; --green-soft: rgba(26, 127, 55, 0.10); --green-glow: transparent;
-  --amber: #9a6700; --amber-soft: rgba(154, 103, 0, 0.12); --amber-glow: transparent;
-  --red: #cf222e; --red-soft: rgba(207, 34, 46, 0.08); --red-glow: transparent;
+  /* accent + status — calmer and accessible; soft = fills */
+  --cyan: #0969da; --cyan-soft: rgba(9, 105, 218, 0.10);
+  --green: #1a7f37; --green-soft: rgba(26, 127, 55, 0.10);
+  --amber: #9a6700; --amber-soft: rgba(154, 103, 0, 0.12);
+  --red: #cf222e; --red-soft: rgba(207, 34, 46, 0.08);
   /* semantic aliases — components reference these, not the raw palette */
   --ok: var(--green); --warn: var(--amber); --fail: var(--red); --run: var(--cyan); --queued: var(--faint);
   --accent: var(--cyan); --link: var(--cyan); --link-hover: #0550ae; --link-shadow: none;
   --primary-bg: #1f883d; --primary-bg-hover: #1a7f37;
-  --brand-gradient: var(--cyan);
   /* radii, motion, elevation — Primer-ish */
   --radius: 6px; --radius-sm: 6px; --radius-pill: 999px;
-  --lift-1: 1px; --lift-2: 2px;
   --t-fast: 120ms; --t-med: 160ms; --t-slow: 220ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --shadow-card: 0 1px 2px rgba(31, 35, 40, 0.06);
-  --shadow-card-hover: 0 4px 12px rgba(31, 35, 40, 0.10);
-  --shadow-pop: 0 4px 12px rgba(31, 35, 40, 0.12);
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   /* probe design-system aliases (GitHub Primer light) — dashboard + shared components */
   --bg-subtle: var(--surface);
   --bg-inset: #eef1f3;
@@ -1115,7 +1157,7 @@ function baseStyles() {
   --success: var(--green); --success-subtle: #dafbe1; --success-border: rgba(26, 127, 55, .35);
   --attention: var(--amber); --attention-subtle: #fff8c5; --attention-border: rgba(154, 103, 0, .35);
   --danger: var(--red); --danger-subtle: #ffebe9; --danger-border: rgba(207, 34, 46, .35);
-  --done: #8250df; --done-subtle: #fbefff;
+  --done: #8250df; --done-subtle: #fbefff; --done-border: rgba(130, 80, 223, 0.35);
   --neutral-fg: var(--muted); --neutral-subtle: #eaeef2;
   --btn-border: rgba(31, 35, 40, .15);
   --r: var(--radius-sm); --r-lg: var(--radius);
@@ -1147,7 +1189,7 @@ pre { margin: 0.8rem 0; padding: 1rem; white-space: pre-wrap; word-break: break-
 h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
-.skip-link { position: absolute; left: -9999px; top: 0; z-index: 100; background: var(--accent); color: #04121b; padding: 0.65rem 1.1rem; border-radius: var(--radius-sm); font-weight: 600; font-size: 13px; box-shadow: var(--shadow-pop); }
+.skip-link { position: absolute; left: -9999px; top: 0; z-index: 100; background: var(--accent); color: #04121b; padding: 0.65rem 1.1rem; border-radius: var(--radius-sm); font-weight: 600; font-size: 13px; box-shadow: var(--shadow-flat); }
 .skip-link:focus { left: 1rem; top: 1rem; }
 .vh { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (pointer: coarse) { button, .toggle-btn, .signout button, .chip, nav.pagination a, .filter-reset, .login-form button { min-height: 44px; } }
@@ -1183,6 +1225,9 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
 .nav a.active { background: var(--accent-subtle); color: var(--accent); font-weight: 600; }
 .nav a .ic { width: 16px; height: 16px; opacity: 0.72; flex: none; }
 .nav a.active .ic { opacity: 1; }
+.toggle-btn .ic { width: 16px; height: 16px; flex: none; display: none; }
+:root[data-theme="light"] .toggle-btn .theme-moon { display: block; }
+:root[data-theme="dark"] .toggle-btn .theme-sun { display: block; }
 .nav a .nav-text { min-width: 0; }
 .side-foot { margin-top: auto; font-size: 11px; color: var(--faint); padding: 8px 10px; }
 @keyframes blink { to { visibility: hidden; } }
@@ -1199,6 +1244,7 @@ header.topbar {
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .toggles { display: inline-flex; align-items: center; gap: 8px; }
 .toggle-btn, .signout button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   font: inherit; font-size: 13px; font-weight: 500; color: var(--text);
   background: var(--surface); border: 1px solid var(--btn-border);
   padding: 5px 12px; border-radius: var(--radius-sm); cursor: pointer;
@@ -1255,13 +1301,13 @@ dd { margin: 0; color: var(--text); font-size: 14px; padding: 0.5rem 0; border-b
 .strip .cell { padding: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; position: relative; overflow: hidden; }
 .strip .cell::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: transparent; }
 .strip .num { font-size: 2.5rem; font-weight: 700; line-height: 1; font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
-.strip .num.ok { color: var(--ok); text-shadow: 0 0 20px var(--green-glow); }
+.strip .num.ok { color: var(--ok); }
 .strip .cell--ok::before { background: var(--ok); }
-.strip .num.warn { color: var(--warn); text-shadow: 0 0 20px var(--amber-glow); }
+.strip .num.warn { color: var(--warn); }
 .strip .cell--warn::before { background: var(--warn); }
-.strip .num.fail { color: var(--fail); text-shadow: 0 0 20px var(--red-glow); }
+.strip .num.fail { color: var(--fail); }
 .strip .cell--fail::before { background: var(--fail); }
-.strip .num.run { color: var(--run); text-shadow: 0 0 20px var(--cyan-glow); }
+.strip .num.run { color: var(--run); }
 .strip .cell--run::before { background: var(--run); }
 .strip .num.queued { color: var(--queued); }
 .strip .cell--queued::before { background: var(--queued); }
@@ -1275,20 +1321,15 @@ tbody tr { transition: background var(--t-fast) var(--ease); }
 tbody tr:hover { background: var(--surface); }
 tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-
-button, input, select { font-family: var(--font-sans); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 13.5px; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
-button { cursor: pointer; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; }
-button:hover { border-color: var(--accent); background: var(--cyan-soft); transform: translateY(calc(-1 * var(--lift-1))); box-shadow: var(--shadow-pop); }
+button, input, select { font-family: var(--font-sans); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 13.5px; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
+button { cursor: pointer; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; text-transform: none; letter-spacing: 0; font-size: 13px; }
+button:hover { border-color: var(--border-bright); background: var(--surface-2); }
 button.primary { background: var(--primary-bg); color: #fff; border: 1px solid rgba(31, 35, 40, 0.15); font-weight: 600; padding: 0.45rem 0.95rem; box-shadow: var(--shadow-flat); text-transform: none; letter-spacing: 0; min-height: 32px; }
-button.primary:hover { background: var(--primary-bg-hover); opacity: 1; transform: none; box-shadow: var(--shadow-flat); }
+button.primary:hover { background: var(--primary-bg-hover); opacity: 1; }
 button.primary:active { background: var(--primary-bg-hover); }
-.filter-reset { font-family: var(--font-sans); font-size: 11px; font-weight: 600; line-height: normal; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 0.6rem 1.2rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
-.filter-reset:hover { color: var(--text); border-color: var(--accent); background: var(--cyan-soft); transform: translateY(calc(-1 * var(--lift-2))); box-shadow: var(--shadow-pop); }
-.filter-reset:active { transform: translateY(0); box-shadow: none; }
+.filter-reset { font-family: var(--font-sans); font-size: 13px; font-weight: 500; line-height: normal; color: var(--text); text-transform: none; letter-spacing: 0; padding: 5px 12px; border: 1px solid var(--btn-border); border-radius: var(--radius-sm); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
+.filter-reset:hover { color: var(--text); border-color: var(--border-bright); background: var(--surface-2); text-decoration: none; }
+.filter-reset:active { background: var(--surface-2); }
 
 input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.2em; height: 1.2em; cursor: pointer; }
@@ -1298,29 +1339,34 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 .inline input, .inline select { min-width: 140px; }
 .inline .field-group { display: flex; gap: 1rem; }
 
-.alert { display: flex; gap: 0.75rem; background: var(--red-soft); border: 1px solid var(--red); color: var(--text); padding: 0.85rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; }
-.alert::before { content: "!"; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: var(--fail); color: #0b0b0b; font-weight: bold; border-radius: 50%; font-size: 12px; flex-shrink: 0; }
-.alert.success { background: var(--green-soft); border-color: var(--green); }
-.alert.success::before { content: "\\2713"; background: var(--ok); }
-.alert ul { margin: 0; padding-left: 1.5rem; width: 100%; }
+.alert { display: flex; gap: 0.75rem; align-items: flex-start; background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--danger); color: var(--text); padding: 0.85rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; }
+.alert.error { border-left-color: var(--danger); }
+.alert.warning { border-left-color: var(--attention); }
+.alert.success { border-left-color: var(--success); }
+.alert-label { flex: none; font-size: 12px; font-weight: 650; line-height: 1.4; min-width: 3.5rem; }
+.alert.error .alert-label { color: var(--danger); }
+.alert.warning .alert-label { color: var(--attention); }
+.alert.success .alert-label { color: var(--success); }
+.alert-body, .alert ul { margin: 0; flex: 1 1 auto; min-width: 0; }
+.alert ul { padding-left: 1.25rem; width: auto; }
 
-.pill { display: inline-flex; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 0.2rem 0.6rem; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text); margin: 0.2rem; transition: background var(--t-fast) var(--ease); }
-.pill--ok { color: var(--ok); border-color: var(--green); background: var(--green-soft); }
-.pill--warn { color: var(--warn); border-color: var(--amber); background: var(--amber-soft); }
-.pill--err { color: var(--fail); border-color: var(--red); background: var(--red-soft); }
+.pill { display: inline-flex; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 8px; font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text); margin: 0 4px 4px 0; }
+.pill--ok { color: var(--success); border-color: var(--success-border); background: var(--success-subtle); }
+.pill--warn { color: var(--attention); border-color: var(--attention-border); background: var(--attention-subtle); }
+.pill--err { color: var(--danger); border-color: var(--danger-border); background: var(--danger-subtle); }
 
 /* status dot + pill — GitHub Primer, global (shared by dashboard, jobs, job detail) */
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; background: var(--fg-subtle); box-shadow: none; }
-.dot.ok { background: var(--success); } .dot.run { background: var(--accent); animation: pulse 1.6s var(--ease) infinite; }
+.dot.ok { background: var(--success); } .dot.run { background: var(--accent); }
 .dot.warn { background: var(--attention); } .dot.err { background: var(--danger); } .dot.idle { background: var(--fg-subtle); }
 .dpill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; line-height: 1; padding: 4px 10px; border-radius: 20px; border: 1px solid transparent; white-space: nowrap; }
 .dpill .dot { width: 7px; height: 7px; }
 .dpill.ok { background: var(--success-subtle); color: var(--success); border-color: var(--success-border); }
 .dpill.run { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); }
-.dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); }
+.dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); border-color: var(--border); }
 .dpill.warn { background: var(--attention-subtle); color: var(--attention); border-color: var(--attention-border); }
 .dpill.fail { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
-.dpill.skip { background: var(--done-subtle); color: var(--done); }
+.dpill.skip { background: var(--done-subtle); color: var(--done); border-color: var(--done-border); }
 
 /* filter chips + list-card shell — GitHub Primer */
 .chip { font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1.4; padding: 4px 11px; border-radius: 20px; border: 1px solid var(--border); color: var(--fg-muted); background: var(--bg); cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; text-decoration: none; appearance: none; -webkit-appearance: none; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease); }
@@ -1351,7 +1397,7 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 1.
 .settings-count {
   display: inline-flex; min-width: 1.4rem; justify-content: center; padding: 1px 7px;
   border-radius: 20px; border: 1px solid var(--border); background: var(--surface);
-  color: var(--muted); font-size: 11px; font-family: var(--font-mono);
+  color: var(--muted); font-size: 11px; font-family: var(--font-sans);
 }
 .settings-panel {
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
@@ -1393,8 +1439,8 @@ ul.diagnostics li:last-child { border-bottom: 0; }
 ul.diagnostics .diag-msg { flex: 1; min-width: 200px; color: var(--muted); }
 
 nav.pagination { display: flex; gap: 1rem; align-items: center; justify-content: center; padding: 1.5rem 0 0; border-top: 1px solid var(--border); margin-top: 1.5rem; }
-nav.pagination a { padding: 0.4rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-weight: 500; font-size: 13px; background: var(--surface-2); transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease), text-decoration var(--t-fast) var(--ease); }
-nav.pagination a:hover { border-color: var(--accent); color: var(--accent); background: var(--cyan-soft); transform: translateY(calc(-1 * var(--lift-1))); text-decoration: none; }
+nav.pagination a { padding: 0.4rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-weight: 500; font-size: 13px; background: var(--surface-2); transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), text-decoration var(--t-fast) var(--ease); }
+nav.pagination a:hover { border-color: var(--border-bright); color: var(--text); background: var(--surface); text-decoration: none; }
 nav.pagination span { font-size: 13px; color: var(--muted); }
 nav.pagination span[aria-disabled=true] { opacity: 0.5; }
 
@@ -1435,9 +1481,6 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .danger { color: var(--fail); }
 .nowrap { display: block; white-space: nowrap; margin-top: 0.35rem; }
 
-.toggles { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
-.toggle-btn { font-size: 13px; font-weight: 600; min-width: 36px; padding: 0.4rem 0.55rem; line-height: 1; }
-.toggle-btn:hover { color: var(--accent); border-color: var(--accent); transform: none; }
 
 /* Tablet: tighten the topbar so brand + nav + actions stay on one row. */
 @media (max-width: 1024px) {
@@ -1503,20 +1546,48 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   text-decoration: none;
 }
 .filter-reset:hover { color: var(--text); border-color: var(--border-bright); background: var(--surface-2); transform: none; box-shadow: none; text-decoration: none; }
-.gh-table-wrap { margin: 0; }
-.gh-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
-.gh-table th, .gh-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.gh-table-wrap { margin: 0; overflow-x: auto; }
+.gh-table { width: 100%; table-layout: auto; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.gh-table th, .gh-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; white-space: nowrap; }
 .gh-table thead th {
   text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: var(--fg-muted);
-  background: var(--bg); border-top: 0; border-left: 0; border-right: 0; white-space: nowrap;
+  background: var(--bg); border-top: 0; border-left: 0; border-right: 0;
 }
 .gh-table tbody tr:hover { background: var(--bg-subtle); }
 .gh-table tbody tr:last-child td { border-bottom: 0; }
-.gh-table .repo { font-weight: 500; }
 .gh-table .subtle, code.subtle { color: var(--muted); }
-.gh-table .nowrap-cell { white-space: nowrap; }
 .mono-link code { color: var(--accent); background: transparent; border: 0; padding: 0; }
 .mono-link:hover code { text-decoration: underline; }
+/* Jobs list: short columns hug content; repository absorbs leftover and ellipsizes. */
+.jobs-table .col-repo { width: 100%; }
+.jobs-table td.repo {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+/* Metrics: label caps/ellipsizes; numeric columns hug and right-align. */
+.metrics-table thead th:first-child,
+.metrics-table th[scope="row"] {
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-weight: 500;
+}
+.metrics-table thead th:not(:first-child),
+.metrics-table td {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  padding-left: 1.25rem;
+}
+/* Narrow summary tables only: width:auto still fills the box; fit-content packs columns. */
+.gh-table.metrics-table--compact {
+  width: fit-content;
+  max-width: 100%;
+}
 .empty-state { padding: 28px 16px; text-align: center; color: var(--muted); font-style: normal; }
 .jobs-page .tablewrap { margin-bottom: 16px; }
 .job-filters { margin: 0; }
@@ -1527,10 +1598,11 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .adv-filters[open] > summary::before { transform: rotate(90deg); }
 .adv-filters[open] > summary { background: var(--bg-subtle); }
 .adv-grid { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; padding: 12px 14px; background: var(--bg-subtle); border-bottom: 1px solid var(--border); }
-.adv-grid > label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--fg-muted); }
+.adv-grid > label, .adv-grid .adv-field-group > label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--fg-muted); }
 .adv-grid input, .adv-grid select { min-width: 132px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 9px; min-height: 30px; font-size: 13px; color: var(--text); font-family: inherit; }
 .adv-grid input:focus, .adv-grid select:focus { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
-.adv-grid .adv-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.adv-grid .adv-field-group { display: flex; flex-wrap: nowrap; gap: 10px 12px; align-items: flex-end; }
+.adv-grid .adv-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex: 1 1 100%; margin-left: 0; }
 .adv-flag { pointer-events: none; padding: 1px 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
 nav.pagination { margin: 0; padding: 0; border: 0; justify-content: flex-start; gap: 12px; }
 nav.pagination a, nav.pagination span[aria-disabled=true] {
@@ -1604,23 +1676,19 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
   --text: #d6dbe1;
   --muted: #94a1ad;
   --faint: #7a8794;
-  --cyan: #58a6ff; --cyan-soft: rgba(88, 166, 255, 0.14); --cyan-glow: transparent;
-  --indigo: #8a7ff0; --indigo-soft: rgba(138, 127, 240, 0.14); --indigo-glow: transparent;
-  --magenta: #c66fb0; --magenta-soft: rgba(198, 111, 176, 0.10);
-  --green: #56d364; --green-soft: rgba(86, 211, 100, 0.12); --green-glow: transparent;
-  --amber: #f2cc60; --amber-soft: rgba(242, 204, 96, 0.12); --amber-glow: transparent;
-  --red: #ff7b72; --red-soft: rgba(255, 123, 114, 0.12); --red-glow: transparent;
+  --cyan: #58a6ff; --cyan-soft: rgba(88, 166, 255, 0.14);
+  --green: #56d364; --green-soft: rgba(86, 211, 100, 0.12);
+  --amber: #f2cc60; --amber-soft: rgba(242, 204, 96, 0.12);
+  --red: #ff7b72; --red-soft: rgba(255, 123, 114, 0.12);
   --link: var(--cyan); --link-hover: #79c0ff;
   --primary-bg: #238636; --primary-bg-hover: #2ea043;
   --success: var(--green); --success-subtle: rgba(86, 211, 100, 0.12); --success-border: rgba(86, 211, 100, 0.40);
   --attention: var(--amber); --attention-subtle: rgba(242, 204, 96, 0.12); --attention-border: rgba(242, 204, 96, 0.40);
   --danger: var(--red); --danger-subtle: rgba(255, 123, 114, 0.12); --danger-border: rgba(255, 123, 114, 0.40);
-  --done: #d2a8ff; --done-subtle: rgba(210, 168, 255, 0.12);
+  --done: #d2a8ff; --done-subtle: rgba(210, 168, 255, 0.12); --done-border: rgba(210, 168, 255, 0.40);
   --neutral-subtle: rgba(148, 161, 173, 0.16); --neutral-fg: #c9d1d9;
   --accent-subtle: var(--cyan-soft); --accent-border: rgba(88, 166, 255, 0.40);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.40);
-  --shadow-pop: 0 6px 16px rgba(0, 0, 0, 0.45);
 }
 
 .muted { color: var(--muted); }
@@ -1640,23 +1708,23 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
 .dashboard .dpill .dot { width: 7px; height: 7px; }
 .dashboard .dpill.ok { background: var(--success-subtle); color: var(--success); border-color: var(--success-border); }
 .dashboard .dpill.run { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); }
-.dashboard .dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); }
+.dashboard .dpill.queued { background: var(--neutral-subtle); color: var(--neutral-fg); border-color: var(--border); }
 .dashboard .dpill.warn { background: var(--attention-subtle); color: var(--attention); border-color: var(--attention-border); }
 .dashboard .dpill.fail { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
-.dashboard .dpill.skip { background: var(--done-subtle); color: var(--done); }
+.dashboard .dpill.skip { background: var(--done-subtle); color: var(--done); border-color: var(--done-border); }
 .dashboard .twocol, .dashboard .box-grid.twocol, .dashboard .box-grid.sfl { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .dashboard .dcard { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-flat); }
 .dashboard .dcard .bd { padding: 14px 16px; }
-.dashboard .status-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+.dashboard .status-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
 .dashboard .status-group { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-flat); }
 .dashboard .status-group-label { padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; font-weight: 600; color: var(--fg-muted); }
 .dashboard .status-group .kv { padding: 7px 14px; }
 .dashboard .dcard .hd { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg); font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .dashboard .subhead { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
-.dashboard .kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.dashboard .kv { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .dashboard .kv:last-child { border-bottom: 0; }
-.dashboard .kv .k { color: var(--fg-muted); }
-.dashboard .kv .v { font-weight: 500; text-align: right; }
+.dashboard .kv .k { color: var(--fg-muted); flex: 0 0 auto; min-width: 0; }
+.dashboard .kv .v { font-weight: 500; text-align: right; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard .phase { display: flex; gap: 4px; margin-top: 10px; }
 .dashboard .phase span { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-inset); }
 .dashboard .phase span.done { background: var(--success); } .dashboard .phase span.cur { background: var(--accent); }
