@@ -1567,9 +1567,9 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   text-overflow: ellipsis;
   font-weight: 500;
 }
-/* Metrics summary: pack to content; label column caps and ellipsizes; numerics hug. */
+/* Metrics summary: width:auto still fills the box; fit-content shrink-wraps. No width:1% (that dumps free space into the label column). */
 .metrics-table {
-  width: auto;
+  width: fit-content;
   max-width: 100%;
 }
 .metrics-table thead th:first-child,
@@ -1582,7 +1582,6 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 }
 .metrics-table thead th:not(:first-child),
 .metrics-table td {
-  width: 1%;
   white-space: nowrap;
   text-align: right;
   padding-left: 1.25rem;
