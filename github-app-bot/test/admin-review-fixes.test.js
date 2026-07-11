@@ -989,8 +989,15 @@ test('metrics repository table keeps numeric columns content-sized and right-ali
   const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
   assert.match(markup, /class="gh-table metrics-table"/);
   assert.match(markup, /data-i18n="th_repository">Repository</);
-  assert.match(html, /\.metrics-table thead th:not\(:first-child\),\s*\.metrics-table td\s*\{[\s\S]*?text-align:\s*right;/);
-  assert.match(html, /\.metrics-table th\[scope="row"\]\s*\{[\s\S]*?text-overflow:\s*ellipsis;/);
+
+  const metricsCss = html.match(/\/\* Metrics summary[\s\S]*?\.empty-state/)?.[0] ?? '';
+  assert.ok(metricsCss, 'expected metrics table CSS block');
+  // Pack to content instead of stretching the label column across the full page width.
+  assert.match(metricsCss, /\.metrics-table\s*\{[^}]*width:\s*auto;[^}]*max-width:\s*100%;/);
+  assert.match(metricsCss, /\.metrics-table thead th:not\(:first-child\),\s*\.metrics-table td\s*\{[\s\S]*?text-align:\s*right;/);
+  assert.match(metricsCss, /\.metrics-table th\[scope="row"\]\s*\{[\s\S]*?text-overflow:\s*ellipsis;/);
+  assert.match(metricsCss, /\.metrics-table th\[scope="row"\]\s*\{[\s\S]*?max-width:\s*28rem;/);
+  assert.doesNotMatch(metricsCss, /(?<!max-)width:\s*100%;/);
   assert.doesNotMatch(html, /\.gh-table th:nth-child\(3\)/);
 });
 test('Status last-completed cards compact diagnostic and job ids', () => {

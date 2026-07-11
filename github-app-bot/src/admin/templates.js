@@ -1567,11 +1567,14 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   text-overflow: ellipsis;
   font-weight: 500;
 }
-/* Metrics summary: label column absorbs leftover; numeric columns hug content and right-align. */
+/* Metrics summary: pack to content; label column caps and ellipsizes; numerics hug. */
+.metrics-table {
+  width: auto;
+  max-width: 100%;
+}
 .metrics-table thead th:first-child,
 .metrics-table th[scope="row"] {
-  width: 100%;
-  max-width: 0;
+  max-width: 28rem;
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: left;
@@ -1580,7 +1583,9 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .metrics-table thead th:not(:first-child),
 .metrics-table td {
   width: 1%;
+  white-space: nowrap;
   text-align: right;
+  padding-left: 1.25rem;
 }
 .empty-state { padding: 28px 16px; text-align: center; color: var(--muted); font-style: normal; }
 .jobs-page .tablewrap { margin-bottom: 16px; }
