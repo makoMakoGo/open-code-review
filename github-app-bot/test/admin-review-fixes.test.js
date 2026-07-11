@@ -13,6 +13,7 @@ import {
   renderDashboardPage,
   renderJobsPage,
   renderJobDetailPage,
+  renderMetricsPage,
 } from '../src/admin/index.js';
 import { AdminJobQueue, createJobEvent, JobEventStore } from '../src/jobs/index.js';
 
@@ -928,6 +929,93 @@ test('jobs advanced filters keep From/To as one field group before actions', () 
     markup,
     /class="adv-grid">[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/label>\s*<div class="adv-actions"/,
   );
+});
+
+test('jobs table compacts long job and diagnostic ids without wrapping strategy', () => {
+  const jobId = 'b7877599-af77-4489-86dd-c0cbc869e75c';
+  const diagnosticId = 'makoMakoGo/code-dispatcher-toolkit#64@4943807673';
+  const html = renderJobsPage({
+    csrfToken: 'csrf',
+    jobs: [{
+      id: jobId,
+      status: 'succeeded',
+      repository: 'makoMakoGo/code-dispatcher-toolkit',
+      pullNumber: 64,
+      actor: 'makoMakoGo',
+      diagnosticId,
+      queuedAt: '2026-07-11T08:15:45.000Z',
+    }],
+    filters: {},
+    pagination: { page: 1, totalPages: 1, total: 1, pageSize: 50, hasPrev: false, hasNext: false },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(markup, new RegExp(`href="/admin/jobs/${jobId}"`));
+  assert.match(markup, new RegExp(`title="${jobId}"`));
+  assert.match(markup, /b7877599…e75c/);
+  assert.doesNotMatch(markup, new RegExp(`<code>${jobId}</code>`));
+  assert.match(markup, new RegExp(`title="${diagnosticId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+  assert.match(markup, /#64@4943807673/);
+  assert.doesNotMatch(markup, /code-dispatcher-toolkit#64@4943807673<\/code>/);
+  assert.match(html, /\.gh-table \{[^}]*table-layout:\s*auto;/);
+  assert.match(html, /class="gh-table jobs-table"/);
+  assert.match(html, /\.jobs-table td\.repo \{[^}]*text-overflow:\s*ellipsis;/);
+  assert.match(html, /\.jobs-table \.col-repo \{[^}]*width:\s*100%;/);
+  assert.doesNotMatch(html, /\.gh-table \{[^}]*table-layout:\s*fixed;/);
+  assert.doesNotMatch(html, /11\.75rem|7\.5rem|9\.5rem|6\.5rem/);
+  assert.match(markup, /placeholder="repo#12@commentId"/);
+});
+
+
+test('metrics repository table keeps numeric columns content-sized and right-aligned', () => {
+  const html = renderMetricsPage({
+    csrfToken: 'csrf',
+    stats: {
+      total: {
+        repositories: {
+          'makoMakoGo/oh-my-pi-coding-agent-with-a-very-long-name': { jobs: 1, successRate: 1 },
+          'alice/monorepo': { jobs: 3, successRate: 0.5 },
+        },
+        failureKinds: {},
+      },
+      windows: {},
+      dailyTrend: [],
+    },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(markup, /class="gh-table metrics-table"/);
+  assert.match(markup, /data-i18n="th_repository">Repository</);
+  assert.match(html, /\.metrics-table thead th:not\(:first-child\),\s*\.metrics-table td\s*\{[\s\S]*?text-align:\s*right;/);
+  assert.match(html, /\.metrics-table th\[scope="row"\]\s*\{[\s\S]*?text-overflow:\s*ellipsis;/);
+  assert.doesNotMatch(html, /\.gh-table th:nth-child\(3\)/);
+});
+test('Status last-completed cards compact diagnostic and job ids', () => {
+  const jobId = '101b9f19-89e9-468f-b16e-19ed0800213a';
+  const diagnosticId = 'makoMakoGo/oh-my-pi-coding-agent-with-a-very-long-name#350@4999999999';
+  const html = renderDashboardPage({
+    csrfToken: 'csrf',
+    summary: {},
+    diagnostics: [],
+    serviceStatus: {
+      health: 'healthy',
+      storage: { writable: true, degraded: false },
+      diagnostics: {},
+      lastSuccess: {
+        id: jobId,
+        status: 'succeeded',
+        repository: 'makoMakoGo/oh-my-pi-coding-agent-with-a-very-long-name',
+        pullNumber: 350,
+        actor: 'makoMakoGo',
+        diagnosticId,
+      },
+    },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(markup, /data-i18n="ss_last_completed"/);
+  assert.match(markup, /#350@4999999999/);
+  assert.match(markup, new RegExp(`title="${diagnosticId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+  assert.doesNotMatch(markup, /oh-my-pi-coding-agent-with-a-very-long-name#350@4999999999<\/code>/);
+  assert.match(markup, /101b9f19…213a/);
+  assert.match(markup, new RegExp(`title="${jobId}"`));
 });
 
 test('settings subnav keeps count after i18n init', () => {

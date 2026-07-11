@@ -236,7 +236,7 @@ ${jobIdRow(running)}
       <div class="kv"><span class="k" data-i18n="th_repository">Repository</span><span class="v">${escapeHtml(formatRepository(job.repo ?? job.repository))}</span></div>
       <div class="kv"><span class="k" data-i18n="th_pr">Pull request</span><span class="v">#${escapeHtml(String(job.pullNumber ?? '—'))}</span></div>
       <div class="kv"><span class="k" data-i18n="th_actor">Actor</span><span class="v">${escapeHtml(job.actor ?? '—')}</span></div>
-      <div class="kv"><span class="k" data-i18n="th_diag">Diagnostic</span><span class="v"><code>${escapeHtml(job.diagnosticId ?? '—')}</code></span></div>
+      <div class="kv"><span class="k" data-i18n="th_diag">Diagnostic</span><span class="v">${diagnosticCode(job.diagnosticId)}</span></div>
       ${jobIdRow(job)}
     </div>
   </div>
@@ -287,17 +287,17 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
 
   const failureKinds = Object.entries(total.failureKinds || {});
   const failureHtml = failureKinds.length
-    ? `<div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="th_jobs">Jobs</th></tr></thead><tbody>${failureKinds.map(([kind, count]) => `<tr><th scope="row">${safeDisplay(kind)}</th><td>${safeDisplay(count)}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="m_fail_class">Failure classification</th><th data-i18n="th_jobs">Jobs</th></tr></thead><tbody>${failureKinds.map(([kind, count]) => `<tr><th scope="row">${safeDisplay(kind)}</th><td>${safeDisplay(count)}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_none">None.</p>';
 
   const repos = Object.entries(total.repositories || {});
   const repoHtml = repos.length
-    ? `<div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="m_repo_rate">Repository success rate</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th></tr></thead><tbody>${repos.map(([name, info]) => `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(info.jobs)}</td><td>${safeDisplay(formatPercent(info.successRate))}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="th_repository">Repository</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th></tr></thead><tbody>${repos.map(([name, info]) => `<tr><th scope="row" title="${escapeAttribute(name)}">${safeDisplay(name)}</th><td>${safeDisplay(info.jobs)}</td><td>${safeDisplay(formatPercent(info.successRate))}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_none">None.</p>';
 
   const daily = Array.isArray(mstats.dailyTrend) ? mstats.dailyTrend : [];
   const dailyHtml = daily.length
-    ? `<div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${daily.map((day) => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsGenerated))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsPosted))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${daily.map((day) => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsGenerated))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsPosted))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_daily">No daily trend data.</p>';
 
   const windowRows = ['24h', '7d', '30d'].map((name) => {
@@ -309,7 +309,7 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
 <p class="page-desc muted" data-i18n="metrics_page_desc">Latency, comment volume, failure classification, and repository success trends.</p>
 <div class="metric-row">${metricTiles}</div>
 <div class="box">
-  <div class="table-scroll"><table class="gh-table"><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th></tr></thead><tbody>${windowRows}</tbody></table></div>
+  <div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="th_window">Window</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_dur_p50">Duration p50</th><th data-i18n="m_dur_p95">Duration p95</th><th data-i18n="m_qw_p50">Queue wait p50</th><th data-i18n="m_qw_p95">Queue wait p95</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th></tr></thead><tbody>${windowRows}</tbody></table></div>
 </div>
 <div class="box">
   ${failureHtml}
@@ -620,19 +620,26 @@ export function renderJobsTable(jobs) {
     const actor = job?.actor ?? '';
     const diagnosticId = job?.diagnosticId ?? '';
     const queuedAt = job?.queuedAt ?? job?.createdAt ?? job?.startedAt;
-    const idCell = id ? `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}"><code>${safeDisplay(id)}</code></a>` : '';
+    const idLabel = id ? compactJobId(id) : '';
+    const diagLabel = diagnosticId ? compactDiagnosticId(diagnosticId) : '';
+    const idCell = id
+      ? `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}" title="${escapeAttribute(id)}"><code>${safeDisplay(idLabel)}</code></a>`
+      : '';
     const pr = job?.pullNumber != null && job?.pullNumber !== '' ? `#${safeDisplay(job.pullNumber)}` : '—';
+    const diagCell = diagnosticId
+      ? `<code class="subtle" title="${escapeAttribute(diagnosticId)}">${safeDisplay(diagLabel)}</code>`
+      : '—';
     return `<tr>
       <td>${idCell}</td>
       <td>${jobStatusPill(status)}</td>
-      <td class="repo">${safeDisplay(repo)}</td>
+      <td class="repo" title="${escapeAttribute(repo)}">${safeDisplay(repo)}</td>
       <td>${pr}</td>
-      <td>${safeDisplay(actor || '—')}</td>
-      <td><code class="subtle">${safeDisplay(diagnosticId || '—')}</code></td>
-      <td class="subtle nowrap-cell">${safeDisplay(formatDate(queuedAt) || '—')}</td>
+      <td title="${escapeAttribute(actor || '—')}">${safeDisplay(actor || '—')}</td>
+      <td title="${escapeAttribute(diagnosticId || '—')}">${diagCell}</td>
+      <td class="subtle">${safeDisplay(formatDate(queuedAt) || '—')}</td>
     </tr>`;
   }).join('');
-  return `<div class="table-scroll gh-table-wrap"><table class="gh-table"><thead><tr><th data-i18n="th_job_id">Job ID</th><th data-i18n="th_status">Status</th><th data-i18n="th_repository">Repository</th><th data-i18n="th_pr">PR</th><th data-i18n="th_actor">Actor</th><th data-i18n="th_diag_id">Diagnostic ID</th><th data-i18n="th_queued">Queued</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="gh-table-wrap"><table class="gh-table jobs-table"><colgroup><col class="col-job-id"><col class="col-status"><col class="col-repo"><col class="col-pr"><col class="col-actor"><col class="col-diag"><col class="col-queued"></colgroup><thead><tr><th data-i18n="th_job_id">Job ID</th><th data-i18n="th_status">Status</th><th data-i18n="th_repository">Repository</th><th data-i18n="th_pr">PR</th><th data-i18n="th_actor">Actor</th><th data-i18n="th_diag_id">Diagnostic ID</th><th data-i18n="th_queued">Queued</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function renderDiagnosticsList(diagnostics) {
@@ -755,7 +762,7 @@ function renderJobsFilterBar(filters, pagination) {
     + `<label><span data-i18n="f_repository">Repository</span><input name="repository" value="${escapeAttribute(advanced.repository)}" placeholder="name or owner/name"></label>`
     + `<label><span data-i18n="f_state">State/outcome</span>${renderFilterSelect('state', state, STATE_OPTIONS, 'f_all')}</label>`
     + `<label><span data-i18n="f_failure_kind">Failure kind</span>${renderFilterSelect('failureKind', advanced.failureKind, FAILURE_KIND_OPTIONS, 'f_all')}</label>`
-    + `<label><span data-i18n="f_diag_id">Diagnostic ID</span><input name="diagnosticId" value="${escapeAttribute(advanced.diagnosticId)}" placeholder="9c4ea7"></label>`
+    + `<label><span data-i18n="f_diag_id">Diagnostic ID</span><input name="diagnosticId" value="${escapeAttribute(advanced.diagnosticId)}" placeholder="repo#12@commentId"></label>`
     + `<div class="adv-field-group" role="group" aria-label="Date range">`
     + `<label><span data-i18n="f_from">From</span><input name="from" type="date" value="${escapeAttribute(advanced.from)}"></label>`
     + `<label><span data-i18n="f_to">To</span><input name="to" type="date" value="${escapeAttribute(advanced.to)}"></label>`
@@ -875,6 +882,23 @@ function safeDisplay(value) {
   return escapeHtml(redactInlineSecrets(value ?? ''));
 }
 
+function compactJobId(id) {
+  const value = String(id ?? '');
+  if (value.length <= 16) return value;
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+function compactDiagnosticId(id) {
+  const value = String(id ?? '');
+  if (!value) return '';
+  const hash = value.lastIndexOf('#');
+  if (hash >= 0) return value.slice(hash);
+  const at = value.lastIndexOf('@');
+  if (at >= 0) return value.slice(at);
+  if (value.length <= 24) return value;
+  return `${value.slice(0, 10)}…${value.slice(-6)}`;
+}
+
 function durationBetween(start, end) {
   if (!start || !end) return null;
   const startMs = new Date(start).getTime();
@@ -932,7 +956,13 @@ function jobIdOf(job) {
 function jobIdCodeLink(job) {
   const id = jobIdOf(job);
   if (!id) return '<code>—</code>';
-  return `<a href="/admin/jobs/${escapeAttribute(id)}"><code>${escapeHtml(id)}</code></a>`;
+  return `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}" title="${escapeAttribute(id)}"><code>${safeDisplay(compactJobId(id))}</code></a>`;
+}
+
+function diagnosticCode(diagnosticId) {
+  const value = diagnosticId == null || diagnosticId === '' ? '' : String(diagnosticId);
+  if (!value) return '<code>—</code>';
+  return `<code class="subtle" title="${escapeAttribute(value)}">${safeDisplay(compactDiagnosticId(value))}</code>`;
 }
 
 function jobIdRow(job) {
@@ -1505,20 +1535,42 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   text-decoration: none;
 }
 .filter-reset:hover { color: var(--text); border-color: var(--border-bright); background: var(--surface-2); transform: none; box-shadow: none; text-decoration: none; }
-.gh-table-wrap { margin: 0; }
-.gh-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
-.gh-table th, .gh-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.gh-table-wrap { margin: 0; overflow-x: hidden; }
+.gh-table { width: 100%; table-layout: auto; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.gh-table th, .gh-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; white-space: nowrap; }
 .gh-table thead th {
   text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: var(--fg-muted);
-  background: var(--bg); border-top: 0; border-left: 0; border-right: 0; white-space: nowrap;
+  background: var(--bg); border-top: 0; border-left: 0; border-right: 0;
 }
 .gh-table tbody tr:hover { background: var(--bg-subtle); }
 .gh-table tbody tr:last-child td { border-bottom: 0; }
-.gh-table .repo { font-weight: 500; }
 .gh-table .subtle, code.subtle { color: var(--muted); }
-.gh-table .nowrap-cell { white-space: nowrap; }
 .mono-link code { color: var(--accent); background: transparent; border: 0; padding: 0; }
 .mono-link:hover code { text-decoration: underline; }
+/* Jobs list: short columns hug content; repository absorbs leftover and ellipsizes. */
+.jobs-table .col-repo { width: 100%; }
+.jobs-table td.repo {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+/* Metrics summary: label column absorbs leftover; numeric columns hug content and right-align. */
+.metrics-table thead th:first-child,
+.metrics-table th[scope="row"] {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-weight: 500;
+}
+.metrics-table thead th:not(:first-child),
+.metrics-table td {
+  width: 1%;
+  text-align: right;
+}
 .empty-state { padding: 28px 16px; text-align: center; color: var(--muted); font-style: normal; }
 .jobs-page .tablewrap { margin-bottom: 16px; }
 .job-filters { margin: 0; }
@@ -1658,8 +1710,8 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
 .dashboard .subhead { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
 .dashboard .kv { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .dashboard .kv:last-child { border-bottom: 0; }
-.dashboard .kv .k { color: var(--fg-muted); flex: 0 1 auto; min-width: 0; }
-.dashboard .kv .v { font-weight: 500; text-align: right; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.dashboard .kv .k { color: var(--fg-muted); flex: 0 0 auto; min-width: 0; }
+.dashboard .kv .v { font-weight: 500; text-align: right; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard .phase { display: flex; gap: 4px; margin-top: 10px; }
 .dashboard .phase span { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-inset); }
 .dashboard .phase span.done { background: var(--success); } .dashboard .phase span.cur { background: var(--accent); }
