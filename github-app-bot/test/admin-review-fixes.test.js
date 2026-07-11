@@ -910,6 +910,26 @@ test('jobs advanced filters expose all eight states', () => {
   }
 });
 
+test('jobs advanced filters keep From/To as one field group before actions', () => {
+  const html = renderJobsPage({
+    csrfToken: 'csrf',
+    jobs: [],
+    filters: {},
+    pagination: { page: 1, totalPages: 1, total: 0, pageSize: 50, hasPrev: false, hasNext: false },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(
+    markup,
+    /class="adv-field-group"[^>]*>[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/div>\s*<div class="adv-actions"/,
+  );
+  assert.match(html, /\.adv-grid \.adv-field-group \{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;/);
+  assert.match(html, /\.adv-grid \.adv-actions \{[^}]*flex:\s*1\s+1\s+100%;/);
+  assert.doesNotMatch(
+    markup,
+    /class="adv-grid">[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/label>\s*<div class="adv-actions"/,
+  );
+});
+
 test('settings subnav keeps count after i18n init', () => {
   const html = renderConfigPage({
     csrfToken: 'csrf',
@@ -1178,6 +1198,38 @@ test('Status i18n keys are complete in English and Chinese', () => {
   }
   assert.match(html, /data-i18n="word_configured"/);
   assert.match(html, /data-i18n="diag_corrupt"[\s\S]*data-i18n="diag_invalid"[\s\S]*data-i18n="diag_truncated"/);
+});
+
+test('Status details split diagnostics and keep short storage labels', () => {
+  const html = renderDashboardPage({
+    csrfToken: 'csrf',
+    summary: {},
+    diagnostics: [],
+    serviceStatus: {
+      health: 'healthy',
+      actualListeningPort: 3008,
+      configuredPort: 3008,
+      storage: { writable: true, degraded: false, dirSizeBytes: 16384, budgetBytes: 512 * 1024 * 1024 },
+      diagnostics: { corruptEvents: 0, invalidEvents: 0, truncatedTail: false, runtimeWarnings: 0 },
+    },
+  });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.match(markup, /data-i18n="ssg_runtime"[\s\S]*data-i18n="ss_port"/);
+  assert.doesNotMatch(markup, /data-i18n="ssg_network"/);
+  assert.match(markup, /data-i18n="diag_corrupt"[^>]*>[\s\S]*?<\/span>\s*<span class="v">0<\/span>/);
+  assert.match(markup, /data-i18n="diag_invalid"[^>]*>[\s\S]*?<\/span>\s*<span class="v">0<\/span>/);
+  assert.match(markup, /data-i18n="diag_truncated"[^>]*>[\s\S]*?<\/span>\s*<span class="v">[\s\S]*data-i18n="word_no"/);
+  assert.match(markup, /data-i18n="diag_runtime_warnings"[^>]*>[\s\S]*?<\/span>\s*<span class="v">0<\/span>/);
+  assert.doesNotMatch(markup, /data-i18n="ss_diag_counts"/);
+  assert.doesNotMatch(html, /corrupt 0, invalid 0/);
+
+  const dictionaries = extractI18nDictionaries(html);
+  assert.equal(dictionaries.en.ss_storage_health, 'State');
+  assert.equal(dictionaries.en.ss_storage_size, 'Usage');
+  assert.equal(dictionaries.zh.ss_storage_health, '状态');
+  assert.equal(dictionaries.zh.ss_storage_size, '用量');
+  assert.match(html, /\.dashboard \.status-details \{[^}]*minmax\(260px, 1fr\)/);
+  assert.match(html, /\.dashboard \.kv \.v \{[^}]*min-width:\s*0;/);
 });
 
 test('runtime running job and dashboard pill remain running across inner phases', async () => {

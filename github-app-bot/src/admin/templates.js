@@ -178,20 +178,12 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
       ? word('storage_healthy', 'healthy')
       : word('storage_unknown', 'unknown');
   const statusDiagnostics = svc?.diagnostics && typeof svc.diagnostics === 'object' ? svc.diagnostics : {};
-  const diagnosticCountsHtml = [
-    `${word('diag_corrupt', 'corrupt')} ${safeDisplay(statusDiagnostics.corruptEvents ?? 0)}`,
-    `${word('diag_invalid', 'invalid')} ${safeDisplay(statusDiagnostics.invalidEvents ?? 0)}`,
-    `${word('diag_truncated', 'truncated')} ${word(statusDiagnostics.truncatedTail ? 'word_yes' : 'word_no', statusDiagnostics.truncatedTail ? 'yes' : 'no')}`,
-    `${word('diag_runtime_warnings', 'runtime warnings')} ${safeDisplay(statusDiagnostics.runtimeWarnings ?? 0)}`,
-  ].join(', ');
   const statusGroups = [
     { label: 'Runtime', key: 'ssg_runtime', rows: [
       ['Uptime', formatDuration(svc?.uptimeMs), 'ss_uptime'],
       ['Started', formatDate(svc?.startedAt), 'ss_started'],
       ['Version', svc?.version, 'ss_version'],
       ['Config revision', svc?.configRevision, 'ss_config_revision'],
-    ] },
-    { label: 'Network', key: 'ssg_network', rows: [
       ['Port', portValue.value, 'ss_port', portValue.raw],
     ] },
     { label: 'Storage', key: 'ssg_storage', rows: [
@@ -200,7 +192,10 @@ export function renderDashboardPage({ csrfToken, summary = {}, diagnostics = [],
       ['Last retention', formatDate(svc?.lastRetention?.finishedAt ?? svc?.lastRetention?.startedAt ?? retention?.lastRun?.finishedAt), 'ss_last_retention'],
     ] },
     { label: 'Diagnostics', key: 'ssg_diagnostics', rows: [
-      ['Events', diagnosticCountsHtml, 'ss_diag_counts', true],
+      ['Corrupt', safeDisplay(statusDiagnostics.corruptEvents ?? 0), 'diag_corrupt'],
+      ['Invalid', safeDisplay(statusDiagnostics.invalidEvents ?? 0), 'diag_invalid'],
+      ['Truncated', word(statusDiagnostics.truncatedTail ? 'word_yes' : 'word_no', statusDiagnostics.truncatedTail ? 'yes' : 'no'), 'diag_truncated', true],
+      ['Runtime warnings', safeDisplay(statusDiagnostics.runtimeWarnings ?? 0), 'diag_runtime_warnings'],
     ] },
   ];
   const statusDetails = statusGroups.map((g) => {
@@ -761,8 +756,10 @@ function renderJobsFilterBar(filters, pagination) {
     + `<label><span data-i18n="f_state">State/outcome</span>${renderFilterSelect('state', state, STATE_OPTIONS, 'f_all')}</label>`
     + `<label><span data-i18n="f_failure_kind">Failure kind</span>${renderFilterSelect('failureKind', advanced.failureKind, FAILURE_KIND_OPTIONS, 'f_all')}</label>`
     + `<label><span data-i18n="f_diag_id">Diagnostic ID</span><input name="diagnosticId" value="${escapeAttribute(advanced.diagnosticId)}" placeholder="9c4ea7"></label>`
+    + `<div class="adv-field-group" role="group" aria-label="Date range">`
     + `<label><span data-i18n="f_from">From</span><input name="from" type="date" value="${escapeAttribute(advanced.from)}"></label>`
-    + `<label><span data-i18n="f_to">To</span><input name="to" type="date" value="${escapeAttribute(advanced.to)}"></label>`;
+    + `<label><span data-i18n="f_to">To</span><input name="to" type="date" value="${escapeAttribute(advanced.to)}"></label>`
+    + `</div>`;
 
   return `<form class="job-filters" method="get" action="/admin/jobs">
   <input type="hidden" name="size" value="${escapeAttribute(size)}">
@@ -976,11 +973,11 @@ const I18N = {
     h2_diagnostics: 'Diagnostics', empty_jobs: 'No jobs found.', empty_diagnostics: 'No diagnostics.',
     h2_service_status: 'Status', h2_overview: 'Service status', ss_uptime: 'Uptime', ss_started: 'Started', ss_version: 'Version', ss_config_revision: 'Config revision',
     ss_actual_port: 'Actual listening port', ss_configured_port: 'Configured port', ss_pending_port: 'Desired pending port',
-    ss_storage_health: 'Storage writable/degraded', ss_storage_size: 'Storage size / budget', ss_last_retention: 'Last retention', ss_diag_counts: 'Corrupt/truncated diagnostics',
-    ssg_runtime: 'Runtime', ssg_network: 'Network', ssg_storage: 'Storage', ssg_diagnostics: 'Diagnostics', ss_port: 'Port',
+    ss_storage_health: 'State', ss_storage_size: 'Usage', ss_last_retention: 'Last retention',
+    ssg_runtime: 'Runtime', ssg_storage: 'Storage', ssg_diagnostics: 'Diagnostics', ss_port: 'Port',
     h2_metrics: 'Metrics and trends', m_dur_p50: 'Duration p50', m_dur_p95: 'Duration p95', m_qw_p50: 'Queue wait p50', m_qw_p95: 'Queue wait p95',
     ss_running_job: 'Current running job', empty_running: 'No running job.', ss_queued: 'Queued', ss_last_sf: 'Last completed / failure', ss_last_success: 'Last completed', ss_last_completed: 'Last completed', ss_last_failure: 'Last failure', th_diag: 'Diagnostic', th_job: 'Job', tile_health: 'Health', tile_queue: 'Queue depth', tile_reviewed: 'Reviewed', tile_warnings: 'Warnings', health_healthy: 'Healthy', health_degraded: 'Degraded', health_unavailable: 'Unavailable', pill_success: 'success', pill_warnings: 'warnings', pill_running: 'running', pill_failed: 'failed', pill_queued: 'queued', pill_interrupted: 'interrupted', pill_stale: 'stale', pill_skipped: 'skipped', word_ok: 'ok', storage_writable: 'writable', storage_not_writable: 'not writable', storage_degraded: 'degraded', storage_healthy: 'healthy', storage_unknown: 'unknown',
-    word_configured: 'configured', word_yes: 'yes', word_no: 'no', diag_corrupt: 'corrupt', diag_invalid: 'invalid', diag_truncated: 'truncated', diag_runtime_warnings: 'runtime warnings',
+    word_configured: 'configured', word_yes: 'yes', word_no: 'no', diag_corrupt: 'Corrupt', diag_invalid: 'Invalid', diag_truncated: 'Truncated', diag_runtime_warnings: 'Runtime warnings',
     m_fail_class: 'Failure classification', m_repo_rate: 'Repository success rate', m_daily_trend: 'Daily trend', empty_daily: 'No daily trend data.',
     th_window: 'Window', th_jobs: 'Jobs', th_success_rate: 'Success rate', th_trend: 'Trend', th_day: 'Day',
     h2_jobs: 'Jobs', f_owner: 'Owner', f_repository: 'Repository', f_state: 'State/outcome', f_failure_kind: 'Failure kind', f_diag_id: 'Diagnostic ID', f_from: 'From', f_to: 'To', f_advanced: 'Advanced filters', btn_apply: 'apply', f_all: 'all', btn_reset: 'reset', st_succeeded: 'Succeeded', st_succeeded_with_warnings: 'Succeeded with warnings', st_failed: 'Failed', st_running: 'Running', st_queued: 'Queued', st_interrupted: 'Interrupted', st_stale: 'Stale', st_skipped: 'Skipped', fk_job_timeout: 'Job timeout', fk_ocr_config_error: 'OCR config error', fk_provider_rate_limited: 'Provider rate limited', fk_provider_auth_failed: 'Provider auth failed', fk_provider_unavailable: 'Provider unavailable', fk_ocr_runtime_error: 'OCR runtime error', fk_git_error: 'Git error', fk_github_rate_limited: 'GitHub rate limited', fk_github_api_error: 'GitHub API error', fk_bot_runtime_error: 'Bot runtime error', fk_invalid_ocr_output: 'Invalid OCR output',
@@ -1015,8 +1012,8 @@ const I18N = {
     h2_diagnostics: '诊断', empty_jobs: '暂无任务。', empty_diagnostics: '暂无诊断。',
     h2_service_status: '状态', h2_overview: '服务状态', ss_uptime: '运行时长', ss_started: '启动时间', ss_version: '版本', ss_config_revision: '配置版本',
     ss_actual_port: '实际监听端口', ss_configured_port: '配置端口', ss_pending_port: '待生效端口',
-    ss_storage_health: '存储可写/降级', ss_storage_size: '存储用量 / 配额', ss_last_retention: '上次清理', ss_diag_counts: '损坏/截断的诊断',
-    ssg_runtime: '运行时', ssg_network: '网络', ssg_storage: '存储', ssg_diagnostics: '诊断', ss_port: '端口',
+    ss_storage_health: '状态', ss_storage_size: '用量', ss_last_retention: '上次清理',
+    ssg_runtime: '运行时', ssg_storage: '存储', ssg_diagnostics: '诊断', ss_port: '端口',
     h2_metrics: '指标与趋势', m_dur_p50: '耗时 p50', m_dur_p95: '耗时 p95', m_qw_p50: '排队等待 p50', m_qw_p95: '排队等待 p95',
     ss_running_job: '当前运行中任务', empty_running: '无运行中任务。', ss_queued: '排队中', ss_last_sf: '上次完成/失败', ss_last_success: '上次完成', ss_last_completed: '上次完成', ss_last_failure: '上次失败', th_diag: '诊断 ID', th_job: '任务', tile_health: '健康', tile_queue: '队列深度', tile_reviewed: '审查结果', tile_warnings: '警告', health_healthy: '健康', health_degraded: '降级', health_unavailable: '不可用', pill_success: '成功', pill_warnings: '带警告', pill_running: '运行中', pill_failed: '失败', pill_queued: '排队', pill_interrupted: '中断', pill_stale: '过期', pill_skipped: '跳过', word_ok: '成功', storage_writable: '可写', storage_not_writable: '不可写', storage_degraded: '降级', storage_healthy: '健康', storage_unknown: '未知',
     word_configured: '配置', word_yes: '是', word_no: '否', diag_corrupt: '损坏', diag_invalid: '无效', diag_truncated: '截断', diag_runtime_warnings: '运行时警告',
@@ -1532,10 +1529,11 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .adv-filters[open] > summary::before { transform: rotate(90deg); }
 .adv-filters[open] > summary { background: var(--bg-subtle); }
 .adv-grid { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; padding: 12px 14px; background: var(--bg-subtle); border-bottom: 1px solid var(--border); }
-.adv-grid > label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--fg-muted); }
+.adv-grid > label, .adv-grid .adv-field-group > label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--fg-muted); }
 .adv-grid input, .adv-grid select { min-width: 132px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 9px; min-height: 30px; font-size: 13px; color: var(--text); font-family: inherit; }
 .adv-grid input:focus, .adv-grid select:focus { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
-.adv-grid .adv-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.adv-grid .adv-field-group { display: flex; flex-wrap: nowrap; gap: 10px 12px; align-items: flex-end; }
+.adv-grid .adv-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex: 1 1 100%; margin-left: 0; }
 .adv-flag { pointer-events: none; padding: 1px 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
 nav.pagination { margin: 0; padding: 0; border: 0; justify-content: flex-start; gap: 12px; }
 nav.pagination a, nav.pagination span[aria-disabled=true] {
@@ -1652,16 +1650,16 @@ button:hover { transform: none; box-shadow: none; background: var(--surface-2); 
 .dashboard .twocol, .dashboard .box-grid.twocol, .dashboard .box-grid.sfl { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .dashboard .dcard { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-flat); }
 .dashboard .dcard .bd { padding: 14px 16px; }
-.dashboard .status-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+.dashboard .status-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
 .dashboard .status-group { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-flat); }
 .dashboard .status-group-label { padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; font-weight: 600; color: var(--fg-muted); }
 .dashboard .status-group .kv { padding: 7px 14px; }
 .dashboard .dcard .hd { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg); font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .dashboard .subhead { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
-.dashboard .kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.dashboard .kv { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .dashboard .kv:last-child { border-bottom: 0; }
-.dashboard .kv .k { color: var(--fg-muted); }
-.dashboard .kv .v { font-weight: 500; text-align: right; }
+.dashboard .kv .k { color: var(--fg-muted); flex: 0 1 auto; min-width: 0; }
+.dashboard .kv .v { font-weight: 500; text-align: right; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .dashboard .phase { display: flex; gap: 4px; margin-top: 10px; }
 .dashboard .phase span { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-inset); }
 .dashboard .phase span.done { background: var(--success); } .dashboard .phase span.cur { background: var(--accent); }
