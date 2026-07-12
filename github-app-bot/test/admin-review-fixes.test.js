@@ -924,8 +924,11 @@ test('jobs advanced filters keep From/To as one field group before actions', () 
     markup,
     /class="adv-field-group"[^>]*data-i18n-aria-label="aria_date_range"[^>]*>[\s\S]*name="from"[\s\S]*name="to"[\s\S]*<\/div>\s*<div class="adv-actions"/,
   );
-  assert.match(html, /\.adv-grid \.adv-field-group \{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;/);
-  assert.match(html, /\.adv-grid \.adv-actions \{[^}]*flex:\s*1\s+1\s+100%;/);
+  assert.match(html, /\.adv-grid \{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(148px,\s*1fr\)\)/);
+  assert.match(html, /\.adv-grid \.adv-field-group \{[^}]*grid-column:\s*span\s*2;[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(html, /\.adv-grid \.adv-actions \{[^}]*justify-content:\s*flex-start;/);
+  assert.doesNotMatch(html, /\.adv-grid \.adv-actions \{[^}]*flex:\s*1\s+1\s+100%;/);
+  assert.doesNotMatch(html, /\.adv-grid \.adv-field-group \{[^}]*flex:\s*1\s+1\s+220px;/);
   const dictionaries = extractI18nDictionaries(html);
   assert.equal(dictionaries.en.aria_date_range, 'Date range');
   assert.equal(dictionaries.zh.aria_date_range, '日期范围');
@@ -935,9 +938,10 @@ test('jobs advanced filters keep From/To as one field group before actions', () 
   );
 });
 
-test('jobs table compacts long job and diagnostic ids without wrapping strategy', () => {
+test('jobs table keeps full job and diagnostic ids with CSS truncation', () => {
   const jobId = 'b7877599-af77-4489-86dd-c0cbc869e75c';
   const diagnosticId = 'makoMakoGo/code-dispatcher-toolkit#64@4943807673';
+  const escapedDiag = diagnosticId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const html = renderJobsPage({
     csrfToken: 'csrf',
     jobs: [{
@@ -955,15 +959,16 @@ test('jobs table compacts long job and diagnostic ids without wrapping strategy'
   const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
   assert.match(markup, new RegExp(`href="/admin/jobs/${jobId}"`));
   assert.match(markup, new RegExp(`title="${jobId}"`));
-  assert.match(markup, /b7877599…e75c/);
-  assert.doesNotMatch(markup, new RegExp(`<code>${jobId}</code>`));
-  assert.match(markup, new RegExp(`title="${diagnosticId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-  assert.match(markup, /#64@4943807673/);
-  assert.doesNotMatch(markup, /code-dispatcher-toolkit#64@4943807673<\/code>/);
+  assert.match(markup, new RegExp(`class="id-clip">${jobId}</code>`));
+  assert.doesNotMatch(markup, /b7877599…e75c/);
+  assert.match(markup, new RegExp(`title="${escapedDiag}"`));
+  assert.match(markup, new RegExp(`class="subtle id-clip" title="${escapedDiag}">${escapedDiag}</code>`));
   assert.match(html, /\.gh-table \{[^}]*table-layout:\s*auto;/);
   assert.match(html, /class="gh-table jobs-table"/);
   assert.match(html, /\.jobs-table td\.repo \{[^}]*text-overflow:\s*ellipsis;/);
   assert.match(html, /\.jobs-table \.col-repo \{[^}]*width:\s*100%;/);
+  assert.match(html, /\.id-clip \{[^}]*text-overflow:\s*ellipsis;/);
+  assert.match(html, /\.jobs-table td\.id-cell > \.mono-link,\s*\.jobs-table td\.id-cell > code \{[^}]*text-overflow:\s*ellipsis;/);
   assert.match(html, /\.gh-table-wrap \{[^}]*overflow-x:\s*auto;/);
   assert.doesNotMatch(html, /\.gh-table \{[^}]*table-layout:\s*fixed;/);
   assert.doesNotMatch(html, /11\.75rem|7\.5rem|9\.5rem|6\.5rem/);
@@ -1009,9 +1014,10 @@ test('metrics repository table keeps numeric columns content-sized and right-ali
   assert.doesNotMatch(metricsCss, /\.metrics-table\s*\{\s*width:\s*fit-content/);
   assert.doesNotMatch(html, /\.gh-table th:nth-child\(3\)/);
 });
-test('Status last-completed cards compact diagnostic and job ids', () => {
+test('Status last-completed cards keep full diagnostic and job ids', () => {
   const jobId = '101b9f19-89e9-468f-b16e-19ed0800213a';
   const diagnosticId = 'makoMakoGo/oh-my-pi-coding-agent-with-a-very-long-name#350@4999999999';
+  const escapedDiag = diagnosticId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const html = renderDashboardPage({
     csrfToken: 'csrf',
     summary: {},
@@ -1032,11 +1038,25 @@ test('Status last-completed cards compact diagnostic and job ids', () => {
   });
   const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
   assert.match(markup, /data-i18n="ss_last_completed"/);
-  assert.match(markup, /#350@4999999999/);
-  assert.match(markup, new RegExp(`title="${diagnosticId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-  assert.doesNotMatch(markup, /oh-my-pi-coding-agent-with-a-very-long-name#350@4999999999<\/code>/);
-  assert.match(markup, /101b9f19…213a/);
+  assert.match(markup, new RegExp(`title="${escapedDiag}"`));
+  assert.match(markup, new RegExp(`class="subtle id-clip" title="${escapedDiag}">${escapedDiag}</code>`));
   assert.match(markup, new RegExp(`title="${jobId}"`));
+  assert.match(markup, new RegExp(`class="id-clip">${jobId}</code>`));
+  assert.doesNotMatch(markup, /101b9f19…213a/);
+  assert.match(html, /\.id-clip \{[^}]*text-overflow:\s*ellipsis;/);
+});
+
+test('job detail disclosure cards use full-summary hover not h2 patch', () => {
+  const html = renderJobDetailPage({
+    csrfToken: 'csrf',
+    job: { id: 'abc', repository: { fullName: 'alice/repo' }, result: {} },
+  });
+  assert.match(html, /details\.card > summary:hover \{[^}]*background:\s*var\(--bg-subtle\)/);
+  assert.doesNotMatch(html, /details\.card > summary:hover > h2 \{[^}]*background:\s*var\(--surface-3\)/);
+  assert.match(html, /details\.card \{[^}]*padding:\s*0;/);
+  assert.match(html, /data-i18n="jd_reporting_error">Reporting error</);
+  assert.match(html, /data-i18n="jd_cleanup_warning">Cleanup warning</);
+  assert.match(html, /data-i18n="jd_runtime">Runtime settings</);
 });
 
 test('settings subnav keeps count after i18n init', () => {

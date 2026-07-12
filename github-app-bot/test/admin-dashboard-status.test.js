@@ -40,7 +40,7 @@ test('metrics page renders latency percentiles comments failure repository and d
       queueWaitP50Ms: 5 * 60 * 1000,
       queueWaitP95Ms: 10 * 60 * 1000,
       averageCommentsGenerated: 4.5,
-      averageCommentsPosted: 2,
+      averageCommentsPosted: 1.6666666666666667,
       stale: 1,
       skipped: 1,
       interrupted: 1,
@@ -50,12 +50,12 @@ test('metrics page renders latency percentiles comments failure repository and d
       },
     },
     windows: {
-      '24h': { jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 2, failureKinds: { provider_unavailable: 1 }, repositories: { 'alice/repo': { jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5 } } },
-      '7d': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 2 },
-      '30d': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 2 },
+      '24h': { jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 1.6666666666666667, failureKinds: { provider_unavailable: 1 }, repositories: { 'alice/repo': { jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5 } } },
+      '7d': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 1.6666666666666667 },
+      '30d': { jobs: 2, succeeded: 1, failed: 1, successRate: 0.5, durationP50Ms: 10 * 60 * 1000, durationP95Ms: 30 * 60 * 1000, queueWaitP50Ms: 5 * 60 * 1000, queueWaitP95Ms: 10 * 60 * 1000, averageCommentsGenerated: 4.5, averageCommentsPosted: 1.6666666666666667 },
     },
     dailyTrend: [
-      { day: '2026-06-01', jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5, averageCommentsGenerated: 4.5, averageCommentsPosted: 2 },
+      { day: '2026-06-01', jobs: 2, succeeded: 1, failed: 1, stale: 1, skipped: 1, interrupted: 1, successRate: 0.5, averageCommentsGenerated: 4.5, averageCommentsPosted: 1.6666666666666667 },
     ],
   };
 
@@ -63,6 +63,7 @@ test('metrics page renders latency percentiles comments failure repository and d
     csrfToken: 'csrf',
     stats,
   });
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '');
 
   assert.match(html, /Duration p50/);
   assert.match(html, /10m 0s/);
@@ -74,7 +75,8 @@ test('metrics page renders latency percentiles comments failure repository and d
   assert.match(html, /Avg comments generated/);
   assert.match(html, /<td>4.5<\/td>/);
   assert.match(html, /Avg comments posted/);
-  assert.match(html, /<td>2<\/td>/);
+  assert.match(html, /<td>1\.67<\/td>/);
+  assert.doesNotMatch(html, /1\.6666666666666667/);
   assert.match(html, /Stale/);
   assert.match(html, /Skipped/);
   assert.match(html, /Interrupted/);
@@ -83,8 +85,8 @@ test('metrics page renders latency percentiles comments failure repository and d
   assert.match(html, /data-i18n="th_repository">Repository</);
   assert.match(html, /alice\/repo/);
   assert.match(html, /50%/);
-  assert.match(html, /Daily trend/);
-  assert.match(html, /2026-06-01/);
+  assert.match(markup, /data-i18n="m_daily_trend">Daily trend</);
+  assert.match(markup, /2026-06-01/);
 });
 
 test('service status renders actual listener port separately from configured port', async () => {

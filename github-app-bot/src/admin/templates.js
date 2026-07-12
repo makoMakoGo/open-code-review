@@ -72,7 +72,7 @@ export function renderLayout({ title, active = 'dashboard', csrfToken = '', body
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} · Open Code Review Admin</title>
-${fontLinks()}${themeInitScript(cspNonce)}<style>${baseStyles()}</style>
+${themeInitScript(cspNonce)}<style>${baseStyles()}</style>
 </head>
 <body>
 <a class="skip-link" href="#main" data-i18n="skip_to_main">Skip to main</a>
@@ -112,7 +112,7 @@ export function renderLoginPage({ csrfToken = '', error = '', disabledReason = '
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Open Code Review Admin</title>
-${fontLinks()}${themeInitScript(cspNonce)}<style>${baseStyles()}</style>
+${themeInitScript(cspNonce)}<style>${baseStyles()}</style>
 </head>
 <body class="login-body">
 <div class="login-shell">
@@ -278,8 +278,8 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
     { k: 'Duration p95', v: formatDuration(total.durationP95Ms), key: 'm_dur_p95' },
     { k: 'Queue wait p50', v: formatDuration(total.queueWaitP50Ms), key: 'm_qw_p50' },
     { k: 'Queue wait p95', v: formatDuration(total.queueWaitP95Ms), key: 'm_qw_p95' },
-    { k: 'Avg comments generated', v: numberOrDash(total.averageCommentsGenerated ?? total.avgCommentsGenerated), key: 'm_avg_gen' },
-    { k: 'Avg comments posted', v: numberOrDash(total.averageCommentsPosted ?? total.avgCommentsPosted), key: 'm_avg_post' },
+    { k: 'Avg comments generated', v: formatAverage(total.averageCommentsGenerated ?? total.avgCommentsGenerated), key: 'm_avg_gen' },
+    { k: 'Avg comments posted', v: formatAverage(total.averageCommentsPosted ?? total.avgCommentsPosted), key: 'm_avg_post' },
     { k: 'Stale', v: numberOrDash(total.stale), key: 'm_stale' },
     { k: 'Skipped', v: numberOrDash(total.skipped), key: 'm_skipped' },
     { k: 'Interrupted', v: numberOrDash(total.interrupted), key: 'm_interrupted' },
@@ -297,12 +297,12 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
 
   const daily = Array.isArray(mstats.dailyTrend) ? mstats.dailyTrend : [];
   const dailyHtml = daily.length
-    ? `<div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${daily.map((day) => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsGenerated))}</td><td>${safeDisplay(numberOrDash(day.averageCommentsPosted))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-scroll"><table class="gh-table metrics-table"><thead><tr><th data-i18n="th_day">Day</th><th data-i18n="th_jobs">Jobs</th><th data-i18n="th_success_rate">Success rate</th><th data-i18n="m_avg_gen">Avg comments generated</th><th data-i18n="m_avg_post">Avg comments posted</th><th data-i18n="m_stale">Stale</th><th data-i18n="m_skipped">Skipped</th><th data-i18n="m_interrupted">Interrupted</th></tr></thead><tbody>${daily.map((day) => `<tr><th scope="row">${safeDisplay(day.day)}</th><td>${safeDisplay(numberOrDash(day.jobs))}</td><td>${safeDisplay(formatPercent(day.successRate))}</td><td>${safeDisplay(formatAverage(day.averageCommentsGenerated))}</td><td>${safeDisplay(formatAverage(day.averageCommentsPosted))}</td><td>${safeDisplay(numberOrDash(day.stale))}</td><td>${safeDisplay(numberOrDash(day.skipped))}</td><td>${safeDisplay(numberOrDash(day.interrupted))}</td></tr>`).join('')}</tbody></table></div>`
     : '<p class="empty" data-i18n="empty_daily">No daily trend data.</p>';
 
   const windowRows = ['24h', '7d', '30d'].map((name) => {
     const bucket = windows[name] || {};
-    return `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(numberOrDash(bucket.jobs))}</td><td>${safeDisplay(formatPercent(bucket.successRate))}</td><td>${safeDisplay(formatDuration(bucket.durationP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.durationP95Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP95Ms))}</td><td>${safeDisplay(numberOrDash(bucket.averageCommentsGenerated))}</td><td>${safeDisplay(numberOrDash(bucket.averageCommentsPosted))}</td></tr>`;
+    return `<tr><th scope="row">${safeDisplay(name)}</th><td>${safeDisplay(numberOrDash(bucket.jobs))}</td><td>${safeDisplay(formatPercent(bucket.successRate))}</td><td>${safeDisplay(formatDuration(bucket.durationP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.durationP95Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP50Ms))}</td><td>${safeDisplay(formatDuration(bucket.queueWaitP95Ms))}</td><td>${safeDisplay(formatAverage(bucket.averageCommentsGenerated))}</td><td>${safeDisplay(formatAverage(bucket.averageCommentsPosted))}</td></tr>`;
   }).join('');
 
   const body = `<div class="metrics-page">
@@ -318,6 +318,7 @@ export function renderMetricsPage({ csrfToken, stats = null, metrics = null, csp
   ${repoHtml}
 </div>
 <div class="box">
+  <div class="box-header"><strong data-i18n="m_daily_trend">Daily trend</strong></div>
   ${dailyHtml}
 </div>
 </div>`;
@@ -626,7 +627,7 @@ export function renderErrorPage({ csrfToken = '', status = 500, title = 'Error',
   const body = `<section class="card"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><p class="muted">status ${escapeHtml(status)}</p></section>`;
   return csrfToken
     ? renderLayout({ title, active: '', csrfToken, body, cspNonce })
-    : `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${fontLinks()}${themeInitScript(cspNonce)}<style>${baseStyles()}</style></head><body><main class="centered"><h1 class="page-title">${escapeHtml(title)}</h1>${body}</main>${bodyScript(cspNonce)}</body></html>`;
+    : `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${themeInitScript(cspNonce)}<style>${baseStyles()}</style></head><body><main class="centered"><h1 class="page-title">${escapeHtml(title)}</h1>${body}</main>${bodyScript(cspNonce)}</body></html>`;
 }
 
 export function renderJobsTable(jobs) {
@@ -638,22 +639,20 @@ export function renderJobsTable(jobs) {
     const actor = job?.actor ?? '';
     const diagnosticId = job?.diagnosticId ?? '';
     const queuedAt = job?.queuedAt ?? job?.createdAt ?? job?.startedAt;
-    const idLabel = id ? compactJobId(id) : '';
-    const diagLabel = diagnosticId ? compactDiagnosticId(diagnosticId) : '';
     const idCell = id
-      ? `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}" title="${escapeAttribute(id)}"><code>${safeDisplay(idLabel)}</code></a>`
+      ? `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}" title="${escapeAttribute(id)}"><code class="id-clip">${safeDisplay(id)}</code></a>`
       : '';
     const pr = job?.pullNumber != null && job?.pullNumber !== '' ? `#${safeDisplay(job.pullNumber)}` : '—';
     const diagCell = diagnosticId
-      ? `<code class="subtle" title="${escapeAttribute(diagnosticId)}">${safeDisplay(diagLabel)}</code>`
+      ? `<code class="subtle id-clip" title="${escapeAttribute(diagnosticId)}">${safeDisplay(diagnosticId)}</code>`
       : '—';
     return `<tr>
-      <td>${idCell}</td>
+      <td class="id-cell">${idCell}</td>
       <td>${jobStatusPill(status)}</td>
       <td class="repo" title="${escapeAttribute(repo)}">${safeDisplay(repo)}</td>
       <td>${pr}</td>
       <td title="${escapeAttribute(actor || '—')}">${safeDisplay(actor || '—')}</td>
-      <td title="${escapeAttribute(diagnosticId || '—')}">${diagCell}</td>
+      <td class="id-cell" title="${escapeAttribute(diagnosticId || '—')}">${diagCell}</td>
       <td class="subtle">${safeDisplay(formatDate(queuedAt) || '—')}</td>
     </tr>`;
   }).join('');
@@ -900,23 +899,6 @@ function safeDisplay(value) {
   return escapeHtml(redactInlineSecrets(value ?? ''));
 }
 
-function compactJobId(id) {
-  const value = String(id ?? '');
-  if (value.length <= 16) return value;
-  return `${value.slice(0, 8)}…${value.slice(-4)}`;
-}
-
-function compactDiagnosticId(id) {
-  const value = String(id ?? '');
-  if (!value) return '';
-  const hash = value.lastIndexOf('#');
-  if (hash >= 0) return value.slice(hash);
-  const at = value.lastIndexOf('@');
-  if (at >= 0) return value.slice(at);
-  if (value.length <= 24) return value;
-  return `${value.slice(0, 10)}…${value.slice(-6)}`;
-}
-
 function durationBetween(start, end) {
   if (!start || !end) return null;
   const startMs = new Date(start).getTime();
@@ -959,6 +941,11 @@ function numberOrDash(value) {
   return Number.isFinite(value) ? String(value) : '—';
 }
 
+function formatAverage(value) {
+  if (!Number.isFinite(value)) return '—';
+  return String(Number(value.toFixed(2)));
+}
+
 function mapServiceHealth(level) {
   const normalized = String(level ?? '').toLowerCase();
   if (normalized === 'healthy') return { labelKey: 'health_healthy', label: 'Healthy', dot: 'ok' };
@@ -974,13 +961,13 @@ function jobIdOf(job) {
 function jobIdCodeLink(job) {
   const id = jobIdOf(job);
   if (!id) return '<code>—</code>';
-  return `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}" title="${escapeAttribute(id)}"><code>${safeDisplay(compactJobId(id))}</code></a>`;
+  return `<a class="mono-link" href="/admin/jobs/${escapeAttribute(id)}" title="${escapeAttribute(id)}"><code class="id-clip">${safeDisplay(id)}</code></a>`;
 }
 
 function diagnosticCode(diagnosticId) {
   const value = diagnosticId == null || diagnosticId === '' ? '' : String(diagnosticId);
   if (!value) return '<code>—</code>';
-  return `<code class="subtle" title="${escapeAttribute(value)}">${safeDisplay(compactDiagnosticId(value))}</code>`;
+  return `<code class="subtle id-clip" title="${escapeAttribute(value)}">${safeDisplay(value)}</code>`;
 }
 
 function jobIdRow(job) {
@@ -1112,11 +1099,6 @@ function bodyScript(nonce) {
   return scriptTag(`(function(){var I18N=${safeScriptJson(I18N)};function dict(){return I18N[document.documentElement.lang]||I18N.en;}function applyLang(){var d=dict();document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(d[k]!==undefined)el.textContent=d[k];});document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){var k=el.getAttribute('data-i18n-aria-label');if(d[k]!==undefined)el.setAttribute('aria-label',d[k]);});document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el){var k=el.getAttribute('data-i18n-placeholder');if(d[k]!==undefined)el.setAttribute('placeholder',d[k]);});document.querySelectorAll('[data-i18n-template]').forEach(function(el){var t=d[el.getAttribute('data-i18n-template')];if(t!==undefined){el.textContent=t.split('{page}').join(el.getAttribute('data-page')||'').split('{total-pages}').join(el.getAttribute('data-total-pages')||'').split('{total}').join(el.getAttribute('data-total')||'').split('{visible}').join(el.getAttribute('data-visible')||'');}});document.querySelectorAll('[data-theme-target]').forEach(function(b){var light=document.documentElement.dataset.theme==='light';b.setAttribute('aria-label',light?d.toggle_theme_dark:d.toggle_theme_light);});document.querySelectorAll('[data-lang-target]').forEach(function(b){var zh=document.documentElement.lang==='zh';b.textContent=zh?'EN':'中文';b.setAttribute('aria-label',zh?d.toggle_lang_en:d.toggle_lang_zh);});}function setLang(l){document.documentElement.lang=l;try{localStorage.setItem('ocr-lang',l);}catch(e){}applyLang();}function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('ocr-theme',t);}catch(e){}applyLang();}document.addEventListener('click',function(e){var n=e.target.closest&&e.target.closest('[data-act]');if(!n)return;var a=n.getAttribute('data-act');if(a==='toggle-lang')setLang(document.documentElement.lang==='zh'?'en':'zh');else if(a==='toggle-theme')setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');});applyLang();})();`, nonce);
 }
 
-function fontLinks() {
-  // System font stacks only — no external webfont fetch (self-hosted, offline-friendly).
-  return '';
-}
-
 function baseStyles() {
   return `:root {
   color-scheme: light;
@@ -1139,7 +1121,7 @@ function baseStyles() {
   --red: #cf222e; --red-soft: rgba(207, 34, 46, 0.08);
   /* semantic aliases — components reference these, not the raw palette */
   --ok: var(--green); --warn: var(--amber); --fail: var(--red); --run: var(--cyan); --queued: var(--faint);
-  --accent: var(--cyan); --link: var(--cyan); --link-hover: #0550ae; --link-shadow: none;
+  --accent: var(--cyan); --link: var(--cyan); --link-hover: #0550ae;
   --primary-bg: #1f883d; --primary-bg-hover: #1a7f37;
   /* radii, motion, elevation — Primer-ish */
   --radius: 6px; --radius-sm: 6px; --radius-pill: 999px;
@@ -1182,8 +1164,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 p { margin: 0.75rem 0; }
-a { color: var(--link); text-decoration: none; transition: color var(--t-fast) var(--ease), text-shadow var(--t-fast) var(--ease); }
-a:hover { color: var(--link-hover); text-shadow: var(--link-shadow); }
+a { color: var(--link); text-decoration: none; transition: color var(--t-fast) var(--ease); }
+a:hover { color: var(--link-hover); }
 code { font-family: var(--font-mono); background: var(--surface); padding: 0.15em 0.4em; border-radius: var(--radius-sm); color: var(--text); font-size: 0.9em; border: 1px solid var(--border); }
 pre { margin: 0.8rem 0; padding: 1rem; white-space: pre-wrap; word-break: break-word; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--font-mono); font-size: 13px; }
 h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
@@ -1230,7 +1212,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
 :root[data-theme="dark"] .toggle-btn .theme-sun { display: block; }
 .nav a .nav-text { min-width: 0; }
 .side-foot { margin-top: auto; font-size: 11px; color: var(--faint); padding: 8px 10px; }
-@keyframes blink { to { visibility: hidden; } }
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 100vh; }
 header.topbar {
@@ -1470,12 +1451,47 @@ nav.pagination span[aria-disabled=true] { opacity: 0.5; }
 
 main > *:first-child { margin-top: 0; }
 
-details.card > summary { cursor: pointer; list-style: none; display: block; }
+details.card { padding: 0; overflow: hidden; }
+details.card > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid transparent;
+  transition: background var(--t-fast) var(--ease);
+}
 details.card > summary::-webkit-details-marker { display: none; }
-details.card > summary > h2 { transition: background var(--t-fast) var(--ease); }
-details.card > summary:hover > h2 { background: var(--surface-3); }
-details.card > summary > h2::after { content: "\\2192"; margin-left: auto; font-family: sans-serif; transition: transform var(--t-slow) var(--ease); font-size: 14px; }
+details.card > summary:hover { background: var(--bg-subtle); }
+details.card > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+details.card[open] > summary {
+  border-bottom-color: var(--border);
+  background: var(--bg);
+}
+details.card[open] > summary:hover { background: var(--bg-subtle); }
+details.card > summary > h2 {
+  margin: 0;
+  padding: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+}
+details.card > summary > h2::after {
+  content: "\\2192";
+  margin-left: auto;
+  font-family: sans-serif;
+  transition: transform var(--t-slow) var(--ease);
+  font-size: 14px;
+  color: var(--fg-muted);
+}
 details.card[open] > summary > h2::after { transform: rotate(90deg); }
+details.card > :not(summary) { margin: 0; padding: 12px 16px; }
+details.card > :not(summary):last-child { margin-bottom: 0; }
 
 .empty { color: var(--muted); font-style: italic; }
 .danger { color: var(--fail); }
@@ -1507,9 +1523,13 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
   .strip { grid-template-columns: 1fr; }
   .strip .num { font-size: 2rem; }
   .card { padding: 1.25rem; }
-  .card > h2, .card > summary > h2 { margin: -1.25rem -1.25rem 1.25rem; padding: 0.85rem 1.25rem; }
+  .card > h2 { margin: -1.25rem -1.25rem 1.25rem; padding: 0.85rem 1.25rem; }
+  details.card > summary { min-height: 44px; padding: 12px 16px; }
+  details.card > summary > h2 { margin: 0; padding: 0; }
   .signout button, .toggle-btn, nav.pagination a, .filter-reset, button { min-height: 44px; }
   .toggle-btn { min-width: 44px; }
+  .adv-grid { grid-template-columns: 1fr; }
+  .adv-grid .adv-field-group { grid-column: auto; grid-template-columns: 1fr; }
 }
 
 
@@ -1558,6 +1578,26 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .gh-table .subtle, code.subtle { color: var(--muted); }
 .mono-link code { color: var(--accent); background: transparent; border: 0; padding: 0; }
 .mono-link:hover code { text-decoration: underline; }
+.id-clip {
+  display: inline-block;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.jobs-table td.id-cell {
+  max-width: 12rem;
+}
+.jobs-table td.id-cell > .mono-link,
+.jobs-table td.id-cell > code {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 /* Jobs list: short columns hug content; repository absorbs leftover and ellipsizes. */
 .jobs-table .col-repo { width: 100%; }
 .jobs-table td.repo {
@@ -1597,12 +1637,52 @@ details.card[open] > summary > h2::after { transform: rotate(90deg); }
 .adv-filters > summary::before { content: ''; width: 0; height: 0; border-left: 4px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform var(--t-fast) var(--ease); }
 .adv-filters[open] > summary::before { transform: rotate(90deg); }
 .adv-filters[open] > summary { background: var(--bg-subtle); }
-.adv-grid { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; padding: 12px 14px; background: var(--bg-subtle); border-bottom: 1px solid var(--border); }
-.adv-grid > label, .adv-grid .adv-field-group > label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--fg-muted); }
-.adv-grid input, .adv-grid select { min-width: 132px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 9px; min-height: 30px; font-size: 13px; color: var(--text); font-family: inherit; }
+.adv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 10px 12px;
+  align-items: end;
+  padding: 12px 14px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+}
+.adv-grid > label, .adv-grid .adv-field-group > label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+.adv-grid input, .adv-grid select {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  min-height: 30px;
+  font-size: 13px;
+  color: var(--text);
+  font-family: inherit;
+}
 .adv-grid input:focus, .adv-grid select:focus { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
-.adv-grid .adv-field-group { display: flex; flex-wrap: nowrap; gap: 10px 12px; align-items: flex-end; }
-.adv-grid .adv-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex: 1 1 100%; margin-left: 0; }
+.adv-grid .adv-field-group {
+  grid-column: span 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  align-items: end;
+  min-width: 0;
+}
+.adv-grid .adv-field-group input { width: 100%; min-width: 0; }
+.adv-grid .adv-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
 .adv-flag { pointer-events: none; padding: 1px 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
 nav.pagination { margin: 0; padding: 0; border: 0; justify-content: flex-start; gap: 12px; }
 nav.pagination a, nav.pagination span[aria-disabled=true] {
