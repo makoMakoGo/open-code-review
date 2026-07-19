@@ -11,11 +11,10 @@ import enTools from './en/tools.md';
 import enMcp from './en/mcp.md';
 import enViewer from './en/viewer.md';
 import enTelemetry from './en/telemetry.md';
-import enIntegrations from './en/integrations.md';
 import enAgentSkill from './en/integrations/agent-skill.md';
 import enClaudeCode from './en/integrations/claude-code.md';
-import enSubprocess from './en/integrations/subprocess.md';
 import enCicd from './en/integrations/ci.md';
+import enDelegate from './en/integrations/delegate.md';
 import enContributing from './en/contributing.md';
 import enFaq from './en/faq.md';
 
@@ -30,11 +29,10 @@ import zhTools from './zh/tools.md';
 import zhMcp from './zh/mcp.md';
 import zhViewer from './zh/viewer.md';
 import zhTelemetry from './zh/telemetry.md';
-import zhIntegrations from './zh/integrations.md';
 import zhAgentSkill from './zh/integrations/agent-skill.md';
 import zhClaudeCode from './zh/integrations/claude-code.md';
-import zhSubprocess from './zh/integrations/subprocess.md';
 import zhCicd from './zh/integrations/ci.md';
+import zhDelegate from './zh/integrations/delegate.md';
 import zhContributing from './zh/contributing.md';
 import zhFaq from './zh/faq.md';
 
@@ -49,11 +47,10 @@ import jaTools from './ja/tools.md';
 import jaMcp from './ja/mcp.md';
 import jaViewer from './ja/viewer.md';
 import jaTelemetry from './ja/telemetry.md';
-import jaIntegrations from './ja/integrations.md';
 import jaAgentSkill from './ja/integrations/agent-skill.md';
 import jaClaudeCode from './ja/integrations/claude-code.md';
-import jaSubprocess from './ja/integrations/subprocess.md';
 import jaCicd from './ja/integrations/ci.md';
+import jaDelegate from './ja/integrations/delegate.md';
 import jaContributing from './ja/contributing.md';
 import jaFaq from './ja/faq.md';
 
@@ -68,11 +65,10 @@ export type DocSlug =
   | 'mcp'
   | 'viewer'
   | 'telemetry'
-  | 'integrations'
   | 'agent-skill'
   | 'claude-code'
-  | 'subprocess'
   | 'cicd'
+  | 'delegate'
   | 'contributing'
   | 'faq';
 
@@ -87,11 +83,10 @@ const enDocs: Record<DocSlug, string> = {
   'mcp': enMcp,
   'viewer': enViewer,
   'telemetry': enTelemetry,
-  'integrations': enIntegrations,
   'agent-skill': enAgentSkill,
   'claude-code': enClaudeCode,
-  'subprocess': enSubprocess,
   'cicd': enCicd,
+  'delegate': enDelegate,
   'contributing': enContributing,
   'faq': enFaq,
 };
@@ -107,11 +102,10 @@ const zhDocs: Record<DocSlug, string> = {
   'mcp': zhMcp,
   'viewer': zhViewer,
   'telemetry': zhTelemetry,
-  'integrations': zhIntegrations,
   'agent-skill': zhAgentSkill,
   'claude-code': zhClaudeCode,
-  'subprocess': zhSubprocess,
   'cicd': zhCicd,
+  'delegate': zhDelegate,
   'contributing': zhContributing,
   'faq': zhFaq,
 };
@@ -127,11 +121,10 @@ const jaDocs: Record<DocSlug, string> = {
   'mcp': jaMcp,
   'viewer': jaViewer,
   'telemetry': jaTelemetry,
-  'integrations': jaIntegrations,
   'agent-skill': jaAgentSkill,
   'claude-code': jaClaudeCode,
-  'subprocess': jaSubprocess,
   'cicd': jaCicd,
+  'delegate': jaDelegate,
   'contributing': jaContributing,
   'faq': jaFaq,
 };

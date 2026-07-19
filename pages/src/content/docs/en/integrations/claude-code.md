@@ -12,9 +12,9 @@ ones worth adopting.
 ## What ships in the repo
 
 The repo ships a Claude Code plugin under
-[`plugins/open-code-review/`](https://github.com/alibaba/open-code-review/tree/main/plugins/open-code-review).
+[`plugins/open-code-review/claude-code/`](https://github.com/alibaba/open-code-review/tree/main/plugins/open-code-review/claude-code).
 The command prompt itself lives at
-[`plugins/open-code-review/commands/review.md`](https://github.com/alibaba/open-code-review/blob/main/plugins/open-code-review/commands/review.md)
+[`plugins/open-code-review/claude-code/commands/review.md`](https://github.com/alibaba/open-code-review/blob/main/plugins/open-code-review/claude-code/commands/review.md)
 and is the source of truth for the workflow described below.
 
 ## Install
@@ -42,7 +42,7 @@ straight into `.claude/commands/`. This registers as `/open-code-review`
 ```bash
 mkdir -p .claude/commands
 curl -o .claude/commands/open-code-review.md \
-  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/commands/review.md
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/review.md
 ```
 
 **User-level** (available in every project on the machine):
@@ -50,7 +50,7 @@ curl -o .claude/commands/open-code-review.md \
 ```bash
 mkdir -p ~/.claude/commands
 curl -o ~/.claude/commands/open-code-review.md \
-  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/commands/review.md
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/review.md
 ```
 
 ### Other agents with command support
@@ -64,11 +64,9 @@ reads commands from, and invoke it the way your agent invokes
 commands. The prompt body is agent-agnostic — it just tells the model
 which `ocr` flags to pick and how to triage the output.
 
-> **Prerequisite:** the command will install the `ocr` CLI itself the
-> first time it runs (via `npm install -g @alibaba-group/open-code-review`)
-> if the binary isn't on `PATH`. You **do** need an LLM configured up
-> front — the command will fail if `ocr llm test` can't reach one. See
-> [Configuration](../../configuration/).
+> **Tip:** if you don't want to configure an LLM yourself, try
+> [Delegation Mode](../delegate/) — it lets the host agent (Claude Code)
+> supply the model, so no separate LLM setup is needed.
 
 ## Use
 
@@ -94,10 +92,8 @@ The command prompt is short — three steps:
 
 1. **Run the review.** Invoke `ocr review --audience agent` with the
    flags inferred from your request (plus an optional `--background`
-   when you've described requirement context). If the `ocr` binary
-   isn't on `PATH`, the command auto-installs it via
-   `npm i -g @alibaba-group/open-code-review` and continues. Output is
-   captured with a 5-minute timeout.
+   when you've described requirement context). Output is captured with
+   a 5-minute timeout.
 2. **Filter and evaluate.** Classify each comment as **High** /
    **Medium** / **Low**. Low-confidence comments (likely false
    positives, nitpicks, lacking context) are dropped silently; the
@@ -115,5 +111,3 @@ re-reads commands on every invocation, so no restart is needed.
 
 - [Agent Skill](../agent-skill/) — the SDK-level equivalent; same
   underlying CLI, different defaults (asks before fixing).
-- [Direct Subprocess](../subprocess/) — bypass the slash command and
-  call the CLI yourself.

@@ -134,6 +134,32 @@ OCR_INSTALL_DIR="$HOME/.local/bin" OCR_VERSION=v1.3.13 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/alibaba/open-code-review/main/install.sh)"
 ```
 
+Windows（PowerShell 5.1+）では：
+
+```powershell
+irm https://raw.githubusercontent.com/alibaba/open-code-review/main/install.ps1 | iex
+```
+
+このスクリプトは適切な Windows リリースバイナリを選択し、SHA-256 チェックサムを検証して、`ocr.exe` として `%LOCALAPPDATA%\Programs\ocr` にインストールします。インストール先は `OCR_INSTALL_DIR` で、リリースバージョンは `OCR_VERSION` で上書きできます：
+
+```powershell
+$env:OCR_INSTALL_DIR = "$env:USERPROFILE\bin"
+$env:OCR_VERSION = "v1.3.13"
+irm https://raw.githubusercontent.com/alibaba/open-code-review/main/install.ps1 | iex
+```
+
+リモートスクリプトをシェルに直接パイプすると、インターネット上のコードが実行されます。先にダウンロードして内容を確認してから実行することを推奨します：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alibaba/open-code-review/main/install.sh -o install.sh
+less install.sh && sh install.sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/alibaba/open-code-review/main/install.ps1 -OutFile install.ps1
+notepad install.ps1   # 確認後: .\install.ps1
+```
+
 <details>
 <summary>手動ダウンロード（Windows を含む全プラットフォーム）</summary>
 
@@ -219,7 +245,7 @@ ocr config set custom_providers.my-gateway.api_key your-api-key-here
 ocr config set custom_providers.my-gateway.model gpt-4o
 ```
 
-> カスタムプロバイダーでは`url`と`protocol`が必須です。サポートされるプロトコル：`anthropic`、`openai`。
+> カスタムプロバイダーでは`url`と`protocol`が必須です。サポートされるプロトコル：`anthropic`、`openai`、`openai-responses`。
 
 オプション設定：
 
@@ -252,6 +278,17 @@ export OCR_LLM_TOKEN=your-api-key-here
 export OCR_LLM_MODEL=claude-opus-4-6
 export OCR_USE_ANTHROPIC=true
 ```
+
+OpenAI Responses API（GPT-5.x / o-シリーズモデル）を使うには、`OCR_USE_ANTHROPIC` の代わりに `OCR_LLM_PROTOCOL` を設定してください:
+
+```bash
+export OCR_LLM_URL=https://api.openai.com/v1
+export OCR_LLM_TOKEN=your-openai-key
+export OCR_LLM_MODEL=gpt-5.4
+export OCR_LLM_PROTOCOL=openai-responses
+```
+
+`OCR_LLM_PROTOCOL` は `anthropic`、`openai`、`openai-responses`を受け付け、`OCR_USE_ANTHROPIC` と同時に設定した場合は優先されます。
 
 Claude Codeの環境変数（`ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`）とも互換性があり、`~/.zshrc` / `~/.bashrc`からこれらのexportをパースします。
 
@@ -287,6 +324,11 @@ ocr review --from main --to feature-branch --resume <session-id>
 # フルファイルスキャン — diffではなくファイル全体をレビュー（git履歴不要）
 ocr scan                          # リポジトリ全体をスキャン
 ocr scan --path internal/agent    # ディレクトリまたは特定のファイルをスキャン
+
+# デリゲートモード — AI コーディングエージェントが自らレビューを実行
+# OCR はファイル選択とルール解決を担当。LLM 設定不要
+ocr delegate preview
+ocr delegate rule src/main.go src/handler.go
 ```
 
 ### コーディングエージェントとの統合
@@ -303,6 +345,14 @@ npx skills add alibaba/open-code-review --skill open-code-review
 
 これにより、[skillsレジストリ](skills/open-code-review/SKILL.md)から`open-code-review`スキルがインストールされ、コーディングエージェントにコードレビューのための`ocr`の呼び出し方、優先度による問題の分類、必要に応じた修正の適用を教えます。
 
+**デリゲートモード** — コーディングエージェント自身がレビューを実行する場合（OCR はファイル選択とルール解決のみを担当、OCR 側の LLM 設定不要）：
+
+```bash
+npx skills add alibaba/open-code-review --skill open-code-review-delegate
+```
+
+詳細は [skills/open-code-review-delegate/SKILL.md](skills/open-code-review-delegate/SKILL.md) を参照。
+
 #### オプション2: Claude Codeプラグインとしてインストール
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)の場合、Claude Code内で以下のコマンドを実行してコマンドプラグインをインストールします：
@@ -312,7 +362,7 @@ npx skills add alibaba/open-code-review --skill open-code-review
 /plugin install open-code-review@open-code-review
 ```
 
-これにより`/open-code-review:review`スラッシュコマンドが登録され、OCRを実行して問題を自動的にフィルタリング・修正します。
+これにより`/open-code-review:review`スラッシュコマンドが登録され、OCRを実行して問題を自動的にフィルタリング・修正します。また、`/open-code-review:delegate-review` デリゲートモードコマンドも提供されます（エージェントが自身の能力でレビューを実行し、OCR はファイル選択とルール解決を担当）。
 
 #### オプション3: Codexプラグインとしてインストール
 
@@ -391,7 +441,7 @@ ocr review --audience agent
 ```bash
 mkdir -p .claude/commands
 curl -o .claude/commands/open-code-review.md \
-  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/commands/review.md
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/review.md
 ```
 
 **ユーザーレベル**（全プロジェクトで個人用にグローバル利用）：
@@ -399,10 +449,24 @@ curl -o .claude/commands/open-code-review.md \
 ```bash
 mkdir -p ~/.claude/commands
 curl -o ~/.claude/commands/open-code-review.md \
-  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/commands/review.md
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/review.md
 ```
 
-> **前提条件**: すべての統合方法において、`ocr` CLIのインストールとLLMの設定が必要です。上記の[インストール](#インストール)と[LLMの設定](#1-llmの設定)を参照してください。
+デリゲートモード（OCR 側の LLM 設定不要）：
+
+```bash
+# プロジェクトレベル
+mkdir -p .claude/commands
+curl -o .claude/commands/open-code-review-delegate.md \
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/delegate-review.md
+
+# ユーザーレベル
+mkdir -p ~/.claude/commands
+curl -o ~/.claude/commands/open-code-review-delegate.md \
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/delegate-review.md
+```
+
+> **前提条件**：すべての統合方法には `ocr` CLI のインストールが必要です。標準モードではさらに LLM の設定が必要です — 上記の[インストール](#インストール)と[LLM の設定](#1-llm-の設定)を参照。デリゲートモードでは OCR 側の LLM 設定は**不要**です。
 
 ### CI/CD統合
 
@@ -455,6 +519,8 @@ GitHub 向けに、本リポジトリはリポジトリルートにすぐ使え�
 |---------|-------|-------------|
 | `ocr review` | `ocr r` | diffベースのコードレビューを開始 |
 | `ocr scan` | `ocr s` | ファイル全体をレビュー（diff不要） |
+| `ocr delegate preview` | `ocr d preview` | レビュー対象ファイル一覧をモード/参照メタデータ付きで出力（LLM 不要） |
+| `ocr delegate rule <path...>` | `ocr d rule` | 内容別にグループ化されたレビュールールを出力（LLM 不要） |
 | `ocr rules check <file>` | — | ファイルパスに適用されるレビュールールをプレビュー |
 | `ocr config provider` | — | 対話的プロバイダーセットアップ（ビルトイン、カスタム、手動） |
 | `ocr config model` | — | アクティブなプロバイダーの対話的モデル選択 |
@@ -546,6 +612,31 @@ ocr review --commit abc123 --resume <session-id>
 
 各実行前に、`ocr scan` はおおまかなトークンコスト見積もりを表示します。`--preview` でまずファイルリストを確認し、`--max-tokens-budget` で大規模リポジトリの支出を制限できます。
 
+### `ocr delegate` フラグ
+
+`ocr delegate` は AI コーディングエージェント向けのデリゲートモードです。LLM を呼び出さずに
+確定的なファイル選択とルール解決を提供します — 実際のレビューはホストエージェントが
+自身の能力で実行します。
+
+| サブコマンド | 説明 |
+|-------------|------|
+| `ocr delegate preview` | レビュー対象ファイル一覧をモード/参照メタデータ付きで出力 |
+| `ocr delegate rule <path...>` | 内容別にグループ化されたレビュールールを出力 |
+
+両サブコマンドは以下のフラグを共有します：
+
+| フラグ | 短縮形 | デフォルト | 説明 |
+|--------|--------|-----------|------|
+| `--repo` | — | カレントディレクトリ | Git リポジトリルート |
+| `--from` | — | — | ソース参照（例：`main`） |
+| `--to` | — | — | ターゲット参照（例：`feature-branch`） |
+| `--commit` | `-c` | — | 単一コミット |
+| `--exclude` | — | — | カンマ区切りの gitignore スタイルの除外パターン |
+| `--rule` | — | — | カスタム JSON レビュールールのパス |
+| `--background` | `-b` | — | オプションの要件/ビジネスコンテキスト |
+| `--background-file` | `-B` | — | Markdown ファイルからのビジネスコンテキスト |
+| `--max-git-procs` | — | `16` | 最大並行 git サブプロセス数 |
+
 ## 例
 
 ```bash
@@ -610,6 +701,12 @@ ocr scan --repo /path/to/plain/dir --format json
 
 # 最速スキャン：プランニング、重複排除、プロジェクトサマリーをスキップ
 ocr scan --no-plan --no-dedup --no-summary
+
+# デリゲートモード — AI エージェントがレビューを実行（LLM 設定不要）
+ocr delegate preview
+ocr delegate preview --from main --to feature-branch
+ocr delegate preview --commit abc123
+ocr delegate rule internal/handler.go internal/service.go cmd/main.go
 
 # ブラウザでレビューセッション履歴を表示
 ocr viewer
@@ -752,7 +849,7 @@ OCRは4層の優先度チェーンを使ってレビュールールを解決し�
 | `provider` | string | `anthropic` \| `openai` \| `dashscope` \| `deepseek` \| `z-ai` |
 | `providers.<name>.api_key` | string | プロバイダー固有のAPIキー |
 | `providers.<name>.url` | string | プロバイダーのベースURLオーバーライド |
-| `providers.<name>.protocol` | string | `anthropic` \| `openai` |
+| `providers.<name>.protocol` | string | `anthropic` \| `openai` \| `openai-responses` |
 | `providers.<name>.model` | string | プロバイダーのモデル名 |
 | `providers.<name>.models` | array | 対話的選択に使う任意のプロバイダーモデル一覧 |
 | `providers.<name>.auth_header` | string | `x-api-key` \| `authorization` |
@@ -767,7 +864,8 @@ OCRは4層の優先度チェーンを使ってレビュールールを解決し�
 | `llm.timeout_sec` | integer | リクエストごとのHTTPタイムアウト（秒）、デフォルト `300` |
 | `llm.extra_headers` | string | カンマ区切りの `key=value` HTTPヘッダー |
 | `llm.model` | string | `claude-opus-4-6` |
-| `llm.use_anthropic` | boolean | `true` \| `false` |
+| `llm.protocol` | string | `anthropic` \| `openai` \| `openai-responses`；`llm.use_anthropic` より優先 |
+| `llm.use_anthropic` | boolean | `true` \| `false`（レガシー；`llm.protocol` を推奨） |
 | `mcp_servers.<name>.command` | string | MCPサーバーを起動するコマンド |
 | `mcp_servers.<name>.args` | array | MCPサーバーのコマンドライン引数 |
 | `mcp_servers.<name>.env` | array | 環境変数（`KEY=VALUE`形式） |
@@ -827,9 +925,9 @@ ocr config set mcp_servers.codegraph.setup 'codegraph init && codegraph index'
 | `OCR_LLM_AUTH_HEADER` | Anthropic認証ヘッダー（`x-api-key`または`authorization`） |
 | `OCR_LLM_EXTRA_HEADERS` | カンマ区切りの `key=value` HTTPヘッダー |
 | `OCR_LLM_MODEL` | モデル名 |
+| `OCR_LLM_PROTOCOL` | プロトコル：`anthropic` \| `openai` \| `openai-responses`；`OCR_USE_ANTHROPIC` より優先 |
 | `OCR_LLM_TIMEOUT` | リクエストごとのHTTPタイムアウト（秒）、設定ファイルの `timeout_sec` を上書き |
-| `OCR_USE_ANTHROPIC` | `true` = Anthropic、`false` = OpenAI |
-
+| `OCR_USE_ANTHROPIC` | `true` = Anthropic、`false` = OpenAI Chat Completions（レガシー；`OCR_LLM_PROTOCOL` を推奨） |
 
 ## テレメトリー
 

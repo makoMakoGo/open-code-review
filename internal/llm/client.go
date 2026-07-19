@@ -1,5 +1,8 @@
 // Package llm provides LLM client interfaces supporting multiple protocols.
-// Supported protocols: Anthropic Messages API, OpenAI Chat Completions API.
+// Supported protocols (canonical names, see protocol.go):
+//   - "anthropic" — Anthropic Messages API
+//   - "openai" — OpenAI Chat Completions API
+//   - "openai-responses" — OpenAI Responses API
 package llm
 
 import (
@@ -191,7 +194,14 @@ type ClientConfig struct {
 // --- Factory ---
 
 // NewLLMClient creates the appropriate client based on the resolved endpoint protocol.
-// protocol: "anthropic" -> AnthropicClient, anything else -> OpenAIClient.
+// protocol dispatch (canonical names from protocol.go):
+//   - ProtocolAnthropic ("anthropic") -> AnthropicClient
+//   - ProtocolOpenAIResponses ("openai-responses") -> OpenAIResponsesClient
+//   - ProtocolOpenAIChatCompletions ("openai") or anything else -> OpenAIClient
+//
+// The defensive default keeps legacy callers that somehow bypass resolver
+// normalization working (they previously got OpenAIClient for any non-anthropic
+// protocol).
 func NewLLMClient(ep ResolvedEndpoint) LLMClient {
 	cfg := ClientConfig{
 		URL:          ep.URL,
@@ -202,10 +212,14 @@ func NewLLMClient(ep ResolvedEndpoint) LLMClient {
 		ExtraBody:    ep.ExtraBody,
 		ExtraHeaders: ep.ExtraHeaders,
 	}
-	if ep.Protocol == "anthropic" {
+	switch ep.Protocol {
+	case ProtocolAnthropic:
 		return NewAnthropicClient(cfg)
+	case ProtocolOpenAIResponses:
+		return NewOpenAIResponsesClient(cfg)
+	default:
+		return NewOpenAIClient(cfg)
 	}
-	return NewOpenAIClient(cfg)
 }
 
 // --- Token counting with tiktoken ---
@@ -318,6 +332,7 @@ type ChatRequest struct {
 	Tools       []ToolDef `json:"tools,omitempty"`
 	Temperature *float64  `json:"temperature,omitempty"`
 	MaxTokens   int       `json:"max_tokens,omitempty"`
+	SessionID   string    `json:"-"` // per-file agent loop session ID; used as prompt_cache_key by the Responses API client
 }
 
 // CompletionsWithCtx sends a chat completion request with context support for cancellation and timeout.
@@ -333,6 +348,9 @@ func (c *OpenAIClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) 
 	for k, v := range c.cfg.ExtraBody {
 		opts = append(opts, openaiopt.WithJSONSet(k, v))
 	}
+	if stream, ok := c.cfg.ExtraBody["stream"].(bool); ok && stream {
+		return c.completionsStreaming(ctx, params, opts...)
+	}
 
 	sdkResp, err := c.sdk.Chat.Completions.New(ctx, params, opts...)
 	if err != nil {
@@ -340,6 +358,78 @@ func (c *OpenAIClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) 
 	}
 
 	return c.mapOpenAIResponse(sdkResp), nil
+}
+
+func (c *OpenAIClient) completionsStreaming(ctx context.Context, params openai.ChatCompletionNewParams, opts ...openaiopt.RequestOption) (*ChatResponse, error) {
+	stream := c.sdk.Chat.Completions.NewStreaming(ctx, params, opts...)
+	defer stream.Close()
+
+	accumulator := openai.ChatCompletionAccumulator{}
+	reasoningByChoice := make(map[int64]*strings.Builder)
+	seenChoices := make(map[int64]bool)
+	finishedChoices := make(map[int64]bool)
+	var choiceOrder []int64
+	var usage *UsageInfo
+	for stream.Next() {
+		chunk := stream.Current()
+		if chunk.JSON.Usage.Valid() {
+			if chunkUsage := resolveUsage([]byte(chunk.RawJSON())); chunkUsage != nil {
+				usage = chunkUsage
+			}
+		}
+		for _, choice := range chunk.Choices {
+			if !seenChoices[choice.Index] {
+				seenChoices[choice.Index] = true
+				choiceOrder = append(choiceOrder, choice.Index)
+			}
+			if choice.FinishReason != "" {
+				finishedChoices[choice.Index] = true
+			}
+
+			extra, ok := choice.Delta.JSON.ExtraFields["reasoning_content"]
+			if !ok {
+				continue
+			}
+
+			var reasoningContent string
+			if err := json.Unmarshal([]byte(extra.Raw()), &reasoningContent); err != nil {
+				reasoningContent = extra.Raw()
+			}
+			builder := reasoningByChoice[choice.Index]
+			if builder == nil {
+				builder = &strings.Builder{}
+				reasoningByChoice[choice.Index] = builder
+			}
+			builder.WriteString(reasoningContent)
+		}
+		if !accumulator.AddChunk(chunk) {
+			return nil, fmt.Errorf("OpenAI streaming response contained inconsistent chunks")
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	if len(choiceOrder) == 0 {
+		return nil, fmt.Errorf("OpenAI streaming response contained no choices")
+	}
+	for _, index := range choiceOrder {
+		if !finishedChoices[index] {
+			return nil, fmt.Errorf("OpenAI streaming response ended before choice %d finished", index)
+		}
+	}
+
+	resp := c.mapOpenAIResponse(&accumulator.ChatCompletion)
+	if usage != nil {
+		resp.Usage = usage
+	}
+	for i := range resp.Choices {
+		builder := reasoningByChoice[accumulator.Choices[i].Index]
+		if builder != nil {
+			resp.Choices[i].Message.ReasoningContent = builder.String()
+		}
+	}
+
+	return resp, nil
 }
 
 // buildOpenAIParams converts the shared ChatRequest into OpenAI SDK parameters.

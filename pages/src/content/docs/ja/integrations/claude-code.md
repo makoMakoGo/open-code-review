@@ -10,9 +10,9 @@ sidebar:
 ## リポジトリに含まれるもの
 
 リポジトリには
-[`plugins/open-code-review/`](https://github.com/alibaba/open-code-review/tree/main/plugins/open-code-review)
+[`plugins/open-code-review/claude-code/`](https://github.com/alibaba/open-code-review/tree/main/plugins/open-code-review/claude-code)
 配下に Claude Code plugin が用意されています。コマンドの prompt 本体は
-[`plugins/open-code-review/commands/review.md`](https://github.com/alibaba/open-code-review/blob/main/plugins/open-code-review/commands/review.md)
+[`plugins/open-code-review/claude-code/commands/review.md`](https://github.com/alibaba/open-code-review/blob/main/plugins/open-code-review/claude-code/commands/review.md)
 にあり、以下で述べるワークフローの正式な拠り所です。
 
 ## インストール
@@ -37,7 +37,7 @@ plugin marketplace をスキップしたい場合は、コマンドファイル�
 ```bash
 mkdir -p .claude/commands
 curl -o .claude/commands/open-code-review.md \
-  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/commands/review.md
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/review.md
 ```
 
 **ユーザーレベル**（マシン上のすべてのプロジェクトで利用可能）：
@@ -45,15 +45,14 @@ curl -o .claude/commands/open-code-review.md \
 ```bash
 mkdir -p ~/.claude/commands
 curl -o ~/.claude/commands/open-code-review.md \
-  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/commands/review.md
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/review.md
 ```
 
 ### コマンドをサポートするその他の agent
 
 コマンドファイルは単一の frontmatter フィールドを持つ純粋な markdown です——Claude Code 固有の内容は一切含まれていません。あなたの agent が同様の **command** 規約（ディレクトリから呼び出し可能なコマンドとしてロードされる markdown prompt）をサポートしている場合、上記のファイルコピー方法がインストール経路になります。`open-code-review.md` を agent がコマンドを読み込むディレクトリに配置し、agent のコマンド呼び出し方法に従って呼び出してください。prompt 本文は agent に依存しません——モデルに対して、どの `ocr` 引数を選び、出力をどのように分類するかを伝えるだけです。
 
-> **前提条件：** 初回実行時、バイナリが `PATH` 上に存在しない場合、コマンドは
-> （`npm install -g @alibaba-group/open-code-review` を通じて）`ocr` CLI を自動的にインストールします。ただし、LLM は事前に設定しておく**必要があります**——`ocr llm test` が接続できない場合、コマンドは失敗します。[設定](../../configuration/)を参照してください。
+> **ヒント：** LLM を自分で設定したくない場合は、[委任モード](../delegate/)をお試しください——ホスト agent（Claude Code）がモデルを提供するため、別途 LLM を設定する必要がありません。
 
 ## 使い方
 
@@ -74,7 +73,7 @@ prompt はあなたのリクエストを解析し、正しい `ocr review` 引�
 コマンドの prompt はとても短く、3 ステップです。
 
 1. **レビューの実行。** あなたのリクエストから推論した引数を用いて `ocr review --audience agent`
-   を呼び出します（要件コンテキストが記述されている場合はオプションの `--background` を追加）。`ocr` バイナリが `PATH` 上に無い場合、コマンドは `npm i -g @alibaba-group/open-code-review` を通じて自動インストールして続行します。出力は 5 分のタイムアウト内で取得されます。
+   を呼び出します（要件コンテキストが記述されている場合はオプションの `--background` を追加）。出力は 5 分のタイムアウト内で取得されます。
 2. **フィルタリングと評価。** 各コメントを **High** / **Medium** / **Low** に分類します。低信頼度（誤検知の疑い、些細な指摘、コンテキスト不足）のコメントは黙って破棄され、その他は表示されます。
 3. **修正。** 採用すべき High/Medium 項目に対して修正を自動的に適用します。
    [Agent Skill](../agent-skill/) と異なり、このコマンドは**デフォルトで自動修正します**——「レビューして片付ける」ワークフローには適した選択であり、「diff を見せてほしい」ワークフローには向きません。
@@ -84,4 +83,3 @@ prompt はあなたのリクエストを解析し、正しい `ocr review` 引�
 ## 関連項目
 
 - [Agent Skill](../agent-skill/)——SDK レベルの同等物。同じ底層の CLI で、デフォルト値が異なります（修正前に尋ねる）。
-- [Direct Subprocess](../subprocess/)——slash コマンドを介さず、自分で CLI を呼び出す方法。

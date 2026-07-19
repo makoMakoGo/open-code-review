@@ -15,7 +15,7 @@ import '../styles/docs-markdown.css';
 interface SidebarItem {
   id: string;
   labelKey: string;
-  slug: DocSlug;
+  slug?: DocSlug;
   children?: SidebarItem[];
 }
 
@@ -46,11 +46,10 @@ const sidebarTree: SidebarGroup[] = [
       {
         id: 'sb-integrations',
         labelKey: 'docs.sidebar.integrations',
-        slug: 'integrations',
         children: [
           { id: 'sb-agent-skill', labelKey: 'docs.sidebar.agentSkill', slug: 'agent-skill' },
           { id: 'sb-claude-code', labelKey: 'docs.sidebar.claudeCode', slug: 'claude-code' },
-          { id: 'sb-subprocess', labelKey: 'docs.sidebar.subprocess', slug: 'subprocess' },
+          { id: 'sb-delegate', labelKey: 'docs.sidebar.delegate', slug: 'delegate' },
           { id: 'sb-cicd', labelKey: 'docs.sidebar.cicd', slug: 'cicd' },
         ],
       },
@@ -98,10 +97,14 @@ function buildFlatDocList(): { slug: DocSlug; labelKey: string }[] {
   const list: { slug: DocSlug; labelKey: string }[] = [];
   for (const group of sidebarTree) {
     for (const item of group.items) {
-      list.push({ slug: item.slug, labelKey: item.labelKey });
+      if (item.slug) {
+        list.push({ slug: item.slug, labelKey: item.labelKey });
+      }
       if (item.children) {
         for (const child of item.children) {
-          list.push({ slug: child.slug, labelKey: child.labelKey });
+          if (child.slug) {
+            list.push({ slug: child.slug, labelKey: child.labelKey });
+          }
         }
       }
     }
@@ -128,7 +131,7 @@ const DocsPage: React.FC = () => {
   /* Active doc slug is derived from the URL param, falling back to quickstart */
   const activeSlug: DocSlug =
     slugParam && validSlugs.has(slugParam as DocSlug) ? (slugParam as DocSlug) : 'quickstart';
-  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({ 'sb-integrations': false });
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({ 'sb-integrations': true });
   const [activeHeadingId, setActiveHeadingId] = useState<string>('');
   const [hoveredHeadingId, setHoveredHeadingId] = useState<string>('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -379,14 +382,18 @@ const DocsPage: React.FC = () => {
                 </div>
                 {/* Group items */}
                 {group.items.map((item) => {
-                  const isActive = item.slug === activeSlug;
+                  const isActive = item.slug != null && item.slug === activeSlug;
                   const hasChildren = item.children && item.children.length > 0;
                   const isExpanded = expandedItems[item.id] ?? false;
                   return (
                     <React.Fragment key={item.id}>
                       <div
                         onClick={() => {
-                          navigateToDoc(item.slug);
+                          if (item.slug) {
+                            navigateToDoc(item.slug);
+                          } else if (hasChildren) {
+                            toggleExpand(item.id);
+                          }
                         }}
                         style={{
                           height: 36,
@@ -427,11 +434,11 @@ const DocsPage: React.FC = () => {
                       </div>
                       {/* Children (sub-items) */}
                       {hasChildren && isExpanded && item.children!.map((child) => {
-                        const childActive = child.slug === activeSlug;
+                        const childActive = child.slug != null && child.slug === activeSlug;
                         return (
                           <div
                             key={child.id}
-                            onClick={() => navigateToDoc(child.slug)}
+                            onClick={() => { if (child.slug) navigateToDoc(child.slug); }}
                             style={{
                               height: 36,
                               display: 'flex',

@@ -10,7 +10,7 @@ sidebar:
 
 - **Git ≥ 2.41**
 - **Node.js ≥ 18**
-- **LLM API key**
+- **LLM API key**（[委任モード](../integrations/delegate/)使用時は不要）
 
 ## ステップ 1 —— CLI をインストールする
 
@@ -25,6 +25,8 @@ ocr version
 > その他の方法は [インストール](../installation/) を参照してください。
 
 ## ステップ 2 —— LLM を設定する
+
+> [委任モード](../integrations/delegate/)を使用している場合（例：Claude Code 内で実行）、ホスト agent がモデルを提供します —— ステップ 4 に進んでください。
 
 ```bash
 ocr config provider
@@ -94,5 +96,5 @@ ocr review --format json --audience agent > review.json
 - [設定](../configuration/) —— 各環境変数、config key、組み込み provider。
 - [CLI リファレンス](../cli-reference/) —— 各サブコマンド、引数、出力モード。
 - [レビュールール](../review-rules/) —— レビュー内容をカスタマイズします。
-- [インテグレーション](../integrations/) —— OCR を Claude Code、Agent skill、CI に組み込みます。
+- [インテグレーション](../integrations/agent-skill/) —— OCR を Claude Code、Agent skill、CI に組み込みます。
 - [FAQ](../faq/) —— 既知のエラーと対策。

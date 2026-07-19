@@ -134,6 +134,32 @@ OCR_INSTALL_DIR="$HOME/.local/bin" OCR_VERSION=v1.3.13 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/alibaba/open-code-review/main/install.sh)"
 ```
 
+В Windows (PowerShell 5.1+):
+
+```powershell
+irm https://raw.githubusercontent.com/alibaba/open-code-review/main/install.ps1 | iex
+```
+
+Скрипт сам выбирает подходящий Windows-бинарный файл релиза, проверяет его контрольную сумму SHA-256 и устанавливает его как `ocr.exe` в `%LOCALAPPDATA%\Programs\ocr`. Каталог установки можно переопределить через `OCR_INSTALL_DIR`, а версию релиза зафиксировать через `OCR_VERSION`:
+
+```powershell
+$env:OCR_INSTALL_DIR = "$env:USERPROFILE\bin"
+$env:OCR_VERSION = "v1.3.13"
+irm https://raw.githubusercontent.com/alibaba/open-code-review/main/install.ps1 | iex
+```
+
+Передача удалённого скрипта напрямую в shell выполняет код из интернета. Лучше сначала скачать и просмотреть скрипт:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alibaba/open-code-review/main/install.sh -o install.sh
+less install.sh && sh install.sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/alibaba/open-code-review/main/install.ps1 -OutFile install.ps1
+notepad install.ps1   # просмотрите, затем: .\install.ps1
+```
+
 <details>
 <summary>Ручная загрузка (все платформы, включая Windows)</summary>
 
@@ -219,7 +245,7 @@ ocr config set custom_providers.my-gateway.api_key your-api-key-here
 ocr config set custom_providers.my-gateway.model gpt-4o
 ```
 
-> Для пользовательских провайдеров `url` и `protocol` обязательны. Поддерживаемые протоколы: `anthropic`, `openai`.
+> Для пользовательских провайдеров `url` и `protocol` обязательны. Поддерживаемые протоколы: `anthropic`, `openai`, `openai-responses`.
 
 Дополнительные настройки:
 
@@ -252,6 +278,17 @@ export OCR_LLM_TOKEN=your-api-key-here
 export OCR_LLM_MODEL=claude-opus-4-6
 export OCR_USE_ANTHROPIC=true
 ```
+
+Чтобы использовать OpenAI Responses API (модели GPT-5.x / o-series), задайте `OCR_LLM_PROTOCOL` вместо `OCR_USE_ANTHROPIC`:
+
+```bash
+export OCR_LLM_URL=https://api.openai.com/v1
+export OCR_LLM_TOKEN=your-openai-key
+export OCR_LLM_MODEL=gpt-5.4
+export OCR_LLM_PROTOCOL=openai-responses
+```
+
+`OCR_LLM_PROTOCOL` принимает значения `anthropic`, `openai`, `openai-responses` и имеет приоритет над `OCR_USE_ANTHROPIC`, если заданы обе переменные.
 
 Также совместим с переменными окружения Claude Code (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`) и разбирает `~/.zshrc` / `~/.bashrc` в поисках соответствующих export'ов.
 
@@ -287,6 +324,11 @@ ocr review --from main --to feature-branch --resume <session-id>
 # Полнофайловое сканирование — ревью целых файлов вместо диффа (история git не нужна)
 ocr scan                          # сканировать весь репозиторий
 ocr scan --path internal/agent    # сканировать каталог или конкретные файлы
+
+# Режим делегирования — AI-агент сам выполняет ревью
+# OCR отвечает за выбор файлов и разрешение правил; настройка LLM не требуется
+ocr delegate preview
+ocr delegate rule src/main.go src/handler.go
 ```
 
 ### Интеграция с кодинг-агентами
@@ -303,6 +345,14 @@ npx skills add alibaba/open-code-review --skill open-code-review
 
 Это установит скилл `open-code-review` из [реестра скиллов](skills/open-code-review/SKILL.md), который объясняет вашему кодинг-агенту, как вызывать `ocr` для код-ревью, классифицировать найденные проблемы по приоритету и при необходимости применять исправления.
 
+**Режим делегирования** — если вы хотите, чтобы AI-агент сам выполнял ревью (OCR отвечает только за выбор файлов и разрешение правил, настройка LLM на стороне OCR не требуется):
+
+```bash
+npx skills add alibaba/open-code-review --skill open-code-review-delegate
+```
+
+Подробнее см. [skills/open-code-review-delegate/SKILL.md](skills/open-code-review-delegate/SKILL.md).
+
 #### Вариант 2: установка как плагин Claude Code
 
 Для [Claude Code](https://docs.anthropic.com/en/docs/claude-code) установите плагин с командой, выполнив в Claude Code:
@@ -312,7 +362,7 @@ npx skills add alibaba/open-code-review --skill open-code-review
 /plugin install open-code-review@open-code-review
 ```
 
-Это зарегистрирует slash-команду `/open-code-review:review`, которая запускает OCR и автоматически фильтрует и исправляет найденные проблемы.
+Это зарегистрирует slash-команду `/open-code-review:review`, которая запускает OCR и автоматически фильтрует и исправляет найденные проблемы. Также предоставляется команда `/open-code-review:delegate-review` для режима делегирования (агент выполняет ревью своими силами, OCR отвечает за выбор файлов и разрешение правил).
 
 #### Вариант 3: установка как плагин Codex
 
@@ -391,7 +441,7 @@ ocr review --audience agent
 ```bash
 mkdir -p .claude/commands
 curl -o .claude/commands/open-code-review.md \
-  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/commands/review.md
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/review.md
 ```
 
 **На уровне пользователя** (личное глобальное использование во всех проектах):
@@ -399,10 +449,24 @@ curl -o .claude/commands/open-code-review.md \
 ```bash
 mkdir -p ~/.claude/commands
 curl -o ~/.claude/commands/open-code-review.md \
-  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/commands/review.md
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/review.md
 ```
 
-> **Требование**: для всех способов интеграции необходим установленный CLI `ocr` и настроенная LLM. См. разделы [Установка](#установка) и [Настройте LLM](#быстрый-старт) выше.
+Режим делегирования (настройка LLM на стороне OCR не требуется):
+
+```bash
+# Уровень проекта
+mkdir -p .claude/commands
+curl -o .claude/commands/open-code-review-delegate.md \
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/delegate-review.md
+
+# Уровень пользователя
+mkdir -p ~/.claude/commands
+curl -o ~/.claude/commands/open-code-review-delegate.md \
+  https://raw.githubusercontent.com/alibaba/open-code-review/main/plugins/open-code-review/claude-code/commands/delegate-review.md
+```
+
+> **Требования**: Все способы интеграции требуют установки CLI `ocr`. Стандартный режим дополнительно требует настройки LLM — см. [Установка](#установка) и [Настройка LLM](#1-настройка-llm) выше. Режим делегирования **не требует** настройки LLM на стороне OCR.
 
 ### Интеграция с CI/CD
 
@@ -457,6 +521,8 @@ ocr review \
 |---------|-------|----------|
 | `ocr review` | `ocr r` | Запустить код-ревью на основе диффа |
 | `ocr scan` | `ocr s` | Ревью целых файлов (дифф не нужен) |
+| `ocr delegate preview` | `ocr d preview` | Предварительный просмотр файлов для ревью с метаданными режима/ссылок (LLM не требуется) |
+| `ocr delegate rule <path...>` | `ocr d rule` | Вывод правил ревью, сгруппированных по содержимому (LLM не требуется) |
 | `ocr rules check <file>` | — | Показать, какое правило ревью применяется к пути файла |
 | `ocr config provider` | — | Интерактивная настройка провайдера (встроенный, пользовательский или ручной) |
 | `ocr config model` | — | Интерактивный выбор модели для активного провайдера |
@@ -550,6 +616,31 @@ ocr review --commit abc123 --resume <session-id>
 
 Перед каждым запуском `ocr scan` выводит приблизительную оценку стоимости в токенах. Используйте `--preview`, чтобы сначала посмотреть список файлов, и `--max-tokens-budget`, чтобы ограничить расход на больших репозиториях.
 
+### Флаги `ocr delegate`
+
+`ocr delegate` — режим делегирования для AI-агентов. Он обеспечивает детерминированный
+выбор файлов и разрешение правил без вызова LLM — фактическое ревью выполняет
+хост-агент своими силами.
+
+| Подкоманда | Описание |
+|------------|----------|
+| `ocr delegate preview` | Вывод списка файлов для ревью с метаданными режима/ссылок |
+| `ocr delegate rule <path...>` | Вывод правил ревью, сгруппированных по содержимому |
+
+Обе подкоманды используют общие флаги:
+
+| Флаг | Сокращение | По умолчанию | Описание |
+|------|-----------|--------------|----------|
+| `--repo` | — | текущий каталог | Корень Git-репозитория |
+| `--from` | — | — | Исходная ссылка (например, `main`) |
+| `--to` | — | — | Целевая ссылка (например, `feature-branch`) |
+| `--commit` | `-c` | — | Один коммит |
+| `--exclude` | — | — | Паттерны исключения в стиле gitignore через запятую |
+| `--rule` | — | — | Путь к файлу с пользовательскими JSON-правилами |
+| `--background` | `-b` | — | Необязательный контекст требований/бизнеса |
+| `--background-file` | `-B` | — | Бизнес-контекст из Markdown-файла |
+| `--max-git-procs` | — | `16` | Макс. параллельных подпроцессов git |
+
 ## Примеры
 
 ```bash
@@ -614,6 +705,12 @@ ocr scan --repo /path/to/plain/dir --format json
 
 # Самое быстрое сканирование: пропустить планирование, дедупликацию и сводку проекта
 ocr scan --no-plan --no-dedup --no-summary
+
+# Режим делегирования — AI-агент выполняет ревью (настройка LLM не требуется)
+ocr delegate preview
+ocr delegate preview --from main --to feature-branch
+ocr delegate preview --commit abc123
+ocr delegate rule internal/handler.go internal/service.go cmd/main.go
 
 # Открыть историю сессий ревью в браузере
 ocr viewer
@@ -756,7 +853,7 @@ OCR разрешает правила ревью по цепочке приор�
 | `provider` | string | `anthropic` \| `openai` \| `dashscope` \| `deepseek` \| `z-ai` |
 | `providers.<name>.api_key` | string | API-ключ провайдера |
 | `providers.<name>.url` | string | Переопределение base URL провайдера |
-| `providers.<name>.protocol` | string | `anthropic` \| `openai` |
+| `providers.<name>.protocol` | string | `anthropic` \| `openai` \| `openai-responses` |
 | `providers.<name>.model` | string | Имя модели провайдера |
 | `providers.<name>.models` | array | Необязательный список моделей для интерактивного выбора |
 | `providers.<name>.auth_header` | string | `x-api-key` \| `authorization` |
@@ -771,7 +868,8 @@ OCR разрешает правила ревью по цепочке приор�
 | `llm.timeout_sec` | integer | Таймаут HTTP-запроса в секундах, по умолчанию `300` |
 | `llm.extra_headers` | string | HTTP-заголовки `key=value` через запятую |
 | `llm.model` | string | `claude-opus-4-6` |
-| `llm.use_anthropic` | boolean | `true` \| `false` |
+| `llm.protocol` | string | `anthropic` \| `openai` \| `openai-responses`; имеет приоритет над `llm.use_anthropic` |
+| `llm.use_anthropic` | boolean | `true` \| `false` (устаревшее; предпочтительнее `llm.protocol`) |
 | `mcp_servers.<name>.command` | string | Команда для запуска MCP-сервера |
 | `mcp_servers.<name>.args` | array | Аргументы командной строки для MCP-сервера |
 | `mcp_servers.<name>.env` | array | Переменные окружения в формате `KEY=VALUE` |
@@ -831,9 +929,9 @@ ocr config set mcp_servers.codegraph.setup 'codegraph init && codegraph index'
 | `OCR_LLM_AUTH_HEADER` | Заголовок авторизации Anthropic (`x-api-key` или `authorization`) |
 | `OCR_LLM_EXTRA_HEADERS` | HTTP-заголовки `key=value` через запятую |
 | `OCR_LLM_MODEL` | Имя модели |
+| `OCR_LLM_PROTOCOL` | Протокол: `anthropic` \| `openai` \| `openai-responses`; имеет приоритет над `OCR_USE_ANTHROPIC` |
 | `OCR_LLM_TIMEOUT` | Таймаут HTTP-запроса в секундах (переопределяет `timeout_sec` из файла конфигурации) |
-| `OCR_USE_ANTHROPIC` | `true` = Anthropic, `false` = OpenAI |
-
+| `OCR_USE_ANTHROPIC` | `true` = Anthropic, `false` = OpenAI Chat Completions (устаревшее; предпочтительнее `OCR_LLM_PROTOCOL`) |
 
 ## Телеметрия
 
